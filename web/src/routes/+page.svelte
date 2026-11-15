@@ -18,9 +18,9 @@
 			<p class="muted">Wachtwoord wijzigen en je recente activiteit bekijken.</p>
 		</a>
 		{#if data.user.is_admin}
-			<a class="panel card" href="/system">
-				<h2>Systeem</h2>
-				<p class="muted">Status van database, opslag en alle sites.</p>
+			<a class="panel card" href="/admin">
+				<h2>Beheer</h2>
+				<p class="muted">Gebruikers, groepen, audit-log en systeemstatus.</p>
 			</a>
 		{/if}
 	</div>

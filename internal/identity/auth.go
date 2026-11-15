@@ -38,13 +38,14 @@ func (s *Service) Login(ctx context.Context, c Client, username, password string
 		id          uuid.UUID
 		hash        *string
 		hasTOTP     bool
+		disabled    bool
 		lookupError error
 	)
 	lookupError = s.db.QueryRow(ctx, `
-		SELECT u.id, u.password_hash, t.confirmed_at IS NOT NULL
+		SELECT u.id, u.password_hash, t.confirmed_at IS NOT NULL, u.disabled_at IS NOT NULL
 		FROM identity.users u
 		LEFT JOIN identity.totp_credentials t ON t.user_id = u.id
-		WHERE u.username = $1`, username).Scan(&id, &hash, &hasTOTP)
+		WHERE u.username = $1`, username).Scan(&id, &hash, &hasTOTP, &disabled)
 	if errors.Is(lookupError, pgx.ErrNoRows) || (lookupError == nil && hash == nil) {
 		// Same work and same answer as a wrong password: no user enumeration.
 		s.hasher.verifyDummy(ctx, password)
@@ -65,6 +66,12 @@ func (s *Service) Login(ctx context.Context, c Client, username, password string
 	}
 	if !match {
 		failed("bad_password", &id)
+		return "", ErrInvalidCredentials
+	}
+	if disabled {
+		// Checked after the password, so only someone who knows it could
+		// tell a disabled account apart; they still get the generic answer.
+		failed("disabled", &id)
 		return "", ErrInvalidCredentials
 	}
 	if !hasTOTP {
@@ -132,8 +139,7 @@ func (s *Service) VerifyTOTP(ctx context.Context, c Client, sess Session, code s
 		if token, err = s.rotateSession(ctx, tx, sess.ID, StateAuthenticated, sessionMaxTTL); err != nil {
 			return err
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventLoginSucceeded, actor: &sess.UserID,
-			details: map[string]any{"method": "password+totp"}})
+		return s.recordLogin(ctx, tx, c, sess.UserID, "password+totp")
 	})
 	if errors.Is(err, ErrInvalidCode) {
 		s.totpFailed(ctx, c, sess, key)
@@ -180,7 +186,7 @@ func (s *Service) Activate(ctx context.Context, c Client, activationToken, passw
 	err := s.db.QueryRow(ctx, `
 		SELECT u.id, u.username FROM identity.activation_tokens a
 		JOIN identity.users u ON u.id = a.user_id
-		WHERE a.token_hash = $1 AND a.used_at IS NULL AND a.expires_at > $2`,
+		WHERE a.token_hash = $1 AND a.used_at IS NULL AND a.expires_at > $2 AND u.disabled_at IS NULL`,
 		hash, s.now()).Scan(&userID, &username)
 	if errors.Is(err, pgx.ErrNoRows) {
 		s.recordFailures(ctx, map[string]throttleRule{ipKey: throttleIP})
@@ -301,8 +307,7 @@ func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, c Client, sess Sess
 		if err := s.audit(ctx, tx, c, auditEntry{event: EventTOTPEnrolled, actor: &sess.UserID}); err != nil {
 			return err
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventLoginSucceeded, actor: &sess.UserID,
-			details: map[string]any{"method": "activation"}})
+		return s.recordLogin(ctx, tx, c, sess.UserID, "activation")
 	})
 	if errors.Is(err, ErrInvalidCode) {
 		s.totpFailed(ctx, c, sess, key)
@@ -373,6 +378,15 @@ func (s *Service) Logout(ctx context.Context, c Client, sess Session) error {
 	})
 }
 
+// recordLogin marks a completed sign-in: it updates last_login_at and
+// writes the audit event. Every way of signing in ends here.
+func (s *Service) recordLogin(ctx context.Context, tx dbtx, c Client, userID uuid.UUID, method string) error {
+	if _, err := tx.Exec(ctx, `UPDATE identity.users SET last_login_at = $2 WHERE id = $1`, userID, s.now()); err != nil {
+		return fmt.Errorf("record login: %w", err)
+	}
+	return s.audit(ctx, tx, c, auditEntry{event: EventLoginSucceeded, actor: &userID, details: map[string]any{"method": method}})
+}
+
 // totpAD is the associated data binding a sealed TOTP secret to its owner.
 func totpAD(userID uuid.UUID) []byte { return []byte("totp:" + userID.String()) }
 
@@ -425,7 +439,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Session, User
 		SELECT s.id, s.user_id, s.state, s.expires_at, s.last_seen_at, s.activation_token_hash, s.authenticated_at,
 		       u.username, u.display_name, u.is_admin
 		FROM identity.sessions s JOIN identity.users u ON u.id = s.user_id
-		WHERE s.token_hash = $1`, hashToken(token)).Scan(
+		WHERE s.token_hash = $1 AND u.disabled_at IS NULL`, hashToken(token)).Scan(
 		&sess.ID, &sess.UserID, &sess.State, &sess.ExpiresAt, &lastSeen, &sess.activationTokenHash, &authenticatedAt,
 		&u.Username, &u.DisplayName, &u.IsAdmin)
 	if authenticatedAt != nil {

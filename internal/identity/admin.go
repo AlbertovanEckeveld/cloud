@@ -1,0 +1,256 @@
+package identity
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+// Errors specific to account administration.
+var (
+	ErrLastAdmin    = errors.New("at least one active administrator must remain")
+	ErrSelf         = errors.New("action not allowed on your own account")
+	ErrUserDisabled = errors.New("account is disabled")
+)
+
+// AccountStatus summarises whether an account can be used.
+type AccountStatus string
+
+const (
+	StatusPending  AccountStatus = "pending" // waiting for activation
+	StatusActive   AccountStatus = "active"
+	StatusDisabled AccountStatus = "disabled"
+)
+
+// AdminUser is an account as shown to administrators.
+type AdminUser struct {
+	User
+	Status        AccountStatus `json:"status"`
+	CreatedAt     time.Time     `json:"created_at"`
+	LastLoginAt   *time.Time    `json:"last_login_at"`
+	HasTOTP       bool          `json:"has_totp"`
+	Passkeys      int           `json:"passkeys"`
+	RecoveryCodes int           `json:"recovery_codes"`
+	Groups        []GroupRef    `json:"groups"`
+}
+
+// GroupRef names a group.
+type GroupRef struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// UserUpdate holds the editable fields of an account; nil means unchanged.
+type UserUpdate struct {
+	DisplayName *string
+	IsAdmin     *bool
+}
+
+const adminUserQuery = `
+	SELECT u.id, u.username, u.display_name, u.is_admin, u.created_at, u.last_login_at,
+	       CASE WHEN u.disabled_at IS NOT NULL THEN 'disabled'
+	            WHEN t.confirmed_at IS NULL THEN 'pending'
+	            ELSE 'active' END,
+	       t.confirmed_at IS NOT NULL,
+	       (SELECT count(*) FROM identity.passkeys p WHERE p.user_id = u.id),
+	       (SELECT count(*) FROM identity.recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL),
+	       COALESCE((SELECT json_agg(json_build_object('id', g.id, 'name', g.name) ORDER BY g.name)
+	                 FROM identity.group_members m JOIN identity.groups g ON g.id = m.group_id
+	                 WHERE m.user_id = u.id), '[]')
+	FROM identity.users u
+	LEFT JOIN identity.totp_credentials t ON t.user_id = u.id`
+
+func scanAdminUser(row pgx.CollectableRow) (AdminUser, error) {
+	var u AdminUser
+	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.IsAdmin, &u.CreatedAt, &u.LastLoginAt,
+		&u.Status, &u.HasTOTP, &u.Passkeys, &u.RecoveryCodes, &u.Groups)
+	u.CreatedAt = u.CreatedAt.UTC()
+	if u.LastLoginAt != nil {
+		*u.LastLoginAt = u.LastLoginAt.UTC()
+	}
+	return u, err
+}
+
+// ListUsers returns all accounts, sorted by username.
+func (s *Service) ListUsers(ctx context.Context) ([]AdminUser, error) {
+	rows, err := s.db.Query(ctx, adminUserQuery+` ORDER BY u.username`)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	users, err := pgx.CollectRows(rows, scanAdminUser)
+	if err != nil {
+		return nil, fmt.Errorf("read users: %w", err)
+	}
+	return users, nil
+}
+
+// GetUser returns one account.
+func (s *Service) GetUser(ctx context.Context, id uuid.UUID) (AdminUser, error) {
+	rows, err := s.db.Query(ctx, adminUserQuery+` WHERE u.id = $1`, id)
+	if err != nil {
+		return AdminUser{}, fmt.Errorf("get user: %w", err)
+	}
+	u, err := pgx.CollectExactlyOneRow(rows, scanAdminUser)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AdminUser{}, ErrNotFound
+	}
+	if err != nil {
+		return AdminUser{}, fmt.Errorf("read user: %w", err)
+	}
+	return u, nil
+}
+
+// InviteUser creates an account and returns its activation link. Only for
+// administrators who signed in recently.
+func (s *Service) InviteUser(ctx context.Context, c Client, actor Session, in NewUser) (User, string, error) {
+	if err := s.requireRecentAuth(actor); err != nil {
+		return User{}, "", err
+	}
+	u, err := s.createUser(ctx, c, &actor.UserID, in)
+	if err != nil {
+		return User{}, "", err
+	}
+	link, err := s.issueActivation(ctx, c, &actor.UserID, u.Username)
+	return u, link, err
+}
+
+// ResetUser revokes an account's credentials and returns a new activation link.
+func (s *Service) ResetUser(ctx context.Context, c Client, actor Session, id uuid.UUID) (string, error) {
+	if err := s.requireRecentAuth(actor); err != nil {
+		return "", err
+	}
+	if id == actor.UserID {
+		return "", ErrSelf
+	}
+	var username string
+	if err := s.db.QueryRow(ctx, `SELECT username FROM identity.users WHERE id = $1`, id).Scan(&username); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("load user: %w", err)
+	}
+	return s.issueActivation(ctx, c, &actor.UserID, username)
+}
+
+// lockAdmins locks every active administrator row, so concurrent changes to
+// administrators are serialised, and returns how many there are besides id.
+func lockAdmins(ctx context.Context, tx pgx.Tx, id uuid.UUID) (int, error) {
+	rows, err := tx.Query(ctx, `SELECT id FROM identity.users WHERE is_admin AND disabled_at IS NULL FOR UPDATE`)
+	if err != nil {
+		return 0, fmt.Errorf("lock administrators: %w", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return 0, fmt.Errorf("lock administrators: %w", err)
+	}
+	others := 0
+	for _, a := range ids {
+		if a != id {
+			others++
+		}
+	}
+	return others, nil
+}
+
+// UpdateUser changes the display name or administrator flag of an account.
+func (s *Service) UpdateUser(ctx context.Context, c Client, actor Session, id uuid.UUID, upd UserUpdate) error {
+	if err := s.requireRecentAuth(actor); err != nil {
+		return err
+	}
+	if upd.DisplayName != nil {
+		name := strings.TrimSpace(*upd.DisplayName)
+		if err := validateDisplayName(name); err != nil {
+			return err
+		}
+		upd.DisplayName = &name
+	}
+	if upd.IsAdmin != nil && !*upd.IsAdmin && id == actor.UserID {
+		return ErrSelf
+	}
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if upd.IsAdmin != nil && !*upd.IsAdmin {
+			others, err := lockAdmins(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			if others == 0 {
+				return ErrLastAdmin
+			}
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE identity.users
+			SET display_name = COALESCE($2, display_name), is_admin = COALESCE($3, is_admin), updated_at = $4
+			WHERE id = $1`, id, upd.DisplayName, upd.IsAdmin, s.now())
+		if err != nil {
+			return fmt.Errorf("update user: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		details := map[string]any{}
+		if upd.DisplayName != nil {
+			details["display_name"] = *upd.DisplayName
+		}
+		if upd.IsAdmin != nil {
+			details["is_admin"] = *upd.IsAdmin
+		}
+		return s.audit(ctx, tx, c, auditEntry{event: EventUserUpdated, actor: &actor.UserID, subject: &id, details: details})
+	})
+}
+
+// SetUserDisabled disables or re-enables an account. Disabling signs the
+// user out everywhere and voids open activation links and ceremonies.
+func (s *Service) SetUserDisabled(ctx context.Context, c Client, actor Session, id uuid.UUID, disabled bool) error {
+	if err := s.requireRecentAuth(actor); err != nil {
+		return err
+	}
+	if id == actor.UserID {
+		return ErrSelf
+	}
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		now := s.now()
+		if disabled {
+			others, err := lockAdmins(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			if others == 0 {
+				return ErrLastAdmin
+			}
+		}
+		var disabledAt *time.Time
+		if disabled {
+			disabledAt = &now
+		}
+		tag, err := tx.Exec(ctx, `UPDATE identity.users SET disabled_at = $2, updated_at = $3 WHERE id = $1`, id, disabledAt, now)
+		if err != nil {
+			return fmt.Errorf("set disabled: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		event := EventUserEnabled
+		if disabled {
+			event = EventUserDisabled
+			revocations := []struct {
+				sql  string
+				args []any
+			}{
+				{`DELETE FROM identity.sessions WHERE user_id = $1`, []any{id}},
+				{`DELETE FROM identity.webauthn_challenges WHERE user_id = $1`, []any{id}},
+				{`UPDATE identity.activation_tokens SET used_at = $2 WHERE user_id = $1 AND used_at IS NULL`, []any{id, now}},
+			}
+			for _, r := range revocations {
+				if _, err := tx.Exec(ctx, r.sql, r.args...); err != nil {
+					return fmt.Errorf("revoke access: %w", err)
+				}
+			}
+		}
+		return s.audit(ctx, tx, c, auditEntry{event: event, actor: &actor.UserID, subject: &id})
+	})
+}

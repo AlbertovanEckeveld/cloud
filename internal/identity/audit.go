@@ -28,6 +28,15 @@ const (
 	EventRecoveryCodesGenerated = "auth.recovery_codes.generated"
 	EventRecoveryCodeUsed       = "auth.recovery_code.used"
 	EventSessionRevoked         = "auth.session.revoked"
+
+	EventUserUpdated        = "user.updated"
+	EventUserDisabled       = "user.disabled"
+	EventUserEnabled        = "user.enabled"
+	EventGroupCreated       = "group.created"
+	EventGroupUpdated       = "group.updated"
+	EventGroupDeleted       = "group.deleted"
+	EventGroupMemberAdded   = "group.member_added"
+	EventGroupMemberRemoved = "group.member_removed"
 )
 
 // auditEntry is one event to record. actor is who did it, subject whom it concerns.
@@ -96,4 +105,40 @@ func (s *Service) Activity(ctx context.Context, userID uuid.UUID, limit int) ([]
 		return nil, fmt.Errorf("read activity: %w", err)
 	}
 	return events, nil
+}
+
+// AuditEntry is a recorded event as shown to administrators: with the
+// people involved and the details.
+type AuditEntry struct {
+	AuditEvent
+	Actor   *string        `json:"actor"`   // username, if any
+	Subject *string        `json:"subject"` // username, if any
+	Details map[string]any `json:"details"`
+}
+
+// ListAudit returns events across all users, newest first, at most limit.
+// Pass the ID of the last event of the previous page as before to continue;
+// UUIDv7 IDs are ordered by creation time.
+func (s *Service) ListAudit(ctx context.Context, before *uuid.UUID, limit int) ([]AuditEntry, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT e.id, e.occurred_at, e.event, e.site_id, e.ip, e.user_agent, a.username, sub.username, e.details
+		FROM identity.audit_events e
+		LEFT JOIN identity.users a ON a.id = e.actor_id
+		LEFT JOIN identity.users sub ON sub.id = e.subject_id
+		WHERE $1::uuid IS NULL OR e.id < $1
+		ORDER BY e.id DESC
+		LIMIT $2`, before, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query audit log: %w", err)
+	}
+	entries, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (AuditEntry, error) {
+		var e AuditEntry
+		err := row.Scan(&e.ID, &e.OccurredAt, &e.Event, &e.SiteID, &e.IP, &e.UserAgent, &e.Actor, &e.Subject, &e.Details)
+		e.OccurredAt = e.OccurredAt.UTC()
+		return e, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read audit log: %w", err)
+	}
+	return entries, nil
 }

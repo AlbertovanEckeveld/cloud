@@ -83,6 +83,41 @@ export interface Ceremony {
 	options: unknown;
 }
 
+export interface GroupRef {
+	id: string;
+	name: string;
+}
+
+export type AccountStatus = 'pending' | 'active' | 'disabled';
+
+export interface AdminUser extends User {
+	status: AccountStatus;
+	created_at: string;
+	last_login_at: string | null;
+	has_totp: boolean;
+	passkeys: number;
+	recovery_codes: number;
+	groups: GroupRef[];
+}
+
+export interface Group {
+	id: string;
+	name: string;
+	description: string;
+	member_count: number;
+	created_at: string;
+}
+
+export interface GroupDetail extends Group {
+	members: User[];
+}
+
+export interface AuditEntry extends AuditEvent {
+	actor: string | null;
+	subject: string | null;
+	details: Record<string, unknown>;
+}
+
 export interface AuditEvent {
 	id: string;
 	occurred_at: string;
@@ -192,17 +227,7 @@ const parseEnrollment: Validator<TotpEnrollment> = (v) => {
 };
 
 export const parseActivity: Validator<AuditEvent[]> = (v) =>
-	list(record(v, 'activity'), 'events', (e) => {
-		const r = record(e, 'event');
-		return {
-			id: str(r, 'id'),
-			occurred_at: str(r, 'occurred_at'),
-			event: str(r, 'event'),
-			site_id: str(r, 'site_id'),
-			ip: str(r, 'ip'),
-			user_agent: str(r, 'user_agent')
-		};
-	});
+	list(record(v, 'activity'), 'events', (e) => parseAuditEvent(e));
 
 const noContent: Validator<void> = () => undefined;
 
@@ -248,11 +273,79 @@ const parseCodes: Validator<string[]> = (v) => list(record(v, 'codes'), 'codes',
 	return c;
 });
 
+const parseGroupRef: Validator<GroupRef> = (v) => {
+	const r = record(v, 'group');
+	return { id: str(r, 'id'), name: str(r, 'name') };
+};
+
+const accountStatuses: readonly string[] = ['pending', 'active', 'disabled'];
+
+const parseAdminUser: Validator<AdminUser> = (v) => {
+	const r = record(v, 'user');
+	const status = str(r, 'status');
+	if (!accountStatuses.includes(status)) fail('status');
+	return {
+		...parseUser(r),
+		status: status as AccountStatus,
+		created_at: str(r, 'created_at'),
+		last_login_at: nullableStr(r, 'last_login_at'),
+		has_totp: bool(r, 'has_totp'),
+		passkeys: num(r, 'passkeys'),
+		recovery_codes: num(r, 'recovery_codes'),
+		groups: list(r, 'groups', parseGroupRef)
+	};
+};
+
+const parseGroup: Validator<Group> = (v) => {
+	const r = record(v, 'group');
+	return {
+		id: str(r, 'id'),
+		name: str(r, 'name'),
+		description: str(r, 'description'),
+		member_count: num(r, 'member_count'),
+		created_at: str(r, 'created_at')
+	};
+};
+
+const parseGroupDetail: Validator<GroupDetail> = (v) => ({
+	...parseGroup(v),
+	members: list(record(v, 'group'), 'members', parseUser)
+});
+
+const parseAuditEvent: Validator<AuditEvent> = (e) => {
+	const r = record(e, 'event');
+	return {
+		id: str(r, 'id'),
+		occurred_at: str(r, 'occurred_at'),
+		event: str(r, 'event'),
+		site_id: str(r, 'site_id'),
+		ip: str(r, 'ip'),
+		user_agent: str(r, 'user_agent')
+	};
+};
+
+const parseAuditEntry: Validator<AuditEntry> = (e) => {
+	const r = record(e, 'entry');
+	return {
+		...parseAuditEvent(r),
+		actor: nullableStr(r, 'actor'),
+		subject: nullableStr(r, 'subject'),
+		details: record(r.details, 'details')
+	};
+};
+
+const parseActivationLink: Validator<string> = (v) => {
+	const link = str(record(v, 'activation'), 'activation_link');
+	// Shape check: an http(s) activation link, never e.g. a javascript: URL.
+	if (!/^https?:\/\/[^\s/]+\/activate#[A-Za-z0-9_-]+$/.test(link)) fail('activation_link');
+	return link;
+};
+
 const parseRemaining: Validator<number> = (v) => num(record(v, 'recovery'), 'remaining');
 const parseRevoked: Validator<number> = (v) => num(record(v, 'revoked'), 'revoked');
 
 async function request<T>(
-	method: 'GET' | 'POST' | 'DELETE',
+	method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
 	path: string,
 	parse: Validator<T>,
 	body: unknown,
@@ -292,6 +385,8 @@ async function request<T>(
 	}
 	return parse(data);
 }
+
+const enc = encodeURIComponent;
 
 const get = <T>(path: string, parse: Validator<T>, f: typeof fetch) =>
 	request('GET', path, parse, undefined, f);
@@ -343,6 +438,48 @@ export const api = {
 		request('DELETE', `/api/v1/account/sessions/${encodeURIComponent(id)}`, noContent, undefined, f),
 	revokeOtherSessions: (f: typeof fetch = fetch) =>
 		post('/api/v1/account/sessions/revoke-others', parseRevoked, undefined, f),
+	ownGroups: (f: typeof fetch = fetch) =>
+		get('/api/v1/account/groups', (v) => list(record(v, 'groups'), 'groups', parseGroupRef), f),
+
+	admin: {
+		users: (f: typeof fetch = fetch) =>
+			get('/api/v1/admin/users', (v) => list(record(v, 'users'), 'users', parseAdminUser), f),
+		user: (id: string, f: typeof fetch = fetch) => get(`/api/v1/admin/users/${enc(id)}`, parseAdminUser, f),
+		invite: (username: string, displayName: string, isAdmin: boolean, f: typeof fetch = fetch) =>
+			post(
+				'/api/v1/admin/users',
+				parseActivationLink,
+				{ username, display_name: displayName, is_admin: isAdmin },
+				f
+			),
+		updateUser: (id: string, changes: { display_name?: string; is_admin?: boolean }, f: typeof fetch = fetch) =>
+			request('PATCH', `/api/v1/admin/users/${enc(id)}`, noContent, changes, f),
+		resetUser: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/admin/users/${enc(id)}/reset`, parseActivationLink, undefined, f),
+		setDisabled: (id: string, disabled: boolean, f: typeof fetch = fetch) =>
+			post(`/api/v1/admin/users/${enc(id)}/${disabled ? 'disable' : 'enable'}`, noContent, undefined, f),
+		userActivity: (id: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/admin/users/${enc(id)}/activity`, parseActivity, f),
+
+		groups: (f: typeof fetch = fetch) =>
+			get('/api/v1/admin/groups', (v) => list(record(v, 'groups'), 'groups', parseGroup), f),
+		group: (id: string, f: typeof fetch = fetch) => get(`/api/v1/admin/groups/${enc(id)}`, parseGroupDetail, f),
+		createGroup: (name: string, description: string, f: typeof fetch = fetch) =>
+			post('/api/v1/admin/groups', parseGroup, { name, description }, f),
+		updateGroup: (id: string, name: string, description: string, f: typeof fetch = fetch) =>
+			request('PATCH', `/api/v1/admin/groups/${enc(id)}`, noContent, { name, description }, f),
+		deleteGroup: (id: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/admin/groups/${enc(id)}`, noContent, undefined, f),
+		setMember: (groupId: string, userId: string, member: boolean, f: typeof fetch = fetch) =>
+			request(member ? 'PUT' : 'DELETE', `/api/v1/admin/groups/${enc(groupId)}/members/${enc(userId)}`, noContent, undefined, f),
+
+		audit: (before: string | null, f: typeof fetch = fetch) =>
+			get(
+				`/api/v1/admin/audit${before ? `?before=${enc(before)}` : ''}`,
+				(v) => list(record(v, 'audit'), 'entries', parseAuditEntry),
+				f
+			)
+	},
 
 	activity: (f: typeof fetch = fetch) => get('/api/v1/account/activity', parseActivity, f),
 	changePassword: (currentPassword: string, newPassword: string, f: typeof fetch = fetch) =>

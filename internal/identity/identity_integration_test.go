@@ -82,10 +82,20 @@ func newTestEnv(t *testing.T) *testEnv {
 
 // newUser creates a user with a unique name and removes it (and its audit
 // trail and throttle counters) when the test ends.
-func (e *testEnv) newUser(t *testing.T) User {
+func (e *testEnv) newUser(t *testing.T) User { return e.newUserWith(t, false) }
+
+// newAdmin creates an administrator, activated, and returns a fresh full session for it.
+func (e *testEnv) newAdmin(t *testing.T) (User, Session) {
+	t.Helper()
+	u := e.newUserWith(t, true)
+	_, token := e.activate(t, u)
+	return u, e.session(t, token)
+}
+
+func (e *testEnv) newUserWith(t *testing.T, admin bool) User {
 	t.Helper()
 	name := fmt.Sprintf("it-%d-%d", time.Now().UnixNano()%1e9, testSeq.Add(1))
-	u, err := e.svc.CreateUser(context.Background(), e.client, NewUser{Username: name, DisplayName: "Test User"})
+	u, err := e.svc.CreateUser(context.Background(), e.client, NewUser{Username: name, DisplayName: "Test User", IsAdmin: admin})
 	if err != nil {
 		t.Fatal(err)
 	}

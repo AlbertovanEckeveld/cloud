@@ -288,6 +288,13 @@ func (s *Service) FinishPasskeyLogin(ctx context.Context, c Client, challengeID 
 			return nil, err
 		}
 		owner = &id
+		var disabled bool
+		if err := s.db.QueryRow(ctx, `SELECT disabled_at IS NOT NULL FROM identity.users WHERE id = $1`, id).Scan(&disabled); err != nil {
+			return nil, err
+		}
+		if disabled {
+			return nil, errors.New("account disabled")
+		}
 		return s.loadWebauthnUser(ctx, s.db, id)
 	}
 	_, cred, err := s.webauthn.ValidatePasskeyLogin(handler, data, parsed)
@@ -318,7 +325,7 @@ func (s *Service) FinishPasskeyLogin(ctx context.Context, c Client, challengeID 
 		if token, err = s.createSession(ctx, tx, *owner, StateAuthenticated, nil, c, sessionMaxTTL); err != nil {
 			return err
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventLoginSucceeded, actor: owner, details: map[string]any{"method": "passkey"}})
+		return s.recordLogin(ctx, tx, c, *owner, "passkey")
 	})
 	return token, err
 }

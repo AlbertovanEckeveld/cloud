@@ -52,7 +52,15 @@ const eventLabels: Record<string, string> = {
 	'auth.passkey.failed': 'Mislukte inlogpoging met passkey',
 	'auth.recovery_codes.generated': 'Nieuwe herstelcodes aangemaakt',
 	'auth.recovery_code.used': 'Herstelcode gebruikt',
-	'auth.session.revoked': 'Uitgelogd op ander apparaat'
+	'auth.session.revoked': 'Uitgelogd op ander apparaat',
+	'user.updated': 'Account gewijzigd door beheerder',
+	'user.disabled': 'Account uitgeschakeld',
+	'user.enabled': 'Account ingeschakeld',
+	'group.created': 'Groep aangemaakt',
+	'group.updated': 'Groep gewijzigd',
+	'group.deleted': 'Groep verwijderd',
+	'group.member_added': 'Toegevoegd aan groep',
+	'group.member_removed': 'Verwijderd uit groep'
 };
 
 /** Returns the Dutch description of an audit event. */
@@ -62,7 +70,13 @@ export function eventLabel(event: string): string {
 
 /** Events that may indicate an attack and deserve attention. */
 export function isWarningEvent(event: string): boolean {
-	return ['auth.login.failed', 'auth.totp.failed', 'auth.passkey.failed', 'auth.recovery_code.used'].includes(event);
+	return [
+		'auth.login.failed',
+		'auth.totp.failed',
+		'auth.passkey.failed',
+		'auth.recovery_code.used',
+		'user.disabled'
+	].includes(event);
 }
 
 /**

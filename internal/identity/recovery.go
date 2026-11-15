@@ -106,8 +106,7 @@ func (s *Service) VerifyRecoveryCode(ctx context.Context, c Client, sess Session
 		if err := s.audit(ctx, tx, c, auditEntry{event: EventRecoveryCodeUsed, actor: &sess.UserID}); err != nil {
 			return err
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventLoginSucceeded, actor: &sess.UserID,
-			details: map[string]any{"method": "password+recovery_code"}})
+		return s.recordLogin(ctx, tx, c, sess.UserID, "password+recovery_code")
 	})
 	if errors.Is(err, ErrInvalidCode) {
 		s.totpFailed(ctx, c, sess, key)

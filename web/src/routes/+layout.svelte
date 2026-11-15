@@ -28,7 +28,7 @@
 			<nav class="nav" aria-label="Hoofdmenu">
 				<a href="/" aria-current={current('/')}>Start</a>
 				{#if data.user.is_admin}
-					<a href="/system" aria-current={current('/system')}>Systeem</a>
+					<a href="/admin" aria-current={page.url.pathname.startsWith('/admin') ? 'page' : undefined}>Beheer</a>
 				{/if}
 			</nav>
 			<div class="site-header__actions">

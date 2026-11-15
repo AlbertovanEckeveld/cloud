@@ -129,3 +129,21 @@ describe('POST requests', () => {
 		await expect(api.beginTotpEnrollment(res)).rejects.toMatchObject({ code: 'invalid_response' });
 	});
 });
+
+describe('admin.invite', () => {
+	it('returns a well-formed activation link', async () => {
+		const link = 'https://cloud.example.com/activate#abc_DEF-123';
+		const res = respond({ user: {}, activation_link: link }, 201);
+		expect(await api.admin.invite('bob', 'Bob', false, res)).toBe(link);
+	});
+
+	it.each(['javascript:alert(1)//activate#x', 'https://evil.example/phish', 'https://a.b/activate#x y'])(
+		'rejects %s',
+		async (link) => {
+			const res = respond({ user: {}, activation_link: link }, 201);
+			await expect(api.admin.invite('bob', 'Bob', false, res)).rejects.toMatchObject({
+				code: 'invalid_response'
+			});
+		}
+	);
+});

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, errorMessage, type AuditEvent } from '#lib/api.ts';
-	import { dateTime, eventLabel, isWarningEvent, timeAgo } from '#lib/format.ts';
+	import { api, errorMessage, type AuditEvent, type GroupRef } from '#lib/api.ts';
+	import ActivityList from '#lib/components/ActivityList.svelte';
 	import PasskeysPanel from '#lib/components/account/PasskeysPanel.svelte';
 	import RecoveryPanel from '#lib/components/account/RecoveryPanel.svelte';
 	import SessionsPanel from '#lib/components/account/SessionsPanel.svelte';
@@ -10,6 +10,8 @@
 	let { data }: PageProps = $props();
 
 	let events = $state<AuditEvent[] | null>(null);
+	let groups = $state<GroupRef[] | null>(null);
+	let groupsFailed = $state(false);
 	let activityError = $state<string | null>(null);
 
 	let current = $state('');
@@ -28,7 +30,14 @@
 		}
 	}
 
-	onMount(loadActivity);
+	onMount(async () => {
+		await loadActivity();
+		try {
+			groups = await api.ownGroups();
+		} catch {
+			groupsFailed = true;
+		}
+	});
 
 	async function changePassword(e: SubmitEvent) {
 		e.preventDefault();
@@ -58,7 +67,7 @@
 
 <h1>Account</h1>
 
-<div class="grid">
+<div class="columns">
 	<div class="stack">
 		<section class="panel" aria-labelledby="profile-title">
 			<h2 id="profile-title">Profiel</h2>
@@ -70,6 +79,12 @@
 					<dd><code>{data.user.username}</code></dd>
 					<dt>Rol</dt>
 					<dd>{data.user.is_admin ? 'Beheerder' : 'Gebruiker'}</dd>
+					<dt>Groepen</dt>
+					<dd>
+						{#if groupsFailed}<span class="muted">Kon niet worden geladen</span>{:else if groups === null}…{:else if groups.length === 0}<span class="muted">Geen</span>{:else}
+							{#each groups as g (g.id)}<span class="badge">{g.name}</span> {/each}
+						{/if}
+					</dd>
 					<dt>Tweestapsverificatie</dt>
 					<dd><span class="badge badge--ok">Authenticator-app actief</span></dd>
 				</dl>
@@ -117,73 +132,15 @@
 			{:else if events === null}
 				<p class="muted">Laden…</p>
 			{:else}
-				<ul class="activity">
-					{#each events as event (event.id)}
-						<li class:warning={isWarningEvent(event.event)}>
-							<span class="activity__what">{eventLabel(event.event)}</span>
-							<span class="muted small">
-								<time datetime={event.occurred_at} title={dateTime(event.occurred_at)}>
-									{timeAgo(event.occurred_at)}
-								</time>
-								{#if event.ip}· {event.ip}{/if}
-							</span>
-						</li>
-					{/each}
-				</ul>
+				<ActivityList {events} />
 			{/if}
 		</section>
 	</div>
 </div>
 
 <style>
-	.grid {
-		display: grid;
-		gap: 1rem;
-		grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
-		align-items: start;
-		margin-top: 1.5rem;
-	}
-	.stack {
-		display: grid;
-		gap: 1rem;
-	}
-	.details {
-		display: grid;
-		grid-template-columns: max-content 1fr;
-		gap: 0.4rem 1rem;
-		margin: 0;
-	}
-	.details dt {
-		color: var(--muted);
-	}
-	.details dd {
-		margin: 0;
-	}
 	.panel .small {
 		margin: 0 0 1rem;
-	}
-	.activity {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-	.activity li {
-		display: flex;
-		flex-direction: column;
-		padding-block: 0.5rem;
-		border-bottom: 1px solid var(--border);
-	}
-	.activity li:last-child {
-		border-bottom: 0;
-	}
-	.activity .small {
-		margin: 0;
-	}
-	.activity__what {
-		color: var(--text-strong);
-	}
-	.warning .activity__what {
-		color: var(--danger);
 	}
 	.visually-hidden {
 		position: absolute;

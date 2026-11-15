@@ -290,3 +290,48 @@ input {
 .add input {
 	flex: 1;
 }
+.check {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+.check input {
+	width: auto;
+}
+
+/* Page layout: responsive columns of panels */
+.columns {
+	display: grid;
+	gap: 1rem;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+	align-items: start;
+	margin-top: 1.5rem;
+}
+.stack {
+	display: grid;
+	gap: 1rem;
+}
+.details {
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: 0.4rem 1rem;
+	margin: 0 0 1rem;
+}
+.details dt {
+	color: var(--muted);
+}
+.details dd {
+	margin: 0;
+}
+select {
+	font: inherit;
+	color: var(--text-strong);
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 0.55rem 0.7rem;
+	flex: 1;
+}
+.panel > .table {
+	margin: -0.5rem 0;
+}

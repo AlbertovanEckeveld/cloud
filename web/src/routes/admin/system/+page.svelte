@@ -44,7 +44,7 @@
 </script>
 
 <svelte:head>
-	<title>Systeemstatus · Cloud</title>
+	<title>Systeem · Beheer · Cloud</title>
 </svelte:head>
 
 <div class="page-header">

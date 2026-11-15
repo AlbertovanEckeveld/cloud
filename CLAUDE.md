@@ -196,10 +196,11 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   migraties + Dockerfile), 0.2 NATS + outbox, 0.3 CI, 0.4 back-ups
 - Laatst afgerond: 0.1 skelet (2026-11-15). 0.2–0.4 uitgesteld op mijn verzoek;
   back-ups (0.4) moeten er zijn vóór er echte data in staat.
-- Bezig met: **fase 1 – identity**. 1.1 (accounts, wachtwoord + TOTP, sessies, audit-log, CLI)
-  gecommit. 1.2 (passkeys, herstelcodes, sessiebeheer, recente authenticatie) gebouwd en
-  getest; wacht op mijn eigen test. Daarna: 1.3 gebruikers/groepen, centrale autorisatie,
-  deelmodel; 1.4 OIDC-provider.
+- Bezig met: **fase 1 – identity**. 1.1 en 1.2 gecommit. 1.3 (gebruikers- en groepsbeheer,
+  beheer-audit-log, admin-UI) gebouwd en getest; wacht op mijn eigen test. Het deelmodel is
+  ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`. Daarna: 1.4 OIDC-provider.
+- Testen: de dev-database wordt gedeeld met mijn eigen account. Tests ruimen alleen hun eigen
+  data op (`it-*`, `e2e-*`); nooit `TRUNCATE` op tabellen met echte gegevens.
 - Klaar als (fase 1): inloggen met passkey; admin nodigt gebruiker uit en beheert groepen;
   een externe app (Grafana) logt in via onze OIDC; alle auth-events in de audit-log; getest.
 - Open vragen: definitieve keuze Go vs. Rust (huidige keuze: Go)

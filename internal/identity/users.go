@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -43,9 +44,14 @@ func validateDisplayName(s string) error {
 	return nil
 }
 
-// CreateUser creates an account without credentials. Call IssueActivation
-// to let the user set a password and second factor.
+// CreateUser creates an account without credentials, on behalf of the
+// server operator (CLI). Call IssueActivation to let the user set a password
+// and second factor. Administrators use InviteUser.
 func (s *Service) CreateUser(ctx context.Context, c Client, in NewUser) (User, error) {
+	return s.createUser(ctx, c, nil, in)
+}
+
+func (s *Service) createUser(ctx context.Context, c Client, actor *uuid.UUID, in NewUser) (User, error) {
 	u := User{
 		ID:          newID(),
 		Username:    normalizeUsername(in.Username),
@@ -72,7 +78,7 @@ func (s *Service) CreateUser(ctx context.Context, c Client, in NewUser) (User, e
 			return fmt.Errorf("insert user: %w", err)
 		}
 		return s.audit(ctx, tx, c, auditEntry{
-			event: EventUserCreated, subject: &u.ID,
+			event: EventUserCreated, actor: actor, subject: &u.ID,
 			details: map[string]any{"username": u.Username, "is_admin": u.IsAdmin},
 		})
 	})
@@ -88,17 +94,25 @@ func (s *Service) CreateUser(ctx context.Context, c Client, in NewUser) (User, e
 // sessions and links stop working.
 // That makes it the recovery path for a user who lost their authenticator.
 func (s *Service) IssueActivation(ctx context.Context, c Client, username string) (string, error) {
+	return s.issueActivation(ctx, c, nil, username)
+}
+
+func (s *Service) issueActivation(ctx context.Context, c Client, actor *uuid.UUID, username string) (string, error) {
 	token, hash := newToken()
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		now := s.now()
 		var u User
-		err := tx.QueryRow(ctx, `SELECT id, username FROM identity.users WHERE username = $1 FOR UPDATE`,
-			normalizeUsername(username)).Scan(&u.ID, &u.Username)
+		var disabled bool
+		err := tx.QueryRow(ctx, `SELECT id, username, disabled_at IS NOT NULL FROM identity.users WHERE username = $1 FOR UPDATE`,
+			normalizeUsername(username)).Scan(&u.ID, &u.Username, &disabled)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrUserNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("load user: %w", err)
+		}
+		if disabled {
+			return ErrUserDisabled
 		}
 		resets := []struct {
 			sql  string
@@ -121,7 +135,7 @@ func (s *Service) IssueActivation(ctx context.Context, c Client, username string
 			VALUES ($1, $2, $3, $4)`, hash, u.ID, now, now.Add(activationTTL)); err != nil {
 			return fmt.Errorf("insert activation token: %w", err)
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventActivationIssued, subject: &u.ID})
+		return s.audit(ctx, tx, c, auditEntry{event: EventActivationIssued, actor: actor, subject: &u.ID})
 	})
 	if err != nil {
 		return "", err

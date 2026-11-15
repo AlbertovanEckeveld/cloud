@@ -202,3 +202,34 @@ func findCookie(resp *http.Response, name string) *http.Cookie {
 	}
 	return nil
 }
+
+func TestHTTPAdminRoutesRequireAdmin(t *testing.T) {
+	h := newHTTPEnv(t, "http://localhost:8080")
+	u := h.newUser(t)
+	secret, _ := h.activate(t, u)
+
+	// Sign in over HTTP as a regular user.
+	h.do(t, "POST", "/auth/login", map[string]string{"username": u.Username, "password": testPassword})
+	if resp, _ := h.do(t, "POST", "/auth/login/totp", map[string]string{"code": h.code(secret)}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", resp.StatusCode)
+	}
+	for _, req := range []struct{ method, path string }{
+		{"GET", "/admin/users"},
+		{"POST", "/admin/users"},
+		{"GET", "/admin/groups"},
+		{"GET", "/admin/audit"},
+		{"POST", "/admin/users/" + u.ID.String() + "/disable"},
+	} {
+		var body any
+		if req.method == "POST" {
+			body = map[string]any{}
+		}
+		if resp, _ := h.do(t, req.method, req.path, body); resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s %s as regular user: %d, want 403", req.method, req.path, resp.StatusCode)
+		}
+	}
+	// Their own groups are visible to them.
+	if resp, body := h.do(t, "GET", "/account/groups", nil); resp.StatusCode != http.StatusOK || body["groups"] == nil {
+		t.Errorf("own groups: %d %v", resp.StatusCode, body)
+	}
+}

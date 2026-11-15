@@ -113,8 +113,8 @@ func RequireAdmin(next http.Handler) http.Handler {
 	})
 }
 
-// Routes mounts the identity API: /auth/* for signing in and /account/* for
-// the signed-in user's own account.
+// Routes mounts the identity API: /auth/* for signing in, /account/* for
+// the signed-in user's own account and /admin/* for administrators.
 func (s *Service) Routes(r chi.Router) {
 	r.Route("/auth", func(r chi.Router) {
 		r.Get("/session", s.handleSession)
@@ -141,7 +141,9 @@ func (s *Service) Routes(r chi.Router) {
 		r.Get("/sessions", s.handleListSessions)
 		r.Delete("/sessions/{id}", s.handleRevokeSession)
 		r.Post("/sessions/revoke-others", s.handleRevokeOtherSessions)
+		r.Get("/groups", s.handleOwnGroups)
 	})
+	r.Route("/admin", s.adminRoutes)
 }
 
 type sessionHandler func(w http.ResponseWriter, r *http.Request, sess Session, u User)
@@ -327,6 +329,18 @@ func (s *Service) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpserver.WriteError(w, http.StatusBadRequest, "passkey_rejected", "De passkey kon niet worden geverifieerd.")
 	case errors.Is(err, ErrChallengeInvalid):
 		httpserver.WriteError(w, http.StatusBadRequest, "challenge_expired", "Dit verzoek is verlopen. Probeer het opnieuw.")
+	case errors.Is(err, ErrLastAdmin):
+		httpserver.WriteError(w, http.StatusConflict, "last_admin", "Er moet minstens één actieve beheerder overblijven.")
+	case errors.Is(err, ErrSelf):
+		httpserver.WriteError(w, http.StatusConflict, "self", "Dit kun je niet bij je eigen account doen.")
+	case errors.Is(err, ErrUserDisabled):
+		httpserver.WriteError(w, http.StatusConflict, "user_disabled", "Dit account is uitgeschakeld. Schakel het eerst in.")
+	case errors.Is(err, ErrUserExists):
+		httpserver.WriteError(w, http.StatusConflict, "username_taken", "Deze gebruikersnaam is al in gebruik.")
+	case errors.Is(err, ErrGroupExists):
+		httpserver.WriteError(w, http.StatusConflict, "group_exists", "Er bestaat al een groep met deze naam.")
+	case errors.Is(err, ErrUserNotFound):
+		httpserver.WriteError(w, http.StatusNotFound, "not_found", "Gebruiker niet gevonden.")
 	case errors.Is(err, ErrWrongState):
 		httpserver.WriteError(w, http.StatusConflict, "invalid_state", "Deze stap is nu niet mogelijk. Begin opnieuw met inloggen.")
 	default:
@@ -500,4 +514,16 @@ func (s *Service) handleRevokeOtherSessions(w http.ResponseWriter, r *http.Reque
 	httpserver.WriteJSON(w, http.StatusOK, struct {
 		Revoked int `json:"revoked"`
 	}{n})
+}
+
+func (s *Service) handleOwnGroups(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	groups, err := s.UserGroups(r.Context(), p.User.ID)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Groups []GroupRef `json:"groups"`
+	}{groups})
 }
