@@ -164,3 +164,25 @@ describe('oidcApprove', () => {
 		await expect(api.oidcApprove('x', respond({ redirect }))).rejects.toMatchObject({ code: 'invalid_response' });
 	});
 });
+
+describe('profile', () => {
+	const profile = { display_name: 'Bob', given_name: 'Bob', family_name: 'B', locale: 'nl', picture: '' };
+
+	it('accepts an avatar URL', async () => {
+		const picture = 'https://cloud.example.com/avatars/0123456789abcdef0123456789abcdef.jpg';
+		expect((await api.profile(respond({ ...profile, picture }))).picture).toBe(picture);
+	});
+
+	it.each(['javascript:alert(1)', 'https://evil.example/x.jpg', 'https://cloud.example.com/avatars/../../etc.jpg'])(
+		'rejects picture %s',
+		async (picture) => {
+			await expect(api.profile(respond({ ...profile, picture }))).rejects.toMatchObject({ code: 'invalid_response' });
+		}
+	);
+
+	it('maps upload errors', async () => {
+		const res = respond({ error: { code: 'invalid_image', message: 'Geen afbeelding' } }, 422);
+		const file = new File(['x'], 'a.png', { type: 'image/png' });
+		await expect(api.uploadAvatar(file, res)).rejects.toMatchObject({ status: 422, code: 'invalid_image' });
+	});
+});

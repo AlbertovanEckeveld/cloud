@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"github.com/zitadel/oidc/v3/pkg/op"
+	"golang.org/x/text/language"
 )
 
 // scopeGroups requests the "groups" claim: the names of the user's groups.
@@ -43,13 +44,15 @@ type authRequest struct {
 	userID    *uuid.UUID
 	authTime  time.Time
 	createdAt time.Time
+	amr       []string
+	acr       string
 }
 
 var _ op.AuthRequest = (*authRequest)(nil)
 
 func (a *authRequest) GetID() string                      { return a.id.String() }
-func (a *authRequest) GetACR() string                     { return "" }
-func (a *authRequest) GetAMR() []string                   { return nil }
+func (a *authRequest) GetACR() string                     { return a.acr }
+func (a *authRequest) GetAMR() []string                   { return a.amr }
 func (a *authRequest) GetAudience() []string              { return []string{a.req.ClientID} }
 func (a *authRequest) GetAuthTime() time.Time             { return a.authTime }
 func (a *authRequest) GetClientID() string                { return a.req.ClientID }
@@ -95,8 +98,8 @@ func (st *oidcStorage) loadAuthRequest(ctx context.Context, where string, arg an
 	var raw []byte
 	var authTime *time.Time
 	err := st.s.db.QueryRow(ctx, `
-		SELECT id, request, user_id, auth_time, created_at FROM identity.oidc_auth_requests
-		WHERE `+where+` AND expires_at > $2`, arg, st.s.now()).Scan(&a.id, &raw, &a.userID, &authTime, &a.createdAt)
+		SELECT id, request, user_id, auth_time, created_at, amr, acr FROM identity.oidc_auth_requests
+		WHERE `+where+` AND expires_at > $2`, arg, st.s.now()).Scan(&a.id, &raw, &a.userID, &authTime, &a.createdAt, &a.amr, &a.acr)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, oidc.ErrInvalidRequest().WithDescription("authorization request not found or expired")
 	}
@@ -153,11 +156,13 @@ type refreshRequest struct {
 	userID   uuid.UUID
 	scopes   []string
 	authTime time.Time
+	amr      []string
+	acr      string
 }
 
 var _ op.RefreshTokenRequest = (*refreshRequest)(nil)
 
-func (r *refreshRequest) GetAMR() []string                 { return nil }
+func (r *refreshRequest) GetAMR() []string                 { return r.amr }
 func (r *refreshRequest) GetAudience() []string            { return []string{r.clientID} }
 func (r *refreshRequest) GetAuthTime() time.Time           { return r.authTime }
 func (r *refreshRequest) GetClientID() string              { return r.clientID }
@@ -165,18 +170,27 @@ func (r *refreshRequest) GetScopes() []string              { return r.scopes }
 func (r *refreshRequest) GetSubject() string               { return r.userID.String() }
 func (r *refreshRequest) SetCurrentScopes(scopes []string) { r.scopes = scopes }
 
-// grantOf extracts who gets a token for which app from either kind of request.
-func grantOf(req op.TokenRequest) (clientID string, userID uuid.UUID, authTime time.Time, err error) {
+// grant is who gets a token for which app, and how they signed in.
+type grant struct {
+	clientID string
+	userID   uuid.UUID
+	authTime time.Time
+	amr      []string
+	acr      string
+}
+
+// grantOf extracts the grant from either kind of token request.
+func grantOf(req op.TokenRequest) (grant, error) {
 	switch r := req.(type) {
 	case *authRequest:
 		if r.userID == nil {
-			return "", uuid.Nil, time.Time{}, oidc.ErrInvalidGrant()
+			return grant{}, oidc.ErrInvalidGrant()
 		}
-		return r.req.ClientID, *r.userID, r.authTime, nil
+		return grant{r.req.ClientID, *r.userID, r.authTime, r.amr, r.acr}, nil
 	case *refreshRequest:
-		return r.clientID, r.userID, r.authTime, nil
+		return grant{r.clientID, r.userID, r.authTime, r.amr, r.acr}, nil
 	default:
-		return "", uuid.Nil, time.Time{}, fmt.Errorf("unsupported token request %T", req)
+		return grant{}, fmt.Errorf("unsupported token request %T", req)
 	}
 }
 
@@ -208,24 +222,25 @@ func (st *oidcStorage) insertAccessToken(ctx context.Context, q dbtx, clientID s
 }
 
 func (st *oidcStorage) CreateAccessToken(ctx context.Context, req op.TokenRequest) (string, time.Time, error) {
-	clientID, userID, _, err := grantOf(req)
+	g, err := grantOf(req)
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if err := st.s.mayUseClient(ctx, st.s.db, userID, clientID); err != nil {
+	if err := st.s.mayUseClient(ctx, st.s.db, g.userID, g.clientID); err != nil {
 		return "", time.Time{}, oidc.ErrAccessDenied()
 	}
-	return st.insertAccessToken(ctx, st.s.db, clientID, userID, req.GetScopes(), nil)
+	return st.insertAccessToken(ctx, st.s.db, g.clientID, g.userID, req.GetScopes(), nil)
 }
 
 // CreateAccessAndRefreshTokens issues tokens for the code flow (current is
 // empty) or rotates a refresh token: the old one stops working, so a stolen
 // refresh token is useless once the real app has used it.
 func (st *oidcStorage) CreateAccessAndRefreshTokens(ctx context.Context, req op.TokenRequest, current string) (string, string, time.Time, error) {
-	clientID, userID, authTime, err := grantOf(req)
+	g, err := grantOf(req)
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
+	clientID, userID := g.clientID, g.userID
 	refresh, refreshHash := newToken()
 	now := st.s.now()
 	var accessID string
@@ -237,9 +252,9 @@ func (st *oidcStorage) CreateAccessAndRefreshTokens(ctx context.Context, req op.
 		refreshID := newID()
 		if current == "" {
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO identity.oidc_refresh_tokens (id, token_hash, client_id, user_id, scopes, auth_time, created_at, expires_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-				refreshID, refreshHash, clientID, userID, req.GetScopes(), authTime, now, now.Add(oidcRefreshTokenTTL)); err != nil {
+				INSERT INTO identity.oidc_refresh_tokens (id, token_hash, client_id, user_id, scopes, auth_time, amr, acr, created_at, expires_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+				refreshID, refreshHash, clientID, userID, req.GetScopes(), g.authTime, g.amr, g.acr, now, now.Add(oidcRefreshTokenTTL)); err != nil {
 				return fmt.Errorf("store refresh token: %w", err)
 			}
 		} else {
@@ -274,9 +289,9 @@ func (st *oidcStorage) CreateAccessAndRefreshTokens(ctx context.Context, req op.
 func (st *oidcStorage) TokenRequestByRefreshToken(ctx context.Context, token string) (op.RefreshTokenRequest, error) {
 	r := &refreshRequest{}
 	err := st.s.db.QueryRow(ctx, `
-		SELECT id, client_id, user_id, scopes, auth_time FROM identity.oidc_refresh_tokens
+		SELECT id, client_id, user_id, scopes, auth_time, amr, acr FROM identity.oidc_refresh_tokens
 		WHERE token_hash = $1 AND expires_at > $2`, sha(token), st.s.now()).
-		Scan(&r.id, &r.clientID, &r.userID, &r.scopes, &r.authTime)
+		Scan(&r.id, &r.clientID, &r.userID, &r.scopes, &r.authTime, &r.amr, &r.acr)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, oidc.ErrInvalidGrant()
 	}
@@ -287,18 +302,6 @@ func (st *oidcStorage) TokenRequestByRefreshToken(ctx context.Context, token str
 		return nil, oidc.ErrInvalidGrant().WithDescription("access to this app was revoked")
 	}
 	return r, nil
-}
-
-// TerminateSession is called on RP-initiated logout: the app's tokens for
-// this user are revoked.
-func (st *oidcStorage) TerminateSession(ctx context.Context, userID, clientID string) error {
-	if _, err := st.s.db.Exec(ctx, `DELETE FROM identity.oidc_refresh_tokens WHERE user_id = $1 AND client_id = $2`, userID, clientID); err != nil {
-		return fmt.Errorf("terminate session: %w", err)
-	}
-	if _, err := st.s.db.Exec(ctx, `DELETE FROM identity.oidc_access_tokens WHERE user_id = $1 AND client_id = $2`, userID, clientID); err != nil {
-		return fmt.Errorf("terminate session: %w", err)
-	}
-	return nil
 }
 
 // RevokeToken implements RFC 7009 for access token IDs and refresh tokens.
@@ -383,10 +386,13 @@ func (st *oidcStorage) AuthorizeClientIDSecret(ctx context.Context, clientID, se
 // setUserinfo fills the claims for the requested scopes.
 func (s *Service) setUserinfo(ctx context.Context, info *oidc.UserInfo, userID uuid.UUID, scopes []string) error {
 	var u User
+	var p Profile
+	var avatarKey *string
 	var updatedAt time.Time
 	err := s.db.QueryRow(ctx, `
-		SELECT username, display_name, COALESCE(email, ''), updated_at FROM identity.users
-		WHERE id = $1 AND disabled_at IS NULL`, userID).Scan(&u.Username, &u.DisplayName, &u.Email, &updatedAt)
+		SELECT username, display_name, COALESCE(email, ''), updated_at, given_name, family_name, locale, avatar_key
+		FROM identity.users WHERE id = $1 AND disabled_at IS NULL`, userID).
+		Scan(&u.Username, &u.DisplayName, &u.Email, &updatedAt, &p.GivenName, &p.FamilyName, &p.Locale, &avatarKey)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return oidc.ErrAccessDenied()
 	}
@@ -399,6 +405,12 @@ func (s *Service) setUserinfo(ctx context.Context, info *oidc.UserInfo, userID u
 		case oidc.ScopeProfile:
 			info.Name = u.DisplayName
 			info.PreferredUsername = u.Username
+			info.GivenName = p.GivenName
+			info.FamilyName = p.FamilyName
+			info.Picture = s.avatarURL(avatarKey)
+			if tag, err := language.Parse(p.Locale); err == nil {
+				info.Locale = oidc.NewLocale(tag)
+			}
 			info.UpdatedAt = oidc.FromTime(updatedAt)
 		case oidc.ScopeEmail:
 			if u.Email != "" {

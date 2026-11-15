@@ -72,6 +72,7 @@ type app struct {
 	cfg      config.Config
 	logger   *slog.Logger
 	pool     *pgxpool.Pool
+	store    *storage.Client
 	mailer   *mailer.Mailer
 	identity *identity.Service
 }
@@ -110,6 +111,11 @@ func setup(ctx context.Context, logOutput io.Writer) (*app, error) {
 		pool.Close()
 		return nil, err
 	}
+	store, err := storage.New(cfg.Storage)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
 	mail, err := mailer.New(pool, sl, cfg.Mail, cfg.PublicURL.Hostname(), logger)
 	if err != nil {
 		pool.Close()
@@ -123,7 +129,7 @@ func setup(ctx context.Context, logOutput io.Writer) (*app, error) {
 		return nil, fmt.Errorf("derive oidc key: %w", err)
 	}
 	opts := identity.Options{SiteID: cfg.SiteID, PublicURL: cfg.PublicURL, Mailer: mail, Logger: logger,
-		OIDCTokenKey: [32]byte(tokenKey), DevMode: cfg.Env == config.EnvDevelopment}
+		OIDCTokenKey: [32]byte(tokenKey), DevMode: cfg.Env == config.EnvDevelopment, Objects: store}
 	if cfg.Env == config.EnvDevelopment {
 		// Passkeys are bound to an origin; allow the Vite dev server of `make dev`.
 		opts.ExtraOrigins = []string{"http://localhost:5173"}
@@ -133,7 +139,7 @@ func setup(ctx context.Context, logOutput io.Writer) (*app, error) {
 		pool.Close()
 		return nil, err
 	}
-	return &app{cfg: cfg, logger: logger, pool: pool, mailer: mail, identity: id}, nil
+	return &app{cfg: cfg, logger: logger, pool: pool, store: store, mailer: mail, identity: id}, nil
 }
 
 func serve(ctx context.Context) error {
@@ -150,10 +156,7 @@ func serve(ctx context.Context) error {
 
 	startupCtx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	store, err := storage.New(cfg.Storage)
-	if err != nil {
-		return err
-	}
+	store := a.store
 	if err := store.Ping(startupCtx); err != nil {
 		return fmt.Errorf("object storage: %w", err)
 	}
@@ -219,6 +222,7 @@ func serve(ctx context.Context) error {
 		sites:        registry,
 		frontend:     spa,
 		oidc:         oidcProvider,
+		avatars:      a.identity.AvatarHandler,
 		identity:     a.identity.Routes,
 		requireUser:  a.identity.RequireUser,
 		requireAdmin: identity.RequireAdmin,

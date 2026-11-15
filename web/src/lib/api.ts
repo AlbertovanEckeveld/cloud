@@ -126,6 +126,15 @@ export interface AuditEntry extends AuditEvent {
 	details: Record<string, unknown>;
 }
 
+export interface Profile {
+	display_name: string;
+	given_name: string;
+	family_name: string;
+	locale: 'nl' | 'en';
+	/** Absolute URL of the profile picture, or empty. */
+	picture: string;
+}
+
 export interface OidcRequest {
 	app_name: string;
 	/** The app asked for no sign-in page at all (prompt=none). */
@@ -139,6 +148,7 @@ export interface OidcClient {
 	redirect_uris: string[];
 	post_logout_redirect_uris: string[];
 	allowed_group: GroupRef | null;
+	backchannel_logout_uri: string;
 	created_at: string;
 }
 
@@ -148,6 +158,19 @@ export interface OidcClientInput {
 	redirect_uris: string[];
 	post_logout_redirect_uris: string[];
 	allowed_group_id: string | null;
+	backchannel_logout_uri: string;
+}
+
+export interface AppGrant {
+	client_id: string;
+	name: string;
+	first_login_at: string;
+	last_login_at: string;
+}
+
+export interface LogoutRequest {
+	app_name: string;
+	redirect: string;
 }
 
 export interface AuditEvent {
@@ -391,6 +414,7 @@ const parseClient: Validator<OidcClient> = (v) => {
 		redirect_uris: strList(r, 'redirect_uris'),
 		post_logout_redirect_uris: strList(r, 'post_logout_redirect_uris'),
 		allowed_group: r.allowed_group === null ? null : parseGroupRef(r.allowed_group),
+		backchannel_logout_uri: str(r, 'backchannel_logout_uri'),
 		created_at: str(r, 'created_at')
 	};
 };
@@ -405,6 +429,21 @@ const parseRedirect: Validator<string> = (v) => {
 	// Only follow redirects to the provider's own callback.
 	if (!/^https?:\/\/[^\s/]+\/oidc\/authorize\/callback\?id=[0-9a-f-]+$/.test(redirect)) fail('redirect');
 	return redirect;
+};
+
+const parseProfile: Validator<Profile> = (v) => {
+	const r = record(v, 'profile');
+	const locale = str(r, 'locale');
+	if (locale !== 'nl' && locale !== 'en') fail('locale');
+	const picture = str(r, 'picture');
+	if (picture && !/^https?:\/\/[^\s/]+\/avatars\/[0-9a-f]{32}\.jpg$/.test(picture)) fail('picture');
+	return {
+		display_name: str(r, 'display_name'),
+		given_name: str(r, 'given_name'),
+		family_name: str(r, 'family_name'),
+		locale,
+		picture
+	};
 };
 
 const parseRemaining: Validator<number> = (v) => num(record(v, 'recovery'), 'remaining');
@@ -515,6 +554,52 @@ export const api = {
 	oidcDenyURL: (id: string, reason: 'access_denied' | 'login_required' = 'access_denied') =>
 		`/api/v1/oidc/requests/${enc(id)}/deny?error=${reason}`,
 
+	profile: (f: typeof fetch = fetch) => get('/api/v1/account/profile', parseProfile, f),
+	updateProfile: (p: Omit<Profile, 'picture'>, f: typeof fetch = fetch) =>
+		request('PATCH', '/api/v1/account/profile', parseProfile, p, f),
+	/** Uploads a PNG or JPEG as the profile picture; the server crops and re-encodes it. */
+	uploadAvatar: async (file: File, f: typeof fetch = fetch): Promise<Profile> => {
+		let res: Response;
+		try {
+			res = await f('/api/v1/account/avatar', {
+				method: 'PUT',
+				headers: { 'Content-Type': file.type, Accept: 'application/json' },
+				body: file,
+				credentials: 'same-origin'
+			});
+		} catch {
+			throw new ApiError(0, 'network', 'De server is niet bereikbaar');
+		}
+		const data: unknown = await res.json().catch(() => null);
+		if (!res.ok) {
+			const err = (data as { error?: { code?: string; message?: string } } | null)?.error;
+			throw new ApiError(res.status, err?.code ?? 'http_error', err?.message ?? `Serverfout (${res.status})`);
+		}
+		return parseProfile(data);
+	},
+	removeAvatar: (f: typeof fetch = fetch) => request('DELETE', '/api/v1/account/avatar', parseProfile, undefined, f),
+	appGrants: (f: typeof fetch = fetch) =>
+		get('/api/v1/account/apps', (v) =>
+			list(record(v, 'apps'), 'apps', (a) => {
+				const r = record(a, 'app');
+				return {
+					client_id: str(r, 'client_id'),
+					name: str(r, 'name'),
+					first_login_at: str(r, 'first_login_at'),
+					last_login_at: str(r, 'last_login_at')
+				} as AppGrant;
+			}), f),
+	revokeApp: (clientId: string, f: typeof fetch = fetch) =>
+		request('DELETE', `/api/v1/account/apps/${enc(clientId)}`, noContent, undefined, f),
+	/** Signs out of Cloud and of every app (apps are told via back-channel logout). */
+	logoutEverywhere: (f: typeof fetch = fetch) => post('/api/v1/auth/logout-everywhere', noContent, {}, f),
+	logoutRequest: (id: string, f: typeof fetch = fetch) =>
+		get(`/api/v1/oidc/logout/${enc(id)}`, (v) => {
+			const r = record(v, 'logout');
+			const redirect = str(r, 'redirect');
+			if (!/^https?:\/\//.test(redirect)) fail('redirect');
+			return { app_name: str(r, 'app_name'), redirect } as LogoutRequest;
+		}, f),
 	ownGroups: (f: typeof fetch = fetch) =>
 		get('/api/v1/account/groups', (v) => list(record(v, 'groups'), 'groups', parseGroupRef), f),
 

@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { api, errorMessage, type AuditEvent, type GroupRef } from '#lib/api.ts';
 	import ActivityList from '#lib/components/ActivityList.svelte';
+	import AppsPanel from '#lib/components/account/AppsPanel.svelte';
+	import ProfileForm from '#lib/components/account/ProfileForm.svelte';
 	import PasskeysPanel from '#lib/components/account/PasskeysPanel.svelte';
 	import RecoveryPanel from '#lib/components/account/RecoveryPanel.svelte';
 	import SessionsPanel from '#lib/components/account/SessionsPanel.svelte';
@@ -71,10 +73,13 @@
 	<div class="stack">
 		<section class="panel" aria-labelledby="profile-title">
 			<h2 id="profile-title">Profiel</h2>
+			<ProfileForm />
+		</section>
+
+		<section class="panel" aria-labelledby="account-title">
+			<h2 id="account-title">Account</h2>
 			{#if data.user}
 				<dl class="details">
-					<dt>Naam</dt>
-					<dd>{data.user.display_name}</dd>
 					<dt>Gebruikersnaam</dt>
 					<dd><code>{data.user.username}</code></dd>
 					<dt>E-mailadres</dt>
@@ -128,6 +133,7 @@
 
 	<div class="stack">
 		<SessionsPanel />
+		<AppsPanel />
 
 		<section class="panel" aria-labelledby="activity-title">
 			<h2 id="activity-title">Recente activiteit</h2>

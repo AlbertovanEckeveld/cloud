@@ -23,6 +23,7 @@ import (
 	"github.com/AlbertovanEckeveld/cloud/internal/core/database"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/mailer"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
+	"github.com/AlbertovanEckeveld/cloud/internal/core/storage"
 	"github.com/AlbertovanEckeveld/cloud/migrations"
 )
 
@@ -83,8 +84,16 @@ func newTestEnvURL(t *testing.T, publicURL *url.URL) *testEnv {
 		clock:  time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC),
 		client: Client{IP: fmt.Sprintf("it-%d-%d", time.Now().UnixNano(), testSeq.Add(1)), UserAgent: "integration-test"},
 	}
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		t.Fatalf("integration config: %v", err)
+	}
+	objects, err := storage.New(cfg.Storage)
+	if err != nil {
+		t.Fatal(err)
+	}
 	env.svc, err = New(pool, sl, Options{SiteID: "test", PublicURL: publicURL, Mailer: mail, Logger: logger,
-		OIDCTokenKey: [32]byte{1, 2, 3}})
+		OIDCTokenKey: [32]byte{1, 2, 3}, Objects: objects})
 	if err != nil {
 		t.Fatal(err)
 	}

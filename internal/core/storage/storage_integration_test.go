@@ -96,3 +96,24 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, body)
 	}
 }
+
+func TestPutGetDelete(t *testing.T) {
+	c := testClient(t, nil)
+	key := fmt.Sprintf("_integration-test/api-%d", time.Now().UnixNano())
+	if err := c.Put(ctx(t), key, []byte("inhoud"), "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Get(ctx(t), key)
+	if err != nil || string(got) != "inhoud" {
+		t.Fatalf("Get = %q, %v", got, err)
+	}
+	if err := c.Delete(ctx(t), key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Get(ctx(t), key); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get after delete: err = %v, want ErrNotFound", err)
+	}
+	if err := c.Delete(ctx(t), key); err != nil {
+		t.Errorf("deleting a missing key: %v", err)
+	}
+}

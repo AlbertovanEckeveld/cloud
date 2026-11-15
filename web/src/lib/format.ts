@@ -66,7 +66,10 @@ const eventLabels: Record<string, string> = {
 	'oidc.client.created': 'App geregistreerd',
 	'oidc.client.updated': 'App gewijzigd',
 	'oidc.client.deleted': 'App verwijderd',
-	'oidc.client.secret_rotated': 'Client-secret van app vernieuwd'
+	'oidc.client.secret_rotated': 'Client-secret van app vernieuwd',
+	'oidc.app_revoked': 'Toegang van app ingetrokken',
+	'auth.logout_everywhere': 'Overal uitgelogd, ook bij apps',
+	'user.profile_updated': 'Profiel gewijzigd'
 };
 
 /** Returns the Dutch description of an audit event. */

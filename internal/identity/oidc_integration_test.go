@@ -52,6 +52,7 @@ func newOIDCEnv(t *testing.T) *oidcEnv {
 	r := chi.NewRouter()
 	r.Route("/api/v1", e.svc.Routes)
 	r.Mount("/oidc", provider)
+	r.Get("/avatars/{file}", e.svc.AvatarHandler)
 	srv := httptest.NewUnstartedServer(r)
 	srv.Listener.Close()
 	srv.Listener = ln
@@ -65,13 +66,13 @@ func newOIDCEnv(t *testing.T) *oidcEnv {
 		plain:   &http.Client{CheckRedirect: noRedirect}}
 }
 
-// signIn gives the browser a full session for u.
-func (o *oidcEnv) signIn(t *testing.T, u User) []byte {
+// signIn gives the browser a full session for u and returns its token.
+func (o *oidcEnv) signIn(t *testing.T, u User) string {
 	t.Helper()
-	secret, token := o.activate(t, u)
+	_, token := o.activate(t, u)
 	base, _ := url.Parse(o.base)
 	o.browser.Jar.SetCookies(base, []*http.Cookie{{Name: "session", Value: token, Path: "/"}})
-	return secret
+	return token
 }
 
 func (o *oidcEnv) newClient(t *testing.T, confidential bool, group *uuid.UUID) (OIDCClient, string) {
@@ -267,6 +268,13 @@ func TestOIDCCodeFlow(t *testing.T) {
 	if disc["issuer"] != o.base+"/oidc" || disc["token_endpoint"] != o.base+"/oidc/oauth/token" {
 		t.Fatalf("discovery = %v", disc)
 	}
+	// Discovery advertises only what clients can actually use.
+	if fmt.Sprint(disc["response_types_supported"]) != "[code]" ||
+		fmt.Sprint(disc["grant_types_supported"]) != "[authorization_code refresh_token]" ||
+		disc["device_authorization_endpoint"] != nil ||
+		fmt.Sprint(disc["acr_values_supported"]) != "[mfa phr phrh]" {
+		t.Errorf("discovery promises unsupported features: %v", disc)
+	}
 
 	f := newFlow(client.ID)
 	id := requestID(t, o.authorize(t, f))
@@ -304,6 +312,10 @@ func TestOIDCCodeFlow(t *testing.T) {
 		claims["email"] != email || claims["email_verified"] != true || len(groups) != 1 || groups[0] != g.Name {
 		t.Fatalf("id token claims = %v", claims)
 	}
+	// How the user signed in: password plus authenticator code.
+	if fmt.Sprint(claims["amr"]) != "[pwd otp mfa]" || claims["acr"] != acrMFA {
+		t.Errorf("amr/acr = %v / %v", claims["amr"], claims["acr"])
+	}
 
 	if st, info := o.userinfo(t, tk.AccessToken); st != http.StatusOK || info["sub"] != u.ID.String() || info["email"] != email {
 		t.Fatalf("userinfo: %d %v", st, info)
@@ -320,6 +332,9 @@ func TestOIDCCodeFlow(t *testing.T) {
 	}
 	if st, _ := o.userinfo(t, tk.AccessToken); st == http.StatusOK {
 		t.Error("access token from before the refresh still valid")
+	}
+	if refreshed := o.verifyIDToken(t, rotated.IDToken); fmt.Sprint(refreshed["amr"]) != "[pwd otp mfa]" {
+		t.Errorf("amr lost on refresh: %v", refreshed["amr"])
 	}
 
 	// Disabling the user revokes every app token.
@@ -456,6 +471,13 @@ func TestOIDCPromptLoginAndDeny(t *testing.T) {
 	o.advance(2 * time.Minute)
 	if _, status, code := o.approve(t, requestID(t, o.authorize(t, aged))); status != http.StatusForbidden || code != "reauth_required" {
 		t.Fatalf("max_age exceeded: %d %s", status, code)
+	}
+
+	// An app that asks for a phishing-resistant sign-in gets it only with a passkey.
+	phr := newFlow(client.ID)
+	phr.extra.Set("acr_values", "phr")
+	if _, status, code := o.approve(t, requestID(t, o.authorize(t, phr))); status != http.StatusForbidden || code != "passkey_required" {
+		t.Fatalf("acr_values=phr with a password session: %d %s", status, code)
 	}
 
 	// Denying sends the browser back to the app with an OAuth error.

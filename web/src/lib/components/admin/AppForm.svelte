@@ -25,6 +25,7 @@
 	let redirects = $state(initial?.redirect_uris.join('\n') ?? '');
 	let logoutRedirects = $state(initial?.post_logout_redirect_uris.join('\n') ?? '');
 	let groupId = $state(initial?.allowed_group?.id ?? '');
+	let backchannel = $state(initial?.backchannel_logout_uri ?? '');
 
 	const lines = (s: string) => s.split('\n').map((l) => l.trim()).filter(Boolean);
 
@@ -35,7 +36,8 @@
 			confidential,
 			redirect_uris: lines(redirects),
 			post_logout_redirect_uris: lines(logoutRedirects),
-			allowed_group_id: groupId || null
+			allowed_group_id: groupId || null,
+			backchannel_logout_uri: backchannel.trim()
 		});
 	}
 </script>
@@ -60,6 +62,11 @@
 	<label class="field">
 		<span>Redirect-URI's na uitloggen (optioneel)</span>
 		<textarea bind:value={logoutRedirects} rows="2" spellcheck="false"></textarea>
+	</label>
+	<label class="field">
+		<span>Back-channel logout-URI (optioneel)</span>
+		<input bind:value={backchannel} spellcheck="false" placeholder="https://app.example.com/backchannel-logout" />
+		<p class="field__hint">Cloud meldt hier dat een gebruiker overal is uitgelogd, uitgeschakeld of zijn wachtwoord wijzigde.</p>
 	</label>
 	<label class="field">
 		<span>Toegang</span>

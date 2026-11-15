@@ -127,6 +127,13 @@ func (s *Service) Routes(r chi.Router) {
 		r.Post("/totp/enrollment", s.withSession(s.handleBeginEnrollment))
 		r.Post("/totp/enrollment/confirm", s.withSession(s.handleConfirmEnrollment))
 		r.Post("/logout", s.withSession(s.handleLogout))
+		r.Post("/logout-everywhere", s.withSession(func(w http.ResponseWriter, r *http.Request, sess Session, u User) {
+			if sess.State != StateAuthenticated {
+				s.writeError(w, r, ErrWrongState)
+				return
+			}
+			s.handleLogoutEverywhere(w, r, sess, u)
+		}))
 	})
 	r.Route("/account", func(r chi.Router) {
 		r.Use(s.RequireUser)
@@ -142,6 +149,12 @@ func (s *Service) Routes(r chi.Router) {
 		r.Delete("/sessions/{id}", s.handleRevokeSession)
 		r.Post("/sessions/revoke-others", s.handleRevokeOtherSessions)
 		r.Get("/groups", s.handleOwnGroups)
+		r.Get("/apps", s.handleAppGrants)
+		r.Delete("/apps/{clientID}", s.handleRevokeApp)
+		r.Get("/profile", s.handleGetProfile)
+		r.Patch("/profile", s.handleUpdateProfile)
+		r.Put("/avatar", s.handleSetAvatar)
+		r.Delete("/avatar", s.handleDeleteAvatar)
 	})
 	r.Route("/admin", s.adminRoutes)
 	r.Route("/oidc", s.oidcRoutes)
@@ -342,6 +355,10 @@ func (s *Service) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpserver.WriteError(w, http.StatusConflict, "email_taken", "Dit e-mailadres is al in gebruik.")
 	case errors.Is(err, ErrGroupInUse):
 		httpserver.WriteError(w, http.StatusConflict, "group_in_use", "Deze groep bepaalt de toegang tot een app. Pas eerst die app aan.")
+	case errors.Is(err, ErrInvalidImage):
+		httpserver.WriteError(w, http.StatusUnprocessableEntity, "invalid_image", "Dit is geen bruikbare PNG- of JPEG-afbeelding (maximaal 8000×8000 pixels).")
+	case errors.Is(err, ErrPasskeyRequired):
+		httpserver.WriteError(w, http.StatusForbidden, "passkey_required", "Deze app vraagt om in te loggen met een passkey.")
 	case errors.Is(err, ErrAppAccessDenied):
 		httpserver.WriteError(w, http.StatusForbidden, "app_access_denied", "Je hebt geen toegang tot deze app.")
 	case errors.Is(err, ErrGroupExists):

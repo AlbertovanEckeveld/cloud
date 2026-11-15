@@ -259,14 +259,15 @@ func (s *Service) SetUserDisabled(ctx context.Context, c Client, actor Session, 
 			}{
 				{`DELETE FROM identity.sessions WHERE user_id = $1`, []any{id}},
 				{`DELETE FROM identity.webauthn_challenges WHERE user_id = $1`, []any{id}},
-				{`DELETE FROM identity.oidc_refresh_tokens WHERE user_id = $1`, []any{id}},
-				{`DELETE FROM identity.oidc_access_tokens WHERE user_id = $1`, []any{id}},
 				{`UPDATE identity.activation_tokens SET used_at = $2 WHERE user_id = $1 AND used_at IS NULL`, []any{id, now}},
 			}
 			for _, r := range revocations {
 				if _, err := tx.Exec(ctx, r.sql, r.args...); err != nil {
 					return fmt.Errorf("revoke access: %w", err)
 				}
+			}
+			if err := s.revokeAppAccess(ctx, tx, id, nil, ""); err != nil {
+				return err
 			}
 		}
 		return s.audit(ctx, tx, c, auditEntry{event: event, actor: &actor.UserID, subject: &id})

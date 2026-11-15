@@ -82,6 +82,9 @@ type Session struct {
 	// AuthenticatedAt is when the user last proved their identity in this
 	// session; zero for partial sessions.
 	AuthenticatedAt time.Time
+	// AMR and ACR describe how the user signed in (see recordLogin).
+	AMR []string
+	ACR string
 
 	activationTokenHash []byte
 }
@@ -104,6 +107,8 @@ type Options struct {
 	Mailer *mailer.Mailer
 	// OIDCTokenKey encrypts the OIDC provider's opaque access tokens.
 	OIDCTokenKey [32]byte
+	// Objects stores profile pictures.
+	Objects ObjectStore
 	// DevMode allows plain-http redirect URIs for OIDC apps.
 	DevMode bool
 	Logger  *slog.Logger
@@ -179,8 +184,10 @@ func hashToken(token string) []byte {
 
 func newID() uuid.UUID { return uuid.Must(uuid.NewV7()) }
 
-// Run performs periodic cleanup until ctx is cancelled.
+// Run performs periodic cleanup and delivers logout tokens to apps until
+// ctx is cancelled.
 func (s *Service) Run(ctx context.Context) {
+	go s.deliverLogouts(ctx)
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for {
@@ -212,6 +219,7 @@ func (s *Service) cleanup(ctx context.Context) error {
 		{`DELETE FROM identity.oidc_auth_requests WHERE expires_at < $1`, []any{now}},
 		{`DELETE FROM identity.oidc_access_tokens WHERE expires_at < $1`, []any{now}},
 		{`DELETE FROM identity.oidc_refresh_tokens WHERE expires_at < $1`, []any{now}},
+		{`DELETE FROM identity.oidc_logout_requests WHERE expires_at < $1`, []any{now}},
 	}
 	for _, st := range statements {
 		if _, err := s.db.Exec(ctx, st.sql, st.args...); err != nil {

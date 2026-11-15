@@ -39,7 +39,9 @@ type OIDCClient struct {
 	RedirectURIs           []string  `json:"redirect_uris"`
 	PostLogoutRedirectURIs []string  `json:"post_logout_redirect_uris"`
 	AllowedGroup           *GroupRef `json:"allowed_group"`
-	CreatedAt              time.Time `json:"created_at"`
+	// BackchannelLogoutURI receives logout tokens (OIDC Back-Channel Logout 1.0).
+	BackchannelLogoutURI string    `json:"backchannel_logout_uri"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 // OIDCClientInput holds the editable fields of a client.
@@ -49,6 +51,7 @@ type OIDCClientInput struct {
 	RedirectURIs           []string
 	PostLogoutRedirectURIs []string
 	AllowedGroupID         *uuid.UUID
+	BackchannelLogoutURI   string
 }
 
 // ErrGroupInUse is returned when deleting a group that restricts an app.
@@ -105,6 +108,15 @@ func (s *Service) normalizeClientInput(in *OIDCClientInput) error {
 	if in.PostLogoutRedirectURIs == nil {
 		in.PostLogoutRedirectURIs = []string{}
 	}
+	// The server itself calls this URI, so it gets the same strict checks.
+	logout, err := validateRedirectURIs([]string{in.BackchannelLogoutURI}, s.opts.DevMode, false)
+	if err != nil {
+		return &InputError{"Ongeldige back-channel logout-URI: gebruik een volledige https-URL (http alleen voor localhost)."}
+	}
+	in.BackchannelLogoutURI = ""
+	if len(logout) == 1 {
+		in.BackchannelLogoutURI = logout[0]
+	}
 	return nil
 }
 
@@ -121,7 +133,8 @@ func newClientSecret() (string, []byte) {
 }
 
 const clientQuery = `
-	SELECT c.id, c.name, c.secret_hash, c.redirect_uris, c.post_logout_redirect_uris, c.created_at, g.id, g.name
+	SELECT c.id, c.name, c.secret_hash, c.redirect_uris, c.post_logout_redirect_uris, COALESCE(c.backchannel_logout_uri, ''),
+	       c.created_at, g.id, g.name
 	FROM identity.oidc_clients c LEFT JOIN identity.groups g ON g.id = c.allowed_group_id`
 
 type storedClient struct {
@@ -133,7 +146,8 @@ func scanClient(row pgx.CollectableRow) (storedClient, error) {
 	var c storedClient
 	var groupID *uuid.UUID
 	var groupName *string
-	err := row.Scan(&c.ID, &c.Name, &c.secretHash, &c.RedirectURIs, &c.PostLogoutRedirectURIs, &c.CreatedAt, &groupID, &groupName)
+	err := row.Scan(&c.ID, &c.Name, &c.secretHash, &c.RedirectURIs, &c.PostLogoutRedirectURIs, &c.BackchannelLogoutURI,
+		&c.CreatedAt, &groupID, &groupName)
 	c.Confidential = c.secretHash != nil
 	c.CreatedAt = c.CreatedAt.UTC()
 	if groupID != nil {
@@ -197,9 +211,9 @@ func (s *Service) CreateOIDCClient(ctx context.Context, c Client, actor Session,
 	}
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO identity.oidc_clients (id, name, secret_hash, redirect_uris, post_logout_redirect_uris, allowed_group_id, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			id, in.Name, secretHash, in.RedirectURIs, in.PostLogoutRedirectURIs, in.AllowedGroupID, s.now())
+			INSERT INTO identity.oidc_clients (id, name, secret_hash, redirect_uris, post_logout_redirect_uris, allowed_group_id, backchannel_logout_uri, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8)`,
+			id, in.Name, secretHash, in.RedirectURIs, in.PostLogoutRedirectURIs, in.AllowedGroupID, in.BackchannelLogoutURI, s.now())
 		if err != nil {
 			return fmt.Errorf("create client: %w", err)
 		}
@@ -224,8 +238,9 @@ func (s *Service) UpdateOIDCClient(ctx context.Context, c Client, actor Session,
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			UPDATE identity.oidc_clients
-			SET name = $2, redirect_uris = $3, post_logout_redirect_uris = $4, allowed_group_id = $5
-			WHERE id = $1`, id, in.Name, in.RedirectURIs, in.PostLogoutRedirectURIs, in.AllowedGroupID)
+			SET name = $2, redirect_uris = $3, post_logout_redirect_uris = $4, allowed_group_id = $5,
+			    backchannel_logout_uri = NULLIF($6, '')
+			WHERE id = $1`, id, in.Name, in.RedirectURIs, in.PostLogoutRedirectURIs, in.AllowedGroupID, in.BackchannelLogoutURI)
 		if err != nil {
 			return fmt.Errorf("update client: %w", err)
 		}

@@ -26,6 +26,8 @@ type routerDeps struct {
 	frontend  http.Handler
 	// oidc is the OpenID Connect provider, mounted at /oidc.
 	oidc http.Handler
+	// avatars serves profile pictures at /avatars/{file}; public by design.
+	avatars http.HandlerFunc
 
 	// identity mounts the identity module's routes under /api/v1.
 	identity     func(chi.Router)
@@ -84,6 +86,7 @@ func newRouter(d routerDeps) http.Handler {
 	})
 
 	r.Mount("/oidc", d.oidc)
+	r.Get("/avatars/{file}", d.avatars)
 	r.Handle("/*", d.frontend)
 	return r
 }

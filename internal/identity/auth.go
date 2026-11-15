@@ -87,7 +87,8 @@ func (s *Service) Login(ctx context.Context, c Client, username, password string
 	if rehash {
 		s.upgradeHash(ctx, id, password)
 	}
-	return s.createSession(ctx, s.db, id, StateMFARequired, nil, c, partialSessionTTL)
+	token, _, err := s.createSession(ctx, s.db, id, StateMFARequired, nil, c, partialSessionTTL)
+	return token, err
 }
 
 // upgradeHash re-hashes a password with the current parameters. Failure only
@@ -139,7 +140,7 @@ func (s *Service) VerifyTOTP(ctx context.Context, c Client, sess Session, code s
 		if token, err = s.rotateSession(ctx, tx, sess.ID, StateAuthenticated, sessionMaxTTL); err != nil {
 			return err
 		}
-		return s.recordLogin(ctx, tx, c, sess.UserID, "password+totp")
+		return s.recordLogin(ctx, tx, c, sess.ID, sess.UserID, methodPasswordTOTP)
 	})
 	if errors.Is(err, ErrInvalidCode) {
 		s.totpFailed(ctx, c, sess, key)
@@ -209,7 +210,7 @@ func (s *Service) Activate(ctx context.Context, c Client, activationToken, passw
 			userID, passwordHash, s.now()); err != nil {
 			return fmt.Errorf("set password: %w", err)
 		}
-		if token, err = s.createSession(ctx, tx, userID, StateMFAEnrollmentRequired, hash, c, partialSessionTTL); err != nil {
+		if token, _, err = s.createSession(ctx, tx, userID, StateMFAEnrollmentRequired, hash, c, partialSessionTTL); err != nil {
 			return err
 		}
 		return s.audit(ctx, tx, c, auditEntry{event: EventActivationStarted, actor: &userID})
@@ -307,7 +308,7 @@ func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, c Client, sess Sess
 		if err := s.audit(ctx, tx, c, auditEntry{event: EventTOTPEnrolled, actor: &sess.UserID}); err != nil {
 			return err
 		}
-		return s.recordLogin(ctx, tx, c, sess.UserID, "activation")
+		return s.recordLogin(ctx, tx, c, sess.ID, sess.UserID, methodActivation)
 	})
 	if errors.Is(err, ErrInvalidCode) {
 		s.totpFailed(ctx, c, sess, key)
@@ -365,11 +366,8 @@ func (s *Service) ChangePassword(ctx context.Context, c Client, sess Session, cu
 			return fmt.Errorf("revoke other sessions: %w", err)
 		}
 		// Apps signed in through OIDC must sign in again too.
-		if _, err := tx.Exec(ctx, `DELETE FROM identity.oidc_refresh_tokens WHERE user_id = $1`, sess.UserID); err != nil {
-			return fmt.Errorf("revoke app tokens: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM identity.oidc_access_tokens WHERE user_id = $1`, sess.UserID); err != nil {
-			return fmt.Errorf("revoke app tokens: %w", err)
+		if err := s.revokeAppAccess(ctx, tx, sess.UserID, nil, ""); err != nil {
+			return err
 		}
 		if err := s.audit(ctx, tx, c, auditEntry{event: EventPasswordChanged, actor: &sess.UserID}); err != nil {
 			return err
@@ -388,9 +386,43 @@ func (s *Service) Logout(ctx context.Context, c Client, sess Session) error {
 	})
 }
 
-// recordLogin marks a completed sign-in: it updates last_login_at and
-// writes the audit event. Every way of signing in ends here.
-func (s *Service) recordLogin(ctx context.Context, tx dbtx, c Client, userID uuid.UUID, method string) error {
+// Sign-in methods, and how each is reported to apps: amr lists the methods
+// used (RFC 8176), acr their strength (OpenID EAP ACR values: phr and phrh
+// are phishing-resistant, phrh with a hardware-bound key).
+const (
+	methodPasswordTOTP     = "password+totp"
+	methodActivation       = "activation"
+	methodPasswordRecovery = "password+recovery_code"
+	methodPasskey          = "passkey"          // synced passkey
+	methodPasskeyHardware  = "passkey-hardware" // bound to one device
+
+	acrMFA                       = "mfa"
+	acrPhishingResistant         = "phr"
+	acrPhishingResistantHardware = "phrh"
+)
+
+var authMethods = map[string]struct {
+	amr []string
+	acr string
+}{
+	methodPasswordTOTP:     {[]string{"pwd", "otp", "mfa"}, acrMFA},
+	methodActivation:       {[]string{"pwd", "otp", "mfa"}, acrMFA},
+	methodPasswordRecovery: {[]string{"pwd", "otp", "mfa"}, acrMFA},
+	methodPasskey:          {[]string{"swk", "user", "mfa"}, acrPhishingResistant},
+	methodPasskeyHardware:  {[]string{"hwk", "user", "mfa"}, acrPhishingResistantHardware},
+}
+
+// recordLogin marks a completed sign-in: it notes on the session how the
+// user signed in, updates last_login_at and writes the audit event. Every
+// way of signing in ends here.
+func (s *Service) recordLogin(ctx context.Context, tx dbtx, c Client, sessionID, userID uuid.UUID, method string) error {
+	m, ok := authMethods[method]
+	if !ok {
+		return fmt.Errorf("unknown sign-in method %q", method)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE identity.sessions SET amr = $2, acr = $3 WHERE id = $1`, sessionID, m.amr, m.acr); err != nil {
+		return fmt.Errorf("record login: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `UPDATE identity.users SET last_login_at = $2 WHERE id = $1`, userID, s.now()); err != nil {
 		return fmt.Errorf("record login: %w", err)
 	}
@@ -401,18 +433,19 @@ func (s *Service) recordLogin(ctx context.Context, tx dbtx, c Client, userID uui
 func totpAD(userID uuid.UUID) []byte { return []byte("totp:" + userID.String()) }
 
 // createSession stores a new session and returns its token.
-func (s *Service) createSession(ctx context.Context, q dbtx, userID uuid.UUID, state SessionState, activationHash []byte, c Client, ttl time.Duration) (string, error) {
+func (s *Service) createSession(ctx context.Context, q dbtx, userID uuid.UUID, state SessionState, activationHash []byte, c Client, ttl time.Duration) (string, uuid.UUID, error) {
 	token, hash := newToken()
+	id := newID()
 	now := s.now()
 	_, err := q.Exec(ctx, `
 		INSERT INTO identity.sessions
 			(id, token_hash, user_id, state, activation_token_hash, site_id, ip, user_agent, created_at, last_seen_at, expires_at, authenticated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, CASE WHEN $4 = 'authenticated' THEN $9::timestamptz END)`,
-		newID(), hash, userID, state, activationHash, s.opts.SiteID, c.IP, c.UserAgent, now, now.Add(ttl))
+		id, hash, userID, state, activationHash, s.opts.SiteID, c.IP, c.UserAgent, now, now.Add(ttl))
 	if err != nil {
-		return "", fmt.Errorf("create session: %w", err)
+		return "", uuid.Nil, fmt.Errorf("create session: %w", err)
 	}
-	return token, nil
+	return token, id, nil
 }
 
 // rotateSession gives a session a new token and state. Issuing a new token
@@ -446,11 +479,11 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Session, User
 	var lastSeen time.Time
 	var authenticatedAt *time.Time
 	err := s.db.QueryRow(ctx, `
-		SELECT s.id, s.user_id, s.state, s.expires_at, s.last_seen_at, s.activation_token_hash, s.authenticated_at,
+		SELECT s.id, s.user_id, s.state, s.expires_at, s.last_seen_at, s.activation_token_hash, s.authenticated_at, s.amr, s.acr,
 		       u.username, u.display_name, u.is_admin, COALESCE(u.email, '')
 		FROM identity.sessions s JOIN identity.users u ON u.id = s.user_id
 		WHERE s.token_hash = $1 AND u.disabled_at IS NULL`, hashToken(token)).Scan(
-		&sess.ID, &sess.UserID, &sess.State, &sess.ExpiresAt, &lastSeen, &sess.activationTokenHash, &authenticatedAt,
+		&sess.ID, &sess.UserID, &sess.State, &sess.ExpiresAt, &lastSeen, &sess.activationTokenHash, &authenticatedAt, &sess.AMR, &sess.ACR,
 		&u.Username, &u.DisplayName, &u.IsAdmin, &u.Email)
 	if authenticatedAt != nil {
 		sess.AuthenticatedAt = *authenticatedAt

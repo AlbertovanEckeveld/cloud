@@ -38,6 +38,10 @@ const (
 	EventGroupMemberAdded   = "group.member_added"
 	EventGroupMemberRemoved = "group.member_removed"
 
+	EventProfileUpdated   = "user.profile_updated"
+	EventLogoutEverywhere = "auth.logout_everywhere"
+	EventAppRevoked       = "oidc.app_revoked"
+
 	EventOIDCLogin               = "oidc.login"
 	EventOIDCDenied              = "oidc.denied"
 	EventOIDCClientCreated       = "oidc.client.created"

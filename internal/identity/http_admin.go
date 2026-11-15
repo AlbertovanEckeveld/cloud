@@ -279,11 +279,12 @@ type clientRequest struct {
 	RedirectURIs           []string   `json:"redirect_uris"`
 	PostLogoutRedirectURIs []string   `json:"post_logout_redirect_uris"`
 	AllowedGroupID         *uuid.UUID `json:"allowed_group_id"`
+	BackchannelLogoutURI   string     `json:"backchannel_logout_uri"`
 }
 
 func (in clientRequest) input() OIDCClientInput {
 	return OIDCClientInput{Name: in.Name, Confidential: in.Confidential, RedirectURIs: in.RedirectURIs,
-		PostLogoutRedirectURIs: in.PostLogoutRedirectURIs, AllowedGroupID: in.AllowedGroupID}
+		PostLogoutRedirectURIs: in.PostLogoutRedirectURIs, AllowedGroupID: in.AllowedGroupID, BackchannelLogoutURI: in.BackchannelLogoutURI}
 }
 
 // clientSecretResponse returns a client with its secret, which is shown once.

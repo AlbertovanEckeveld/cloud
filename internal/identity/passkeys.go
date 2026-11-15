@@ -328,10 +328,15 @@ func (s *Service) FinishPasskeyLogin(ctx context.Context, c Client, challengeID 
 		if tag.RowsAffected() != 1 {
 			return ErrPasskeyRejected
 		}
-		if token, err = s.createSession(ctx, tx, *owner, StateAuthenticated, nil, c, sessionMaxTTL); err != nil {
+		var sessionID uuid.UUID
+		if token, sessionID, err = s.createSession(ctx, tx, *owner, StateAuthenticated, nil, c, sessionMaxTTL); err != nil {
 			return err
 		}
-		return s.recordLogin(ctx, tx, c, *owner, "passkey")
+		method := methodPasskeyHardware
+		if cred.Flags.BackupEligible {
+			method = methodPasskey // synced between devices: not hardware-bound
+		}
+		return s.recordLogin(ctx, tx, c, sessionID, *owner, method)
 	})
 	return token, err
 }

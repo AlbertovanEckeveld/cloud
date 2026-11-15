@@ -20,6 +20,31 @@ import (
 // ErrAppAccessDenied means the user may not sign in to this app.
 var ErrAppAccessDenied = errors.New("no access to this app")
 
+// ErrPasskeyRequired means the app asked for a phishing-resistant sign-in
+// (acr_values phr or phrh) and the session was made otherwise.
+var ErrPasskeyRequired = errors.New("app requires a passkey sign-in")
+
+// acrRank orders the acr values this provider issues by strength.
+var acrRank = map[string]int{acrMFA: 1, acrPhishingResistant: 2, acrPhishingResistantHardware: 3}
+
+// acrSatisfies reports whether a session with acr have meets a request's
+// acr_values. Values this provider does not know are ignored; the request
+// is met if any known requested value is (OIDC Core §3.1.2.1).
+func acrSatisfies(have string, requested []string) bool {
+	known := false
+	for _, r := range requested {
+		rank, ok := acrRank[r]
+		if !ok {
+			continue
+		}
+		known = true
+		if acrRank[have] >= rank {
+			return true
+		}
+	}
+	return !known
+}
+
 // OIDCIssuerPath is where the provider is mounted below PUBLIC_URL.
 const OIDCIssuerPath = "/oidc"
 
@@ -37,10 +62,13 @@ func (s *Service) OIDCHandler(ctx context.Context) (http.Handler, error) {
 		CodeMethodS256:           true,
 		AuthMethodPost:           true,
 		GrantTypeRefreshToken:    true,
+		// Logout tokens carry sub, not sid: apps sign the user out everywhere.
+		BackChannelLogoutSupported: true,
 		SupportedScopes: []string{oidc.ScopeOpenID, oidc.ScopeProfile, oidc.ScopeEmail,
 			oidc.ScopeOfflineAccess, scopeGroups},
 		SupportedClaims: []string{"sub", "aud", "exp", "iat", "iss", "auth_time", "nonce", "at_hash", "c_hash",
-			"name", "preferred_username", "updated_at", "email", "email_verified", "groups"},
+			"amr", "acr", "name", "given_name", "family_name", "preferred_username", "picture", "locale",
+			"updated_at", "email", "email_verified", "groups"},
 	}
 	opts := []op.Option{op.WithLogger(s.log)}
 	if s.opts.PublicURL.Scheme == "http" {
@@ -52,7 +80,27 @@ func (s *Service) OIDCHandler(ctx context.Context) (http.Handler, error) {
 		return nil, fmt.Errorf("create OIDC provider: %w", err)
 	}
 	s.oidcProvider = provider
-	return http.StripPrefix(OIDCIssuerPath, provider), nil
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+oidc.DiscoveryEndpoint, s.discovery(provider))
+	mux.Handle("/", provider)
+	return http.StripPrefix(OIDCIssuerPath, mux), nil
+}
+
+// discovery serves the provider metadata, corrected to advertise only what
+// this provider allows. The library's document is static and also lists
+// the implicit flow, device flow and JWT bearer grant, which clients here
+// cannot use; a client that believed it would fail in confusing ways.
+func (s *Service) discovery(p *op.Provider) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := op.ContextWithIssuer(r.Context(), s.oidcIssuer())
+		cfg := op.CreateDiscoveryConfig(ctx, p, p.Storage())
+		cfg.ResponseTypesSupported = []string{string(oidc.ResponseTypeCode)}
+		cfg.ResponseModesSupported = []string{"query"}
+		cfg.GrantTypesSupported = []oidc.GrantType{oidc.GrantTypeCode, oidc.GrantTypeRefreshToken}
+		cfg.DeviceAuthorizationEndpoint = ""
+		cfg.ACRValuesSupported = []string{acrMFA, acrPhishingResistant, acrPhishingResistantHardware}
+		op.Discover(w, cfg)
+	}
 }
 
 // OIDCRequestInfo is what the sign-in page shows about a pending request.
@@ -107,6 +155,9 @@ func (s *Service) ApproveOIDCRequest(ctx context.Context, c Client, sess Session
 	if sess.AuthenticatedAt.Before(signedInAfter) {
 		return "", ErrReauthRequired
 	}
+	if !acrSatisfies(sess.ACR, a.req.ACRValues) {
+		return "", ErrPasskeyRequired
+	}
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if err := s.mayUseClient(ctx, tx, sess.UserID, a.req.ClientID); err != nil {
 			if errors.Is(err, errAccessDenied) {
@@ -114,13 +165,20 @@ func (s *Service) ApproveOIDCRequest(ctx context.Context, c Client, sess Session
 			}
 			return err
 		}
-		tag, err := tx.Exec(ctx, `UPDATE identity.oidc_auth_requests SET user_id = $2, auth_time = $3 WHERE id = $1 AND user_id IS NULL`,
-			id, sess.UserID, sess.AuthenticatedAt)
+		tag, err := tx.Exec(ctx, `
+			UPDATE identity.oidc_auth_requests SET user_id = $2, auth_time = $3, amr = $4, acr = $5
+			WHERE id = $1 AND user_id IS NULL`, id, sess.UserID, sess.AuthenticatedAt, sess.AMR, sess.ACR)
 		if err != nil {
 			return fmt.Errorf("complete auth request: %w", err)
 		}
 		if tag.RowsAffected() != 1 {
 			return ErrNotFound
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO identity.oidc_grants (user_id, client_id, first_login_at, last_login_at) VALUES ($1, $2, $3, $3)
+			ON CONFLICT (user_id, client_id) DO UPDATE SET last_login_at = EXCLUDED.last_login_at`,
+			sess.UserID, a.req.ClientID, s.now()); err != nil {
+			return fmt.Errorf("record app sign-in: %w", err)
 		}
 		return s.audit(ctx, tx, c, auditEntry{event: EventOIDCLogin, actor: &sess.UserID, details: map[string]any{"app": a.req.ClientID}})
 	})
@@ -137,6 +195,7 @@ func (s *Service) oidcRoutes(r chi.Router) {
 	r.Get("/requests/{id}", s.handleOIDCRequest)
 	r.With(s.RequireUser).Post("/requests/{id}/approve", s.handleOIDCApprove)
 	r.Get("/requests/{id}/deny", s.handleOIDCDeny)
+	r.Get("/logout/{id}", s.handleLogoutRequest)
 }
 
 func (s *Service) handleOIDCRequest(w http.ResponseWriter, r *http.Request) {

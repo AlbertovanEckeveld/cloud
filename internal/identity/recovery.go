@@ -112,7 +112,7 @@ func (s *Service) VerifyRecoveryCode(ctx context.Context, c Client, sess Session
 		if err := s.notify(ctx, tx, c, sess.UserID, noticeRecoveryUsed); err != nil {
 			return err
 		}
-		return s.recordLogin(ctx, tx, c, sess.UserID, "password+recovery_code")
+		return s.recordLogin(ctx, tx, c, sess.ID, sess.UserID, methodPasswordRecovery)
 	})
 	if errors.Is(err, ErrInvalidCode) {
 		s.totpFailed(ctx, c, sess, key)

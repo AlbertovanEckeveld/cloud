@@ -73,7 +73,13 @@ role_attribute_path = contains(groups[*], 'beheer') && 'Admin' || 'Viewer'
 ```
 
 De redirect-URI van Grafana is `<grafana-url>/login/generic_oauth`. Beperk desgewenst de
-toegang tot een groep. Zie [ADR 0008](docs/adr/0008-oidc-provider.md).
+toegang tot een groep.
+
+Beschikbare claims: `sub`, `preferred_username`, `name`, `given_name`, `family_name`, `locale`,
+`picture` (scope `profile`), `email`, `email_verified` (scope `email`), `groups` (scope
+`groups`), en `amr`/`acr` (hoe en hoe sterk er is ingelogd; vraag met `acr_values=phr` om een
+passkey-login). Apps met een back-channel logout-URI horen het als een gebruiker overal uitlogt
+of wordt uitgeschakeld. Zie [ADR 0008](docs/adr/0008-oidc-provider.md).
 
 ## Make-targets
 
