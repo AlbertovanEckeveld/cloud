@@ -237,3 +237,27 @@ describe('drive sharing', () => {
 		expect(url).toBe('/api/v1/drive/nodes/n1/shares/group/a%2Fb');
 	});
 });
+
+describe('team folders', () => {
+	const folder = {
+		id: 't1',
+		root_id: 'r1',
+		name: 'Familie',
+		groups: [{ subject: { type: 'group', id: 'g1' }, name: 'familie', permission: 'edit', granted_at: '2026-11-16T10:00:00Z' }],
+		usage: { used_bytes: 4, limit_bytes: null },
+		created_at: '2026-11-16T10:00:00Z',
+		deleted_at: null
+	};
+
+	it('validates the administrator overview', async () => {
+		const list = await api.admin.teamFolders(respond({ team_folders: [folder] }));
+		expect(list[0]).toMatchObject({ name: 'Familie', deleted_at: null, usage: { used_bytes: 4 } });
+		const bad = { ...folder, groups: [{ ...folder.groups[0], permission: 'owner' }] };
+		await expect(api.admin.teamFolders(respond({ team_folders: [bad] }))).rejects.toMatchObject({ code: 'invalid_response' });
+	});
+
+	it('returns the team of a team trash', async () => {
+		const trash = await api.drive.teamTrash('t1', respond({ team: { id: 't1', root_id: 'r1', name: 'Familie' }, nodes: [] }));
+		expect(trash.team.name).toBe('Familie');
+	});
+});

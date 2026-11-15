@@ -75,8 +75,10 @@ type Service struct {
 	log     *slog.Logger
 	maxFile int64
 	now     func() time.Time
-	// userID identifies the signed-in user; set by Routes.
+	// userID identifies the signed-in user and audit records administrative
+	// actions; both set by Routes.
 	userID func(*http.Request) uuid.UUID
+	audit  func(r *http.Request, event string, details map[string]any)
 }
 
 // New returns the drive service.
@@ -112,6 +114,15 @@ type Node struct {
 }
 
 const nodeColumns = `id, parent_id, kind, name, size, content_type, created_at, updated_at, trashed_at, owner_id, current_version_id`
+
+// prefixed returns nodeColumns qualified with a table alias, for joins.
+func prefixed(alias string) string {
+	cols := strings.Split(nodeColumns, ", ")
+	for i := range cols {
+		cols[i] = alias + "." + cols[i]
+	}
+	return strings.Join(cols, ", ")
+}
 
 func scanNode(row pgx.CollectableRow) (Node, error) {
 	var n Node
@@ -266,6 +277,8 @@ type FolderView struct {
 	Children []Node  `json:"children"`
 	// Shared is set when the folder is someone else's, shared with the user.
 	Shared bool `json:"shared"`
+	// Team is set when the folder belongs to a team folder.
+	Team *TeamRef `json:"team"`
 }
 
 // List returns a folder's contents (folderID nil: the top level), folders first.
@@ -288,6 +301,11 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, folderID *uuid.UUI
 		view.Folder, view.Shared = &n, n.ownerID != userID
 		if view.Path, err = s.crumbs(ctx, n); err != nil {
 			return FolderView{}, err
+		}
+		if view.Shared {
+			if view.Team, err = s.teamOf(ctx, n.ownerID); err != nil {
+				return FolderView{}, err
+			}
 		}
 		rows, err = s.db.Query(ctx, `
 			SELECT `+nodeColumns+` FROM drive.nodes WHERE parent_id = $1 AND trashed_at IS NULL
@@ -400,6 +418,11 @@ func (s *Service) Update(ctx context.Context, userID, nodeID uuid.UUID, ch Chang
 		if err != nil {
 			return err
 		}
+		if root, err := s.isTeamRoot(ctx, tx, nodeID); err != nil {
+			return err
+		} else if root {
+			return errTeamRoot
+		}
 		parentID := n.ParentID
 		if n.accessRoot != nil && *n.accessRoot == n.ID {
 			parentID = nil // hidden from the user, but it stays where it is
@@ -418,7 +441,7 @@ func (s *Service) Update(ctx context.Context, userID, nodeID uuid.UUID, ch Chang
 				return err
 			}
 			if owner != n.ownerID {
-				return &InputError{"Je kunt dit alleen verplaatsen binnen de mappen van de eigenaar."}
+				return &InputError{"Je kunt dit alleen verplaatsen binnen de mappen van dezelfde eigenaar of teammap."}
 			}
 			if ch.Parent != nil {
 				// A folder cannot move into itself or one of its descendants.

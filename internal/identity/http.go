@@ -102,6 +102,34 @@ func (s *Service) RequireUser(next http.Handler) http.Handler {
 	})
 }
 
+// RequireRecentAuth allows a request only shortly after the user signed in;
+// for sensitive changes made by other modules. It must run after RequireUser.
+func (s *Service) RequireRecentAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := PrincipalFrom(r.Context())
+		if !ok {
+			s.writeError(w, r, ErrNoSession)
+			return
+		}
+		if err := s.requireRecentAuth(p.Session); err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// AuditRequest records an event of another module in the audit log, with the
+// signed-in user as actor. It runs after the change committed (modules do
+// not share transactions), so a failure is logged rather than undoing it.
+func (s *Service) AuditRequest(r *http.Request, event string, details map[string]any) {
+	p, ok := PrincipalFrom(r.Context())
+	if !ok {
+		return
+	}
+	s.auditBestEffort(r.Context(), clientFrom(r), auditEntry{event: event, actor: &p.User.ID, details: details})
+}
+
 // RequireAdmin must run after RequireUser.
 func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -71,7 +71,13 @@ const eventLabels: Record<string, string> = {
 	'auth.logout_everywhere': 'Overal uitgelogd, ook bij apps',
 	'user.profile_updated': 'Profiel gewijzigd',
 	'share.granted': 'Gedeeld',
-	'share.revoked': 'Delen gestopt'
+	'share.revoked': 'Delen gestopt',
+	'teamfolder.created': 'Teammap aangemaakt',
+	'teamfolder.renamed': 'Teammap hernoemd',
+	'teamfolder.quota_changed': 'Quotum van teammap gewijzigd',
+	'teamfolder.deleted': 'Teammap opgeheven',
+	'teamfolder.restored': 'Teammap teruggezet',
+	'teamfolder.purged': 'Teammap definitief verwijderd'
 };
 
 /** Returns the Dutch description of an audit event. */

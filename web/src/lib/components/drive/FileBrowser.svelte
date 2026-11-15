@@ -16,6 +16,7 @@
 	type UploadState = { key: number; name: string; progress: number; error: string | null };
 
 	let view = $state<FolderView | null>(null);
+	let teams = $state<DriveNode[]>([]);
 	let usage = $state<Usage | null>(null);
 	let error = $state<unknown>(null);
 	let uploads = $state<UploadState[]>([]);
@@ -29,7 +30,11 @@
 
 	async function load() {
 		try {
-			[view, usage] = await Promise.all([api.drive.folder(folderId), api.drive.usage()]);
+			[view, usage, teams] = await Promise.all([
+				api.drive.folder(folderId),
+				api.drive.usage(),
+				folderId === null ? api.drive.teamFolders() : Promise.resolve([])
+			]);
 		} catch (e) {
 			error = e;
 		}
@@ -127,13 +132,18 @@
 	// The top level is the user's own; elsewhere the folder says what they may do.
 	const canEdit = $derived(!view?.folder || allows(view.folder.permission, 'edit'));
 	const shareRoot = $derived(view?.shared ? (view.path[0] ?? null) : null);
+	const trashHref = $derived(view?.team ? `/files/trash?team=${view.team.id}` : '/files/trash');
 
 	const percent = (u: Usage) => (u.limit_bytes ? Math.min(100, (u.used_bytes / u.limit_bytes) * 100) : 0);
 </script>
 
 <div class="toolbar">
 	<nav class="crumbs" aria-label="Map">
-		<a href={view?.shared ? '/files/shared' : '/files'}>{view?.shared ? 'Gedeeld met mij' : 'Bestanden'}</a>
+		{#if view?.team}
+			<a href="/files">Teammappen</a>
+		{:else}
+			<a href={view?.shared ? '/files/shared' : '/files'}>{view?.shared ? 'Gedeeld met mij' : 'Bestanden'}</a>
+		{/if}
 		{#each view?.path ?? [] as c (c.id)}
 			<span class="muted">/</span> <a href="/files/{c.id}">{c.name}</a>
 		{/each}
@@ -148,11 +158,25 @@
 			</label>
 		{/if}
 		<a class="button" href="/files/shared">Gedeeld met mij</a>
-		<a class="button" href="/files/trash">Prullenbak</a>
+		<a class="button" href={trashHref}>Prullenbak</a>
 	</div>
 </div>
 
 <ErrorNotice {error} />
+
+{#if teams.length > 0}
+	<section class="panel teams" aria-labelledby="teams-title">
+		<h2 id="teams-title">Teammappen</h2>
+		<ul class="team-list">
+			{#each teams as t (t.id)}
+				<li>
+					<a href="/files/{t.id}">👥 {t.name}</a>
+					<span class="badge">{permissionLabel(t.permission)}</span>
+				</li>
+			{/each}
+		</ul>
+	</section>
+{/if}
 
 {#each uploads as u (u.key)}
 	<div class="upload" class:upload--error={u.error}>
@@ -279,6 +303,25 @@
 	}
 	.actions a:hover {
 		text-decoration: none;
+	}
+	.teams {
+		margin-bottom: 1rem;
+	}
+	.teams h2 {
+		font-size: 1rem;
+		margin: 0 0 0.75rem;
+	}
+	.team-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem 1.5rem;
+	}
+	.team-list a {
+		color: var(--text-strong);
+		margin-right: 0.4rem;
 	}
 	.drop {
 		min-height: 200px;

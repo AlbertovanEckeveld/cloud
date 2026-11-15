@@ -23,13 +23,17 @@ const transferDeadline = 12 * time.Hour
 type Auth struct {
 	RequireUser  func(http.Handler) http.Handler
 	RequireAdmin func(http.Handler) http.Handler
+	// RequireRecentAuth guards sensitive administrative changes.
+	RequireRecentAuth func(http.Handler) http.Handler
 	// UserID returns the signed-in user of a request that passed RequireUser.
 	UserID func(*http.Request) uuid.UUID
+	// Audit records an administrative action in the central audit log.
+	Audit func(r *http.Request, event string, details map[string]any)
 }
 
 // Routes mounts the drive API.
 func (s *Service) Routes(r chi.Router, auth Auth) {
-	s.userID = auth.UserID
+	s.userID, s.audit = auth.UserID, auth.Audit
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireUser)
 		r.Get("/folders/{id}", s.handleList)
@@ -44,6 +48,9 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 		r.Put("/nodes/{id}/shares", s.handleShare)
 		r.Delete("/nodes/{id}/shares/{type}/{subject}", s.handleUnshare)
 		r.Get("/shared", s.handleSharedWithMe)
+		r.Get("/team-folders", s.handleTeamFoldersFor)
+		r.Get("/team-folders/{id}/trash", s.handleTeamTrash)
+		r.Delete("/team-folders/{id}/trash", s.handleEmptyTeamTrash)
 		r.Patch("/nodes/{id}", s.handleUpdate)
 		r.Delete("/nodes/{id}", s.handleTrash)
 		r.Get("/trash", s.handleListTrash)
@@ -53,6 +60,21 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 		r.Get("/usage", s.handleUsage)
 		r.With(auth.RequireAdmin).Get("/admin/users/{id}/usage", s.handleAdminUsage)
 		r.With(auth.RequireAdmin).Put("/admin/users/{id}/quota", s.handleAdminQuota)
+		r.Route("/admin/team-folders", func(r chi.Router) {
+			r.Use(auth.RequireAdmin)
+			r.Get("/", s.handleListTeamFolders)
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRecentAuth)
+				r.Post("/", s.handleCreateTeamFolder)
+				r.Patch("/{id}", s.handleRenameTeamFolder)
+				r.Put("/{id}/quota", s.handleTeamFolderQuota)
+				r.Put("/{id}/groups/{group}", s.handleSetTeamFolderGroup)
+				r.Delete("/{id}/groups/{group}", s.handleRemoveTeamFolderGroup)
+				r.Delete("/{id}", s.handleDeleteTeamFolder)
+				r.Post("/{id}/restore", s.handleRestoreTeamFolder)
+				r.Post("/{id}/purge", s.handlePurgeTeamFolder)
+			})
+		})
 	})
 }
 
@@ -467,4 +489,208 @@ func (s *Service) handleSharedWithMe(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, struct {
 		Nodes []SharedNode `json:"nodes"`
 	}{nodes})
+}
+
+func (s *Service) handleTeamFoldersFor(w http.ResponseWriter, r *http.Request) {
+	nodes, err := s.TeamFoldersFor(r.Context(), s.userID(r))
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Nodes []Node `json:"nodes"`
+	}{nodes})
+}
+
+func (s *Service) handleTeamTrash(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	var team TeamRef
+	var nodes []Node
+	if err == nil {
+		team, nodes, err = s.ListTeamTrash(r.Context(), s.userID(r), id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Team  TeamRef `json:"team"`
+		Nodes []Node  `json:"nodes"`
+	}{team, nodes})
+}
+
+func (s *Service) handleEmptyTeamTrash(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err == nil {
+		err = s.EmptyTeamTrash(r.Context(), s.userID(r), id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleListTeamFolders(w http.ResponseWriter, r *http.Request) {
+	folders, err := s.ListTeamFolders(r.Context())
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		TeamFolders []TeamFolder `json:"team_folders"`
+	}{folders})
+}
+
+// teamFolderDone audits a successful administrative change and answers with
+// the team folder's current state.
+func (s *Service) teamFolderDone(w http.ResponseWriter, r *http.Request, id uuid.UUID, event string, details map[string]any) {
+	if details == nil {
+		details = map[string]any{}
+	}
+	details["team_folder_id"] = id.String()
+	s.audit(r, event, details)
+	t, err := s.TeamFolder(r.Context(), id)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, t)
+}
+
+func (s *Service) handleCreateTeamFolder(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	t, err := s.CreateTeamFolder(r.Context(), s.userID(r), in.Name)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.audit(r, "teamfolder.created", map[string]any{"team_folder_id": t.ID.String(), "name": t.Name})
+	httpserver.WriteJSON(w, http.StatusCreated, t)
+}
+
+func (s *Service) handleRenameTeamFolder(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	id, err := pathID(r)
+	if err == nil {
+		err = s.RenameTeamFolder(r.Context(), id, in.Name)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.teamFolderDone(w, r, id, "teamfolder.renamed", map[string]any{"name": in.Name})
+}
+
+func (s *Service) handleTeamFolderQuota(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		LimitBytes *int64 `json:"limit_bytes"`
+	}
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	id, err := pathID(r)
+	if err == nil {
+		err = s.SetTeamFolderQuota(r.Context(), id, in.LimitBytes)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.teamFolderDone(w, r, id, "teamfolder.quota_changed", map[string]any{"limit_bytes": in.LimitBytes})
+}
+
+func (s *Service) handleSetTeamFolderGroup(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Permission authz.Permission `json:"permission"`
+	}
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	id, err := pathID(r)
+	var group uuid.UUID
+	if err == nil {
+		group, err = pathUUID(r, "group")
+	}
+	if err == nil {
+		// The share itself is audited by the identity module.
+		err = s.SetTeamFolderGroup(r.Context(), s.userID(r), id, group, in.Permission)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.handleTeamFolder(w, r, id)
+}
+
+func (s *Service) handleRemoveTeamFolderGroup(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	var group uuid.UUID
+	if err == nil {
+		group, err = pathUUID(r, "group")
+	}
+	if err == nil {
+		err = s.RemoveTeamFolderGroup(r.Context(), s.userID(r), id, group)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.handleTeamFolder(w, r, id)
+}
+
+func (s *Service) handleTeamFolder(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
+	t, err := s.TeamFolder(r.Context(), id)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, t)
+}
+
+func (s *Service) handleDeleteTeamFolder(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err == nil {
+		err = s.DeleteTeamFolder(r.Context(), id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.teamFolderDone(w, r, id, "teamfolder.deleted", nil)
+}
+
+func (s *Service) handleRestoreTeamFolder(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err == nil {
+		err = s.RestoreTeamFolder(r.Context(), id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.teamFolderDone(w, r, id, "teamfolder.restored", nil)
+}
+
+func (s *Service) handlePurgeTeamFolder(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err == nil {
+		err = s.PurgeTeamFolder(r.Context(), id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.audit(r, "teamfolder.purged", map[string]any{"team_folder_id": id.String()})
+	w.WriteHeader(http.StatusNoContent)
 }

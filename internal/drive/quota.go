@@ -14,13 +14,14 @@ type Usage struct {
 }
 
 // usage counts every stored version, including those in the trash: they
-// take up space until purged.
+// take up space until purged. ownerID is a user or a team folder.
 func (s *Service) usage(ctx context.Context, q dbtx, userID uuid.UUID) (int64, *int64, error) {
 	var used int64
 	var limit *int64
 	err := q.QueryRow(ctx, `
 		SELECT COALESCE((SELECT sum(v.size) FROM drive.versions v JOIN drive.nodes n ON n.id = v.node_id WHERE n.owner_id = $1), 0),
-		       (SELECT limit_bytes FROM drive.quotas WHERE user_id = $1)`, userID).Scan(&used, &limit)
+		       COALESCE((SELECT limit_bytes FROM drive.quotas WHERE user_id = $1),
+		                (SELECT limit_bytes FROM drive.team_folders WHERE id = $1))`, userID).Scan(&used, &limit)
 	if err != nil {
 		return 0, nil, fmt.Errorf("load usage: %w", err)
 	}

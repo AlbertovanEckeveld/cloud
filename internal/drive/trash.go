@@ -14,11 +14,17 @@ import (
 )
 
 // Trash moves a node (and with it everything inside) to the trash. It goes
-// to the owner's trash, also when someone it is shared with deletes it.
+// to the owner's trash (or the team folder's), also when someone it is
+// shared with deletes it.
 func (s *Service) Trash(ctx context.Context, userID, nodeID uuid.UUID) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if _, err := s.authorize(ctx, tx, userID, nodeID, authz.Edit, false); err != nil {
 			return err
+		}
+		if root, err := s.isTeamRoot(ctx, tx, nodeID); err != nil {
+			return err
+		} else if root {
+			return errTeamRoot
 		}
 		if _, err := tx.Exec(ctx, `UPDATE drive.nodes SET trashed_at = $2 WHERE id = $1`, nodeID, s.now()); err != nil {
 			return fmt.Errorf("trash node: %w", err)
@@ -43,11 +49,12 @@ func (s *Service) ListTrash(ctx context.Context, userID uuid.UUID) ([]Node, erro
 }
 
 // Restore takes a node out of the trash. When its folder is gone (or in the
-// trash itself) it goes to the top level; a name clash gets a suffix.
+// trash itself) it goes to the top level (in a team folder: its root); a
+// name clash gets a suffix.
 func (s *Service) Restore(ctx context.Context, userID, nodeID uuid.UUID) (Node, error) {
 	var out Node
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		n, err := s.trashRoot(ctx, tx, userID, nodeID)
+		n, err := s.trashRoot(ctx, tx, userID, nodeID, authz.Edit)
 		if err != nil {
 			return err
 		}
@@ -58,9 +65,16 @@ func (s *Service) Restore(ctx context.Context, userID, nodeID uuid.UUID) (Node, 
 				n.ParentID = nil
 			}
 		}
+		if n.ParentID == nil && n.ownerID != userID {
+			root, err := s.teamRootOf(ctx, tx, n.ownerID)
+			if err != nil {
+				return err
+			}
+			n.ParentID = &root
+		}
 		base := n.Name
 		for i := 1; ; i++ {
-			if _, err := s.childByName(ctx, tx, userID, n.ParentID, n.Name); errors.Is(err, ErrNotFound) {
+			if _, err := s.childByName(ctx, tx, n.ownerID, n.ParentID, n.Name); errors.Is(err, ErrNotFound) {
 				break
 			} else if err != nil {
 				return err
@@ -71,7 +85,7 @@ func (s *Service) Restore(ctx context.Context, userID, nodeID uuid.UUID) (Node, 
 			nodeID, n.ParentID, n.Name); err != nil {
 			return fmt.Errorf("restore: %w", err)
 		}
-		n.TrashedAt, n.Permission = nil, authz.Manage
+		n.TrashedAt = nil
 		out = n
 		return nil
 	})
@@ -90,10 +104,11 @@ func withSuffix(name string, i int) string {
 	return fmt.Sprintf("%s (hersteld %d)%s", name, i, ext)
 }
 
-// trashRoot loads a node the user put in the trash themselves.
-func (s *Service) trashRoot(ctx context.Context, q dbtx, userID, nodeID uuid.UUID) (Node, error) {
-	rows, err := q.Query(ctx, `SELECT `+nodeColumns+` FROM drive.nodes WHERE id = $1 AND owner_id = $2 AND trashed_at IS NOT NULL`,
-		nodeID, userID)
+// trashRoot loads a node that was put in the trash: from the user's own
+// trash, or from the trash of a team folder where the user holds need. The
+// root of a team folder itself is only restored by an administrator.
+func (s *Service) trashRoot(ctx context.Context, q dbtx, userID, nodeID uuid.UUID, need authz.Permission) (Node, error) {
+	rows, err := q.Query(ctx, `SELECT `+nodeColumns+` FROM drive.nodes WHERE id = $1 AND trashed_at IS NOT NULL`, nodeID)
 	if err != nil {
 		return Node{}, fmt.Errorf("load trashed node: %w", err)
 	}
@@ -101,7 +116,26 @@ func (s *Service) trashRoot(ctx context.Context, q dbtx, userID, nodeID uuid.UUI
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Node{}, ErrNotFound
 	}
-	return n, err
+	if err != nil {
+		return Node{}, fmt.Errorf("load trashed node: %w", err)
+	}
+	if n.ownerID == userID {
+		n.Permission = authz.Manage
+		return n, nil
+	}
+	root, err := s.teamRootOf(ctx, q, n.ownerID)
+	if err != nil {
+		return Node{}, err // someone else's trash: not found
+	}
+	if root == n.ID {
+		return Node{}, ErrNotFound
+	}
+	r, err := s.authorize(ctx, q, userID, root, need, false)
+	if err != nil {
+		return Node{}, err
+	}
+	n.Permission = r.Permission
+	return n, nil
 }
 
 // purge deletes nodes for good: their rows (with everything below them) go,
@@ -150,7 +184,7 @@ func (s *Service) revokeShares(ctx context.Context, tree []uuid.UUID) {
 func (s *Service) DeleteForever(ctx context.Context, userID, nodeID uuid.UUID) error {
 	var tree []uuid.UUID
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := s.trashRoot(ctx, tx, userID, nodeID); err != nil {
+		if _, err := s.trashRoot(ctx, tx, userID, nodeID, authz.Manage); err != nil {
 			return err
 		}
 		var err error

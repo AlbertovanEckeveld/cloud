@@ -160,6 +160,26 @@ export interface FolderView {
 	children: DriveNode[];
 	/** The folder belongs to someone else and is shared with the user. */
 	shared: boolean;
+	/** The team folder the folder belongs to, if any. */
+	team: TeamRef | null;
+}
+
+export interface TeamRef {
+	id: string;
+	root_id: string;
+	name: string;
+}
+
+/** A team folder as administrators see it: no contents, only who has access. */
+export interface TeamFolder {
+	id: string;
+	root_id: string;
+	name: string;
+	groups: Share[];
+	usage: Usage;
+	created_at: string;
+	/** Set while the team folder is deleted (in the trash). */
+	deleted_at: string | null;
 }
 
 export interface SharedNode extends DriveNode {
@@ -587,7 +607,26 @@ const parseFolderView: Validator<FolderView> = (v) => {
 			return { id: str(p, 'id'), name: str(p, 'name') };
 		}),
 		children: list(r, 'children', parseNode),
-		shared: bool(r, 'shared')
+		shared: bool(r, 'shared'),
+		team: r.team === null || r.team === undefined ? null : parseTeamRef(r.team)
+	};
+};
+
+const parseTeamRef: Validator<TeamRef> = (v) => {
+	const r = record(v, 'team');
+	return { id: str(r, 'id'), root_id: str(r, 'root_id'), name: str(r, 'name') };
+};
+
+const parseTeamFolder: Validator<TeamFolder> = (v) => {
+	const r = record(v, 'team_folder');
+	return {
+		id: str(r, 'id'),
+		root_id: str(r, 'root_id'),
+		name: str(r, 'name'),
+		groups: list(r, 'groups', parseShare),
+		usage: parseUsage(r.usage),
+		created_at: str(r, 'created_at'),
+		deleted_at: nullableStr(r, 'deleted_at')
 	};
 };
 
@@ -768,6 +807,15 @@ export const api = {
 		emptyTrash: (f: typeof fetch = fetch) => request('DELETE', '/api/v1/drive/trash', noContent, undefined, f),
 		usage: (f: typeof fetch = fetch) => get('/api/v1/drive/usage', parseUsage, f),
 		downloadURL: (id: string) => `/api/v1/drive/files/${enc(id)}/content`,
+		teamFolders: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/team-folders', (v) => list(record(v, 'team_folders'), 'nodes', parseNode), f),
+		teamTrash: (teamId: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/team-folders/${enc(teamId)}/trash`, (v) => {
+				const r = record(v, 'trash');
+				return { team: parseTeamRef(r.team), nodes: list(r, 'nodes', parseNode) };
+			}, f),
+		emptyTeamTrash: (teamId: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/team-folders/${enc(teamId)}/trash`, noContent, undefined, f),
 		sharedWithMe: (f: typeof fetch = fetch) =>
 			get('/api/v1/drive/shared', (v) => list(record(v, 'shared'), 'nodes', parseSharedNode), f),
 		shares: (id: string, f: typeof fetch = fetch) => get(`/api/v1/drive/nodes/${enc(id)}/shares`, parseShares, f),
@@ -880,6 +928,25 @@ export const api = {
 			post(`/api/v1/admin/apps/${enc(id)}/secret`, (v) => str(record(v, 'secret'), 'secret'), undefined, f),
 		deleteApp: (id: string, f: typeof fetch = fetch) =>
 			request('DELETE', `/api/v1/admin/apps/${enc(id)}`, noContent, undefined, f),
+
+		teamFolders: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/admin/team-folders/', (v) => list(record(v, 'team_folders'), 'team_folders', parseTeamFolder), f),
+		createTeamFolder: (name: string, f: typeof fetch = fetch) =>
+			post('/api/v1/drive/admin/team-folders/', parseTeamFolder, { name }, f),
+		renameTeamFolder: (id: string, name: string, f: typeof fetch = fetch) =>
+			request('PATCH', `/api/v1/drive/admin/team-folders/${enc(id)}`, parseTeamFolder, { name }, f),
+		setTeamFolderQuota: (id: string, limitBytes: number | null, f: typeof fetch = fetch) =>
+			request('PUT', `/api/v1/drive/admin/team-folders/${enc(id)}/quota`, parseTeamFolder, { limit_bytes: limitBytes }, f),
+		setTeamFolderGroup: (id: string, groupId: string, permission: Permission, f: typeof fetch = fetch) =>
+			request('PUT', `/api/v1/drive/admin/team-folders/${enc(id)}/groups/${enc(groupId)}`, parseTeamFolder, { permission }, f),
+		removeTeamFolderGroup: (id: string, groupId: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/admin/team-folders/${enc(id)}/groups/${enc(groupId)}`, parseTeamFolder, undefined, f),
+		deleteTeamFolder: (id: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/admin/team-folders/${enc(id)}`, parseTeamFolder, undefined, f),
+		restoreTeamFolder: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/admin/team-folders/${enc(id)}/restore`, parseTeamFolder, undefined, f),
+		purgeTeamFolder: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/admin/team-folders/${enc(id)}/purge`, noContent, undefined, f),
 
 		audit: (before: string | null, f: typeof fetch = fetch) =>
 			get(

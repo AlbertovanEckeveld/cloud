@@ -30,6 +30,7 @@ import (
 type testEnv struct {
 	svc     *Service
 	sharing *fakeSharing
+	audited []string
 	pool    *pgxpool.Pool
 	objects *storage.Client
 	srv     *httptest.Server
@@ -67,7 +68,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	userFrom := func(r *http.Request) uuid.UUID { id, _ := uuid.Parse(r.Header.Get("X-Test-User")); return id }
 	pass := func(next http.Handler) http.Handler { return next }
 	r.Route("/api/v1/drive", func(r chi.Router) {
-		e.svc.Routes(r, Auth{RequireUser: pass, RequireAdmin: pass, UserID: userFrom})
+		e.svc.Routes(r, Auth{RequireUser: pass, RequireAdmin: pass, RequireRecentAuth: pass, UserID: userFrom,
+			Audit: func(_ *http.Request, event string, _ map[string]any) { e.audited = append(e.audited, event) }})
 	})
 	e.srv = httptest.NewServer(r)
 	t.Cleanup(e.srv.Close)

@@ -230,8 +230,10 @@ func serve(ctx context.Context) error {
 		avatars:   a.identity.AvatarHandler,
 		drive: func(r chi.Router) {
 			files.Routes(r, drive.Auth{
-				RequireUser:  a.identity.RequireUser,
-				RequireAdmin: identity.RequireAdmin,
+				RequireUser:       a.identity.RequireUser,
+				RequireAdmin:      identity.RequireAdmin,
+				RequireRecentAuth: a.identity.RequireRecentAuth,
+				Audit:             a.identity.AuditRequest,
 				UserID: func(r *http.Request) uuid.UUID {
 					p, _ := identity.PrincipalFrom(r.Context())
 					return p.User.ID
