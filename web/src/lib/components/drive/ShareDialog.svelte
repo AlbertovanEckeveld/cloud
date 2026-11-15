@@ -1,9 +1,10 @@
 <script lang="ts">
 	// Shows who a file or folder is shared with, and lets a manager add people
 	// or groups, change their permission or stop sharing.
+	import Icon from '#lib/components/Icon.svelte';
 	import { page } from '$app/state';
-	import { api, type DirectoryEntry, type DriveNode, type Permission, type Share } from '#lib/api.ts';
-	import { permissionLabel } from '#lib/format.ts';
+	import { api, type DirectoryEntry, type DriveNode, type Permission, type Share, type ShareLink } from '#lib/api.ts';
+	import { dateTime, permissionLabel } from '#lib/format.ts';
 	import ErrorNotice from '../ErrorNotice.svelte';
 
 	let { node, onClose }: { node: DriveNode; onClose: () => void } = $props();
@@ -17,10 +18,41 @@
 	let level = $state<Permission>('view');
 	let error = $state<unknown>(null);
 	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+	let links = $state<ShareLink[]>([]);
+	let linkExpires = $state('');
+	let linkPassword = $state('');
+	// The address of a new link; its token is only shown once.
+	let newLink = $state<string | null>(null);
+
+	async function createLink(e: SubmitEvent) {
+		e.preventDefault();
+		error = null;
+		try {
+			// A date means "until the end of that day" in the user's time zone.
+			const expires = linkExpires ? new Date(`${linkExpires}T23:59:59`).toISOString() : null;
+			const l = await api.drive.createLink(node.id, { expires_at: expires, password: linkPassword });
+			newLink = `${location.origin}/s#${l.token}`;
+			linkPassword = linkExpires = '';
+			links = await api.drive.links(node.id);
+		} catch (err) {
+			error = err;
+		}
+	}
+
+	async function removeLink(l: ShareLink) {
+		error = null;
+		try {
+			await api.drive.deleteLink(l.id);
+			links = await api.drive.links(node.id);
+		} catch (err) {
+			error = err;
+		}
+	}
 
 	$effect(() => {
 		dialog.showModal();
 		api.drive.shares(node.id).then((s) => (shares = s), (e) => (error = e));
+		api.drive.links(node.id).then((l) => (links = l), (e) => (error = e));
 		return () => clearTimeout(searchTimer);
 	});
 
@@ -88,7 +120,7 @@
 			{#each results as r (r.type + r.id)}
 				<li>
 					<span>
-						{r.type === 'group' ? '👥' : '👤'} {r.name}
+						<Icon name={r.type === 'group' ? 'users' : 'share'} size={16} /> {r.name}
 						{#if r.detail}<span class="muted small">{r.detail}</span>{/if}
 					</span>
 					{#if sharedWith(r)}
@@ -110,7 +142,7 @@
 		<ul class="list">
 			{#each shares as s (s.subject.type + s.subject.id)}
 				<li>
-					<span>{s.subject.type === 'group' ? '👥' : '👤'} {s.name}</span>
+					<span class="with-icon"><Icon name={s.subject.type === 'group' ? 'users' : 'share'} size={16} />{s.name}</span>
 					<span class="row">
 						<label class="visually-hidden" for="level-{s.subject.id}">Recht van {s.name}</label>
 						<select id="level-{s.subject.id}" value={s.permission} onchange={(e) => change(s, e.currentTarget.value as Permission)}>
@@ -122,6 +154,35 @@
 			{/each}
 		</ul>
 	{/if}
+
+	<h3>Openbare link</h3>
+	<p class="muted small">Iedereen met de link kan {node.kind === 'folder' ? 'de map bekijken en downloaden' : 'het bestand downloaden'}, zonder account.</p>
+	{#if newLink}
+		<div class="flash flash--success" role="status">
+			<p>Kopieer de link nu; hij wordt niet opnieuw getoond.</p>
+			<input class="new-link" readonly value={newLink} onfocus={(e) => e.currentTarget.select()} aria-label="Nieuwe link" />
+			<button class="button" onclick={() => newLink && navigator.clipboard.writeText(newLink)}>Kopiëren</button>
+		</div>
+	{/if}
+	{#if links.length > 0}
+		<ul class="list">
+			{#each links as l (l.id)}
+				<li>
+					<span class="small">
+						Gemaakt {dateTime(l.created_at)}{l.expires_at ? ` · verloopt ${dateTime(l.expires_at)}` : ''}
+						{#if l.password}<span class="badge">Wachtwoord</span>{/if}
+						<span class="muted">{l.downloads}× gedownload</span>
+					</span>
+					<button class="link-button" onclick={() => removeLink(l)}>Intrekken</button>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+	<form class="add link-form" onsubmit={createLink}>
+		<label class="small">Verloopt <input type="date" bind:value={linkExpires} /></label>
+		<input type="password" bind:value={linkPassword} placeholder="Wachtwoord (optioneel)" autocomplete="new-password" aria-label="Wachtwoord voor de link" />
+		<button class="button">Link maken</button>
+	</form>
 
 	<div class="dialog-actions">
 		<button class="button" onclick={() => dialog.close()}>Sluiten</button>
@@ -148,6 +209,14 @@
 	}
 	h3 {
 		margin-top: 1.25rem;
+	}
+	.new-link {
+		width: 100%;
+		margin: 0.5rem 0;
+	}
+	.link-form {
+		flex-wrap: wrap;
+		align-items: center;
 	}
 	.row {
 		display: flex;

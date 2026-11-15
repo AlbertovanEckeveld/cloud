@@ -5,7 +5,7 @@ PostgreSQL voor metadata en S3 voor bestanden. Achtergrond, roadmap en werkafspr
 [CLAUDE.md](CLAUDE.md); architectuurbeslissingen in [docs/adr/](docs/adr/).
 
 **Status:** fase 2.2 — `drive`: mappen en bestanden (uploaden, downloaden, verplaatsen,
-prullenbak, quota), delen met gebruikers en groepen, versies en teammappen. Fase 1 — `identity` (vervangt Authentik) is af. Inloggen met passkey, of met wachtwoord
+prullenbak, quota), delen met gebruikers en groepen, versies, teammappen en openbare deellinks. Fase 1 — `identity` (vervangt Authentik) is af. Inloggen met passkey, of met wachtwoord
 plus authenticator-app (TOTP) of herstelcode; sessiebeheer; een beheeromgeving voor
 gebruikers, groepen, apps, audit-log en systeemstatus; een OpenID Connect-provider zodat
 andere apps met je Cloud-account inloggen; optioneel mail voor activatielinks en
@@ -113,7 +113,7 @@ problemen tegelijk.
 | `/api/v1/auth/*` | Inloggen (passkey, wachtwoord + TOTP of herstelcode), activeren, uitloggen. |
 | `/api/v1/account/*` | Eigen account: wachtwoord, passkeys, herstelcodes, sessies, activiteit. Vereist login. |
 | `/api/v1/admin/*` | Gebruikers, groepen, apps en audit-log beheren. Alleen beheerders. |
-| `/api/v1/drive/*` | Bestanden en mappen: lijst, upload, download, hernoemen, verplaatsen, prullenbak, verbruik, delen, versies, teammappen (beheer onder `/admin/team-folders`). |
+| `/api/v1/drive/*` | Bestanden en mappen: lijst, upload, download, hernoemen, verplaatsen, prullenbak, verbruik, delen, versies, teammappen (beheer onder `/admin/team-folders`), deellinks (publiek: `/public/links/*`). |
 | `/api/v1/directory` | Gebruikers en groepen zoeken om mee te delen. Vereist login. |
 | `/api/v1/oidc/*` | Inlogverzoeken van apps afhandelen (voor de pagina `/connect`). |
 | `/oidc/*` | De OpenID Connect-provider: discovery, authorize, token, userinfo, keys. |

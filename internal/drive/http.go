@@ -34,6 +34,10 @@ type Auth struct {
 // Routes mounts the drive API.
 func (s *Service) Routes(r chi.Router, auth Auth) {
 	s.userID, s.audit = auth.UserID, auth.Audit
+	// Public share links: no account needed. The token travels in the body,
+	// never in the URL, so it does not end up in logs or browser history.
+	r.Post("/public/links/open", s.handleOpenLink)
+	r.Post("/public/links/download", s.handleLinkDownload)
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireUser)
 		r.Get("/folders/{id}", s.handleList)
@@ -48,6 +52,9 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 		r.Put("/nodes/{id}/shares", s.handleShare)
 		r.Delete("/nodes/{id}/shares/{type}/{subject}", s.handleUnshare)
 		r.Get("/shared", s.handleSharedWithMe)
+		r.Get("/nodes/{id}/links", s.handleLinks)
+		r.Post("/nodes/{id}/links", s.handleCreateLink)
+		r.Delete("/links/{id}", s.handleDeleteLink)
 		r.Get("/team-folders", s.handleTeamFoldersFor)
 		r.Get("/team-folders/{id}/trash", s.handleTeamTrash)
 		r.Delete("/team-folders/{id}/trash", s.handleEmptyTeamTrash)
@@ -108,6 +115,12 @@ func (s *Service) writeError(w http.ResponseWriter, r *http.Request, err error) 
 	switch {
 	case errors.Is(err, ErrNotFound):
 		httpserver.WriteError(w, http.StatusNotFound, "not_found", "Niet gevonden.")
+	case errors.Is(err, ErrPasswordRequired):
+		httpserver.WriteError(w, http.StatusUnauthorized, "password_required", "Deze link is beveiligd met een wachtwoord.")
+	case errors.Is(err, ErrWrongPassword):
+		httpserver.WriteError(w, http.StatusUnauthorized, "wrong_password", "Het wachtwoord klopt niet.")
+	case errors.Is(err, ErrLinkLocked):
+		httpserver.WriteError(w, http.StatusTooManyRequests, "locked", "Te veel foute pogingen. Probeer het over een kwartier opnieuw.")
 	case errors.Is(err, ErrForbidden):
 		httpserver.WriteError(w, http.StatusForbidden, "forbidden", "Je hebt hier niet genoeg rechten voor.")
 	case errors.Is(err, ErrNameTaken):
@@ -693,4 +706,106 @@ func (s *Service) handlePurgeTeamFolder(w http.ResponseWriter, r *http.Request) 
 	}
 	s.audit(r, "teamfolder.purged", map[string]any{"team_folder_id": id.String()})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleLinks(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	var links []Link
+	if err == nil {
+		links, err = s.Links(r.Context(), s.userID(r), id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Links []Link `json:"links"`
+	}{links})
+}
+
+func (s *Service) handleCreateLink(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ExpiresAt *time.Time `json:"expires_at"`
+		Password  string     `json:"password"`
+	}
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	id, err := pathID(r)
+	var l Link
+	if err == nil {
+		l, err = s.CreateLink(r.Context(), s.userID(r), id, in.ExpiresAt, in.Password)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.audit(r, "link.created", map[string]any{"link_id": l.ID.String(), "node_id": id.String(), "password": l.Password})
+	httpserver.WriteJSON(w, http.StatusCreated, l)
+}
+
+func (s *Service) handleDeleteLink(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err == nil {
+		err = s.DeleteLink(r.Context(), s.userID(r), id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.audit(r, "link.deleted", map[string]any{"link_id": id.String()})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleOpenLink: {"token", "password", "folder_id"} -> PublicView.
+func (s *Service) handleOpenLink(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+		FolderID string `json:"folder_id"`
+	}
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	var folder *uuid.UUID
+	if in.FolderID != "" {
+		id, err := uuid.Parse(in.FolderID)
+		if err != nil {
+			s.writeError(w, r, ErrNotFound)
+			return
+		}
+		folder = &id
+	}
+	view, err := s.OpenLink(r.Context(), in.Token, in.Password, folder)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, view)
+}
+
+// handleLinkDownload serves a file of a link. It takes a small form post
+// (token, password, file_id), so a plain browser download works without the
+// token appearing in a URL.
+func (s *Service) handleLinkDownload(w http.ResponseWriter, r *http.Request) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(transferDeadline))
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	if err := r.ParseForm(); err != nil {
+		httpserver.WriteError(w, http.StatusBadRequest, "invalid_input", "Ongeldig verzoek.")
+		return
+	}
+	file, err := uuid.Parse(r.PostForm.Get("file_id"))
+	if err != nil {
+		s.writeError(w, r, ErrNotFound)
+		return
+	}
+	n, obj, err := s.OpenLinkFile(r.Context(), r.PostForm.Get("token"), r.PostForm.Get("password"), file)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	defer obj.Close()
+	h := w.Header()
+	h.Set("Referrer-Policy", "no-referrer")
+	serveFile(w, r, n.Name, *n.currentVersionID, n.UpdatedAt, obj)
 }

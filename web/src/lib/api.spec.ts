@@ -261,3 +261,13 @@ describe('team folders', () => {
 		expect(trash.team.name).toBe('Familie');
 	});
 });
+
+describe('share links', () => {
+	it('accepts only a well-formed token', async () => {
+		const link = { id: 'l1', token: 'A'.repeat(43), password: false, expires_at: null, created_at: '2026-11-16T10:00:00Z', downloads: 0 };
+		expect((await api.drive.createLink('n1', { expires_at: null, password: '' }, respond(link, 201))).token).toHaveLength(43);
+		await expect(api.drive.createLink('n1', { expires_at: null, password: '' }, respond({ ...link, token: 'x/../y' }, 201))).rejects.toMatchObject({
+			code: 'invalid_response'
+		});
+	});
+});

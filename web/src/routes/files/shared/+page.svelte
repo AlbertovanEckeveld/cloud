@@ -1,8 +1,12 @@
 <script lang="ts">
+	import Icon from '#lib/components/Icon.svelte';
 	import { onMount } from 'svelte';
 	import { api, type SharedNode } from '#lib/api.ts';
 	import { dateTime, formatBytes, permissionLabel, timeAgo } from '#lib/format.ts';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
+	import { drive } from '#lib/drive-state.svelte.ts';
+
+	drive.section = 'shared';
 
 	let { data } = $props();
 
@@ -34,7 +38,6 @@
 	<title>Gedeeld met mij · Cloud</title>
 </svelte:head>
 
-<p><a href="/files">← Bestanden</a></p>
 <h1>Gedeeld met mij</h1>
 <p class="muted">Bestanden en mappen die anderen met jou of met een van je groepen hebben gedeeld.</p>
 <ErrorNotice {error} />
@@ -48,9 +51,9 @@
 					<tr>
 						<td class="name">
 							{#if n.kind === 'folder'}
-								<a href="/files/{n.id}">📁 {n.name}</a>
+								<a class="with-icon" href="/files/{n.id}"><Icon name="folder" />{n.name}</a>
 							{:else}
-								<a href={api.drive.downloadURL(n.id)} download>📄 {n.name}</a>
+								<a class="with-icon" href={api.drive.downloadURL(n.id)} download><Icon name="file" />{n.name}</a>
 								<span class="muted small">{formatBytes(n.size)}</span>
 							{/if}
 						</td>

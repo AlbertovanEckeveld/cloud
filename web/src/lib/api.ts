@@ -182,6 +182,24 @@ export interface TeamFolder {
 	deleted_at: string | null;
 }
 
+export interface ShareLink {
+	id: string;
+	/** Only present right after creating the link. */
+	token: string;
+	password: boolean;
+	expires_at: string | null;
+	created_at: string;
+	downloads: number;
+}
+
+/** What a public link shows. */
+export interface PublicView {
+	node: DriveNode;
+	folder: DriveNode | null;
+	path: { id: string; name: string }[];
+	children: DriveNode[];
+}
+
 export interface SharedNode extends DriveNode {
 	owner_name: string;
 }
@@ -561,6 +579,33 @@ const parseNode: Validator<DriveNode> = (v) => {
 	};
 };
 
+const parseLink: Validator<ShareLink> = (v) => {
+	const r = record(v, 'link');
+	const token = typeof r.token === 'string' ? r.token : '';
+	if (token && !/^[A-Za-z0-9_-]{43}$/.test(token)) fail('token');
+	return {
+		id: str(r, 'id'),
+		token,
+		password: bool(r, 'password'),
+		expires_at: nullableStr(r, 'expires_at'),
+		created_at: str(r, 'created_at'),
+		downloads: num(r, 'downloads')
+	};
+};
+
+const parsePublicView: Validator<PublicView> = (v) => {
+	const r = record(v, 'link');
+	return {
+		node: parseNode(r.node),
+		folder: r.folder === null || r.folder === undefined ? null : parseNode(r.folder),
+		path: list(r, 'path', (c) => {
+			const p = record(c, 'crumb');
+			return { id: str(p, 'id'), name: str(p, 'name') };
+		}),
+		children: list(r, 'children', parseNode)
+	};
+};
+
 const parseSharedNode: Validator<SharedNode> = (v) => ({
 	...parseNode(v),
 	owner_name: str(record(v, 'node'), 'owner_name')
@@ -816,6 +861,16 @@ export const api = {
 			}, f),
 		emptyTeamTrash: (teamId: string, f: typeof fetch = fetch) =>
 			request('DELETE', `/api/v1/drive/team-folders/${enc(teamId)}/trash`, noContent, undefined, f),
+		links: (id: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/nodes/${enc(id)}/links`, (v) => list(record(v, 'links'), 'links', parseLink), f),
+		createLink: (id: string, opts: { expires_at: string | null; password: string }, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/nodes/${enc(id)}/links`, parseLink, opts, f),
+		deleteLink: (linkId: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/links/${enc(linkId)}`, noContent, undefined, f),
+		/** Opens a public link; no account needed. */
+		openLink: (token: string, password: string, folderId: string | null, f: typeof fetch = fetch) =>
+			post('/api/v1/drive/public/links/open', parsePublicView, { token, password, folder_id: folderId ?? '' }, f),
+		linkDownloadURL: '/api/v1/drive/public/links/download',
 		sharedWithMe: (f: typeof fetch = fetch) =>
 			get('/api/v1/drive/shared', (v) => list(record(v, 'shared'), 'nodes', parseSharedNode), f),
 		shares: (id: string, f: typeof fetch = fetch) => get(`/api/v1/drive/nodes/${enc(id)}/shares`, parseShares, f),

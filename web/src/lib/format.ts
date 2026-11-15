@@ -77,7 +77,9 @@ const eventLabels: Record<string, string> = {
 	'teamfolder.quota_changed': 'Quotum van teammap gewijzigd',
 	'teamfolder.deleted': 'Teammap opgeheven',
 	'teamfolder.restored': 'Teammap teruggezet',
-	'teamfolder.purged': 'Teammap definitief verwijderd'
+	'teamfolder.purged': 'Teammap definitief verwijderd',
+	'link.created': 'Openbare link gemaakt',
+	'link.deleted': 'Openbare link ingetrokken'
 };
 
 /** Returns the Dutch description of an audit event. */

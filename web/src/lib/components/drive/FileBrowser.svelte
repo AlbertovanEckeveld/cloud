@@ -3,8 +3,10 @@
 	// folders, upload (button or drag and drop), download, rename, move, move
 	// to the trash, share and see versions. Actions depend on the user's
 	// permission; the server checks it again for every request.
-	import { onMount } from 'svelte';
-	import { api, ApiError, errorMessage, type DriveNode, type FolderView, type Usage } from '#lib/api.ts';
+	import Icon from '#lib/components/Icon.svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { drive, refreshDrive } from '#lib/drive-state.svelte.ts';
+	import { api, ApiError, errorMessage, type DriveNode, type FolderView } from '#lib/api.ts';
 	import { allows, dateTime, formatBytes, permissionLabel, timeAgo, uniqueName } from '#lib/format.ts';
 	import ErrorNotice from '../ErrorNotice.svelte';
 	import MoveDialog from './MoveDialog.svelte';
@@ -16,8 +18,7 @@
 	type UploadState = { key: number; name: string; progress: number; error: string | null };
 
 	let view = $state<FolderView | null>(null);
-	let teams = $state<DriveNode[]>([]);
-	let usage = $state<Usage | null>(null);
+	let fileInput: HTMLInputElement;
 	let error = $state<unknown>(null);
 	let uploads = $state<UploadState[]>([]);
 	let newFolder = $state<string | null>(null);
@@ -30,11 +31,7 @@
 
 	async function load() {
 		try {
-			[view, usage, teams] = await Promise.all([
-				api.drive.folder(folderId),
-				api.drive.usage(),
-				folderId === null ? api.drive.teamFolders() : Promise.resolve([])
-			]);
+			view = await api.drive.folder(folderId);
 		} catch (e) {
 			error = e;
 		}
@@ -45,7 +42,7 @@
 		error = null;
 		try {
 			await action();
-			await load();
+			await Promise.all([load(), refreshDrive()]);
 		} catch (e) {
 			error = e;
 		}
@@ -114,7 +111,7 @@
 
 	async function uploadAll(files: FileList | File[]) {
 		await Promise.all([...files].map(uploadOne));
-		await load();
+		await Promise.all([load(), refreshDrive()]);
 	}
 
 	function pick(e: Event) {
@@ -132,9 +129,14 @@
 	// The top level is the user's own; elsewhere the folder says what they may do.
 	const canEdit = $derived(!view?.folder || allows(view.folder.permission, 'edit'));
 	const shareRoot = $derived(view?.shared ? (view.path[0] ?? null) : null);
-	const trashHref = $derived(view?.team ? `/files/trash?team=${view.team.id}` : '/files/trash');
 
-	const percent = (u: Usage) => (u.limit_bytes ? Math.min(100, (u.used_bytes / u.limit_bytes) * 100) : 0);
+	// Tell the sidebar where we are and what "Nieuw" may do here.
+	$effect(() => {
+		drive.section = view?.team ? { team: view.team.root_id } : view?.shared ? 'shared' : 'mine';
+		drive.create = canEdit ? { folder: () => (newFolder = ''), upload: () => fileInput.click() } : null;
+	});
+	onDestroy(() => (drive.create = null));
+
 </script>
 
 <div class="toolbar">
@@ -150,33 +152,15 @@
 		{#if view?.folder && view.shared}<span class="badge">{permissionLabel(view.folder.permission)}</span>{/if}
 	</nav>
 	<div class="actions">
-		{#if canEdit}
-			<button class="button" onclick={() => (newFolder = '')}>Nieuwe map</button>
-			<label class="button button--primary">
-				Uploaden
-				<input type="file" multiple hidden onchange={pick} />
-			</label>
+		<input type="file" multiple hidden bind:this={fileInput} onchange={pick} />
+		{#if view?.team}
+			<a class="button" href="/files/trash?team={view.team.id}">Prullenbak van {view.team.name}</a>
 		{/if}
-		<a class="button" href="/files/shared">Gedeeld met mij</a>
-		<a class="button" href={trashHref}>Prullenbak</a>
 	</div>
 </div>
 
 <ErrorNotice {error} />
 
-{#if teams.length > 0}
-	<section class="panel teams" aria-labelledby="teams-title">
-		<h2 id="teams-title">Teammappen</h2>
-		<ul class="team-list">
-			{#each teams as t (t.id)}
-				<li>
-					<a href="/files/{t.id}">👥 {t.name}</a>
-					<span class="badge">{permissionLabel(t.permission)}</span>
-				</li>
-			{/each}
-		</ul>
-	</section>
-{/if}
 
 {#each uploads as u (u.key)}
 	<div class="upload" class:upload--error={u.error}>
@@ -208,7 +192,7 @@
 	{/if}
 
 	{#if view && view.children.length === 0}
-		<p class="empty muted">Deze map is leeg.{canEdit ? ' Sleep bestanden hierheen of gebruik Uploaden.' : ''}</p>
+		<p class="empty muted">Deze map is leeg.{canEdit ? ' Sleep bestanden hierheen of gebruik Nieuw.' : ''}</p>
 	{:else if view}
 		<table class="table">
 			<thead><tr><th>Naam</th><th class="num">Grootte</th><th>Gewijzigd</th><th><span class="visually-hidden">Acties</span></th></tr></thead>
@@ -224,25 +208,25 @@
 									<button type="button" class="button" onclick={() => (renaming = null)}>Annuleren</button>
 								</form>
 							{:else if n.kind === 'folder'}
-								<a href="/files/{n.id}">📁 {n.name}</a>
+								<a class="with-icon" href="/files/{n.id}"><Icon name="folder" />{n.name}</a>
 							{:else}
-								<a href={api.drive.downloadURL(n.id)} download>📄 {n.name}</a>
+								<a class="with-icon" href={api.drive.downloadURL(n.id)} download><Icon name="file" />{n.name}</a>
 							{/if}
-							{#if n.shared}<span class="badge" title="Gedeeld met anderen">👥 Gedeeld</span>{/if}
+							{#if n.shared}<span class="badge" title="Gedeeld met anderen"><Icon name="users" size={14} />Gedeeld</span>{/if}
 						</td>
 						<td class="num muted">{n.kind === 'file' ? formatBytes(n.size) : ''}</td>
 						<td class="muted"><time datetime={n.updated_at} title={dateTime(n.updated_at)}>{timeAgo(n.updated_at)}</time></td>
 						<td class="row-actions">
 							{#if allows(n.permission, 'manage')}
-								<button class="link" onclick={() => (sharing = n)}>Delen</button>
+								<button class="icon-button" aria-label="Delen" title="Delen" onclick={() => (sharing = n)}><Icon name="share" /></button>
 							{/if}
 							{#if n.kind === 'file'}
-								<button class="link" onclick={() => (history = n)}>Versies</button>
+								<button class="icon-button" aria-label="Versies" title="Versies" onclick={() => (history = n)}><Icon name="history" /></button>
 							{/if}
 							{#if allows(n.permission, 'edit')}
-								<button class="link" onclick={() => (renaming = { id: n.id, name: n.name })}>Hernoemen</button>
-								<button class="link" onclick={() => (moving = n)}>Verplaatsen</button>
-								<button class="link" onclick={() => trash(n)}>Verwijderen</button>
+								<button class="icon-button" aria-label="Hernoemen" title="Hernoemen" onclick={() => (renaming = { id: n.id, name: n.name })}><Icon name="rename" /></button>
+								<button class="icon-button" aria-label="Verplaatsen" title="Verplaatsen" onclick={() => (moving = n)}><Icon name="move" /></button>
+								<button class="icon-button" aria-label="Verwijderen" title="Verwijderen" onclick={() => trash(n)}><Icon name="trash" /></button>
 							{/if}
 						</td>
 					</tr>
@@ -252,16 +236,6 @@
 	{/if}
 </section>
 
-{#if usage && !view?.shared}
-	<p class="usage muted small">
-		{#if usage.limit_bytes !== null}
-			<progress max="100" value={percent(usage)}></progress>
-			{formatBytes(usage.used_bytes)} van {formatBytes(usage.limit_bytes)} gebruikt
-		{:else}
-			{formatBytes(usage.used_bytes)} gebruikt
-		{/if}
-	</p>
-{/if}
 
 {#if moving}
 	<MoveDialog
@@ -303,25 +277,6 @@
 	}
 	.actions a:hover {
 		text-decoration: none;
-	}
-	.teams {
-		margin-bottom: 1rem;
-	}
-	.teams h2 {
-		font-size: 1rem;
-		margin: 0 0 0.75rem;
-	}
-	.team-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem 1.5rem;
-	}
-	.team-list a {
-		color: var(--text-strong);
-		margin-right: 0.4rem;
 	}
 	.drop {
 		min-height: 200px;
@@ -381,11 +336,5 @@
 	.upload--error {
 		background: var(--error-bg);
 		color: var(--error-text);
-	}
-	.usage {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		margin-top: 1rem;
 	}
 </style>

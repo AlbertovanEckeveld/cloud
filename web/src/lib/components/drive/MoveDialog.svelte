@@ -2,6 +2,7 @@
 	// Lets the user pick a destination folder by browsing the folder tree.
 	// Inside a share, browsing starts at the shared folder: files can only move
 	// within their owner's folders.
+	import Icon from '#lib/components/Icon.svelte';
 	import { api, type DriveNode, type FolderView } from '#lib/api.ts';
 	import { allows } from '#lib/format.ts';
 	import ErrorNotice from '../ErrorNotice.svelte';
@@ -60,7 +61,7 @@
 	</nav>
 	<ul class="list folders">
 		{#each folders as f (f.id)}
-			<li><button class="link-button" onclick={() => open(f.id)}>📁 {f.name}</button></li>
+			<li><button class="link-button" onclick={() => open(f.id)}><span class="with-icon"><Icon name="folder" />{f.name}</span></button></li>
 		{:else}
 			<li class="muted">Geen mappen hier.</li>
 		{/each}

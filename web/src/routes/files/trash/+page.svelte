@@ -1,12 +1,15 @@
 <script lang="ts">
 	// The user's own trash, or with ?team=<id> the trash of a team folder.
+	import Icon from '#lib/components/Icon.svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { api, type DriveNode, type TeamRef } from '#lib/api.ts';
 	import { allows, dateTime, formatBytes, timeAgo } from '#lib/format.ts';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
+	import { drive, refreshDrive } from '#lib/drive-state.svelte.ts';
 
 	const teamId = page.url.searchParams.get('team');
+	drive.section = 'trash';
 
 	let nodes = $state<DriveNode[] | null>(null);
 	let team = $state<TeamRef | null>(null);
@@ -31,7 +34,7 @@
 		restored = null;
 		try {
 			await action();
-			await load();
+			await Promise.all([load(), refreshDrive()]);
 		} catch (e) {
 			error = e;
 		}
@@ -56,7 +59,7 @@
 	<title>Prullenbak · Cloud</title>
 </svelte:head>
 
-<p><a href={team ? `/files/${team.root_id}` : '/files'}>← {team ? team.name : 'Bestanden'}</a></p>
+{#if team}<p><a href="/files/{team.root_id}">← {team.name}</a></p>{/if}
 <div class="header">
 	<h1>{team ? `Prullenbak van ${team.name}` : 'Prullenbak'}</h1>
 	{#if nodes && nodes.length > 0 && canPurge}<button class="button" onclick={empty}>Prullenbak legen</button>{/if}
@@ -74,15 +77,15 @@
 			<tbody>
 				{#each nodes as n (n.id)}
 					<tr>
-						<td>{n.kind === 'folder' ? '📁' : '📄'} {n.name}</td>
+						<td><span class="with-icon"><Icon name={n.kind === 'folder' ? 'folder' : 'file'} />{n.name}</span></td>
 						<td class="muted">{n.kind === 'file' ? formatBytes(n.size) : ''}</td>
 						<td class="muted">
 							{#if n.trashed_at}<time datetime={n.trashed_at} title={dateTime(n.trashed_at)}>{timeAgo(n.trashed_at)}</time>{/if}
 						</td>
 						<td class="row-actions">
-							<button class="button" onclick={() => restore(n)}>Terugzetten</button>
+							<button class="icon-button" aria-label="Terugzetten" title="Terugzetten" onclick={() => restore(n)}><Icon name="restore" /></button>
 							{#if allows(n.permission, 'manage')}
-								<button class="button" onclick={() => remove(n)}>Definitief verwijderen</button>
+								<button class="icon-button" aria-label="Definitief verwijderen" title="Definitief verwijderen" onclick={() => remove(n)}><Icon name="trash" /></button>
 							{/if}
 						</td>
 					</tr>

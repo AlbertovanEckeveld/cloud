@@ -8,8 +8,8 @@ export const ssr = false;
 
 /** Pages only for visitors who are not signed in. */
 const publicPaths = ['/login', '/activate'];
-/** Pages for everyone: signing in to an app works with or without a session. */
-const openPaths = ['/connect', '/signed-out'];
+/** Pages for everyone: signing in to an app, and public share links (/s). */
+const openPaths = ['/connect', '/signed-out', '/s'];
 
 export const load: LayoutLoad = async ({ fetch, url }) => {
 	const session = await api.session(fetch);
