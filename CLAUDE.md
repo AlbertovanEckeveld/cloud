@@ -192,21 +192,18 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 
 ## 11. Huidige status
 
-- Fase: **0 – Fundament**, opgesplitst in 0.1 skelet (Go + SvelteKit + health/readiness +
-  migraties + Dockerfile), 0.2 NATS + outbox, 0.3 CI, 0.4 back-ups
-- Laatst afgerond: 0.1 skelet (2026-11-15). 0.2–0.4 uitgesteld op mijn verzoek;
-  back-ups (0.4) moeten er zijn vóór er echte data in staat.
-- Bezig met: **fase 1 – identity**. 1.1–1.3 en uitgaande mail (ADR 0007) gecommit. 1.4
-  OIDC-provider (ADR 0008) gebouwd en getest; wacht op mijn eigen test (o.a. met Grafana).
-  Daarmee is fase 1 functioneel compleet. Het deelmodel is ontworpen (ADR 0006) en wordt
-  gebouwd in fase 2 met `drive`.
+- Fase 0: 0.1 skelet af. 0.2 NATS + outbox, 0.3 CI en 0.4 back-ups uitgesteld; back-ups
+  moeten er zijn vóór er echte data in staat.
+- Fase 1 – identity: **af** (2026-11-15), door mij getest. Accounts, passkeys, wachtwoord +
+  TOTP, herstelcodes, sessies, beheer van gebruikers/groepen/apps, audit-log, mail
+  (ADR 0007), OIDC-provider met amr/acr, profielclaims en back-channel logout (ADR 0008).
+  Het deelmodel is ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`.
+- Bezig met: keuze volgende stap.
 - Testen: integratie- en browsertests draaien tegen een aparte database (`TEST_DATABASE_URL`,
   `ave_cloud_test`), nooit tegen de dev-database met mijn eigen account. Tests ruimen ook daar
   alleen hun eigen data op (`it-*`, `e2e-*`).
 - Mail: SMTP-gegevens staan in `.skills/mail.md` en `.env`. Stuur geen echte mail naar
   buiten zonder mijn akkoord; tests gebruiken een nep-SMTP-server.
-- Klaar als (fase 1): inloggen met passkey; admin nodigt gebruiker uit en beheert groepen;
-  een externe app (Grafana) logt in via onze OIDC; alle auth-events in de audit-log; getest.
 - Open vragen: definitieve keuze Go vs. Rust (huidige keuze: Go)
 
 ## 12. Beslissingen
