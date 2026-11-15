@@ -1,0 +1,14 @@
+# Allow-list: only what the image build needs. Everything else (.env, .git,
+# docs, local build output) never reaches the build context.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!migrations/
+!web/
+web/node_modules/
+web/build/
+web/.svelte-kit/
+**/*_test.go
+**/*.spec.ts

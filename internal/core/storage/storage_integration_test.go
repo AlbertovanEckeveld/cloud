@@ -1,0 +1,95 @@
+//go:build integration
+
+package storage
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/minio/minio-go/v7"
+
+	"github.com/AlbertovanEckeveld/cloud/internal/core/config"
+)
+
+func testClient(t *testing.T, mutate func(map[string]string)) *Client {
+	t.Helper()
+	env := map[string]string{}
+	for _, k := range []string{"APP_ENV", "SITE_ID", "DATABASE_URL", "S3_ENDPOINT", "S3_REGION", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_FORCE_PATH_STYLE"} {
+		env[k] = os.Getenv(k)
+	}
+	if mutate != nil {
+		mutate(env)
+	}
+	cfg, err := config.Load(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("integration config: %v", err)
+	}
+	c, err := New(cfg.Storage)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return c
+}
+
+func ctx(t *testing.T) context.Context {
+	c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	return c
+}
+
+func TestPing(t *testing.T) {
+	if err := testClient(t, nil).Ping(ctx(t)); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+}
+
+func TestPingMissingBucket(t *testing.T) {
+	c := testClient(t, func(env map[string]string) { env["S3_BUCKET"] = "does-not-exist-" + fmt.Sprint(time.Now().Unix()) })
+	err := c.Ping(ctx(t))
+	if !errors.Is(err, ErrBucketMissing) {
+		t.Fatalf("err = %v, want ErrBucketMissing", err)
+	}
+}
+
+func TestPingWrongCredentials(t *testing.T) {
+	c := testClient(t, func(env map[string]string) { env["S3_SECRET_ACCESS_KEY"] = "wrong-secret" })
+	if err := c.Ping(ctx(t)); err == nil {
+		t.Fatal("expected error with wrong credentials")
+	}
+}
+
+// TestRoundTrip proves the credentials can write, read and delete objects,
+// which every later module depends on.
+func TestRoundTrip(t *testing.T) {
+	c := testClient(t, nil)
+	key := fmt.Sprintf("_integration-test/%d", time.Now().UnixNano())
+	body := []byte("hello from the integration test")
+
+	if _, err := c.s3.PutObject(ctx(t), c.bucket, key, bytes.NewReader(body), int64(len(body)), minio.PutObjectOptions{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := c.s3.RemoveObject(context.Background(), c.bucket, key, minio.RemoveObjectOptions{}); err != nil {
+			t.Errorf("remove: %v", err)
+		}
+	})
+
+	obj, err := c.s3.GetObject(ctx(t), c.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer obj.Close()
+	got, err := io.ReadAll(obj)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("got %q, want %q", got, body)
+	}
+}
