@@ -364,7 +364,10 @@ func (s *Service) ChangePassword(ctx context.Context, c Client, sess Session, cu
 		if _, err := tx.Exec(ctx, `DELETE FROM identity.sessions WHERE user_id = $1 AND id <> $2`, sess.UserID, sess.ID); err != nil {
 			return fmt.Errorf("revoke other sessions: %w", err)
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventPasswordChanged, actor: &sess.UserID})
+		if err := s.audit(ctx, tx, c, auditEntry{event: EventPasswordChanged, actor: &sess.UserID}); err != nil {
+			return err
+		}
+		return s.notify(ctx, tx, c, sess.UserID, noticePasswordChanged)
 	})
 }
 
@@ -437,11 +440,11 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Session, User
 	var authenticatedAt *time.Time
 	err := s.db.QueryRow(ctx, `
 		SELECT s.id, s.user_id, s.state, s.expires_at, s.last_seen_at, s.activation_token_hash, s.authenticated_at,
-		       u.username, u.display_name, u.is_admin
+		       u.username, u.display_name, u.is_admin, COALESCE(u.email, '')
 		FROM identity.sessions s JOIN identity.users u ON u.id = s.user_id
 		WHERE s.token_hash = $1 AND u.disabled_at IS NULL`, hashToken(token)).Scan(
 		&sess.ID, &sess.UserID, &sess.State, &sess.ExpiresAt, &lastSeen, &sess.activationTokenHash, &authenticatedAt,
-		&u.Username, &u.DisplayName, &u.IsAdmin)
+		&u.Username, &u.DisplayName, &u.IsAdmin, &u.Email)
 	if authenticatedAt != nil {
 		sess.AuthenticatedAt = *authenticatedAt
 	}

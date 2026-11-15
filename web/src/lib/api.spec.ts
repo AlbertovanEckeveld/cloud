@@ -74,7 +74,7 @@ describe('api.sites', () => {
 });
 
 describe('api.session', () => {
-	const user = { id: 'u1', username: 'alice', display_name: 'Alice', is_admin: false };
+	const user = { id: 'u1', username: 'alice', display_name: 'Alice', is_admin: false, email: '' };
 
 	it('returns the user for an authenticated session', async () => {
 		expect(await api.session(respond({ state: 'authenticated', user }))).toEqual({
@@ -131,17 +131,19 @@ describe('POST requests', () => {
 });
 
 describe('admin.invite', () => {
+	const bob = { username: 'bob', display_name: 'Bob', is_admin: false, email: '' };
+
 	it('returns a well-formed activation link', async () => {
 		const link = 'https://cloud.example.com/activate#abc_DEF-123';
-		const res = respond({ user: {}, activation_link: link }, 201);
-		expect(await api.admin.invite('bob', 'Bob', false, res)).toBe(link);
+		const res = respond({ user: {}, activation_link: link, emailed: true }, 201);
+		expect(await api.admin.invite(bob, res)).toEqual({ link, emailed: true });
 	});
 
 	it.each(['javascript:alert(1)//activate#x', 'https://evil.example/phish', 'https://a.b/activate#x y'])(
 		'rejects %s',
 		async (link) => {
-			const res = respond({ user: {}, activation_link: link }, 201);
-			await expect(api.admin.invite('bob', 'Bob', false, res)).rejects.toMatchObject({
+			const res = respond({ user: {}, activation_link: link, emailed: false }, 201);
+			await expect(api.admin.invite(bob, res)).rejects.toMatchObject({
 				code: 'invalid_response'
 			});
 		}

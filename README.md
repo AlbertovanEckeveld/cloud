@@ -6,7 +6,8 @@ PostgreSQL voor metadata en S3 voor bestanden. Achtergrond, roadmap en werkafspr
 
 **Status:** fase 1.3 — accounts, inloggen en beheer. Inloggen met passkey, of met wachtwoord
 plus authenticator-app (TOTP) of herstelcode; sessiebeheer; een beheeromgeving voor
-gebruikers, groepen, audit-log en systeemstatus.
+gebruikers, groepen, audit-log en systeemstatus. Optioneel uitgaande mail voor
+activatielinks en beveiligingsmeldingen.
 
 ## Vereisten
 
@@ -33,6 +34,9 @@ Dit drukt een eenmalige activatielink af (72 uur geldig). Open die in de browser
 wachtwoord, koppel een authenticator-app (Aegis, 2FAS, Google Authenticator, …) en bewaar de
 herstelcodes. Een passkey voeg je daarna toe op de accountpagina.
 
+Met een SMTP-server in `.env` (`SMTP_*`) worden activatielinks en beveiligingsmeldingen ook
+gemaild (zie [ADR 0007](docs/adr/0007-uitgaande-mail.md)).
+
 `PUBLIC_URL` moet een hostnaam zijn (geen IP-adres), anders werken passkeys niet: lokaal
 `http://localhost:8080`.
 Verdere gebruikers nodig je uit via **Beheer → Gebruikers**. Kwijtgeraakt?
@@ -51,7 +55,7 @@ De Go-code bedt `web/build` in. Bouw daarom eerst de frontend (`make web`) voord
 |---|---|
 | `make check` | `gofmt`, `go vet`, `svelte-check` |
 | `make test` | Unit tests: Go (met race detector) en frontend (Vitest) |
-| `make test-integration` | Alle tests, plus integratietests tegen de Postgres en S3 uit `.env` |
+| `make test-integration` | Alle tests, plus integratietests tegen `TEST_DATABASE_URL` en de S3 uit `.env` |
 | `make run` | Bouwt en start het platform met `.env` |
 | `make dev` | Backend + Vite-devserver met hot reload |
 | `make docker` | Bouwt het container-image `platform:<versie>` |
@@ -95,7 +99,7 @@ health check (`/platform healthcheck`, die `/readyz` aanroept).
 ```
 cmd/platform/        main: configuratie, opstarten, routes, CLI (user create/reset)
 internal/core/       gedeelde basis: config, logging, database, storage, health, httpserver,
-                     sealer (versleuteling at rest), site
+                     sealer (versleuteling at rest), mailer (outbox + SMTP), site
 internal/identity/   accounts, wachtwoorden, TOTP, passkeys, herstelcodes, sessies,
                      throttling, audit-log, gebruikers- en groepsbeheer
 migrations/<module>/ SQL-migraties per module; de mapnaam is ook het Postgres-schema

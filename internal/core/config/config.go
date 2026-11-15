@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	netmail "net/mail"
 	"net/url"
 	"os"
 	"regexp"
@@ -38,12 +39,34 @@ type Config struct {
 	LogLevel      slog.Level
 	Database      Database
 	Storage       Storage
+	// Mail is nil when no SMTP server is configured; mail is then disabled.
+	Mail *Mail
 }
 
 // Database configures the PostgreSQL connection.
 type Database struct {
 	// URL is a postgres:// connection URL. It contains the password.
 	URL Secret
+}
+
+// MailSecurity is how the SMTP connection is encrypted.
+type MailSecurity string
+
+const (
+	MailTLS      MailSecurity = "tls"      // TLS from the first byte (port 465, RFC 8314)
+	MailStartTLS MailSecurity = "starttls" // upgrade a plain connection (port 587)
+	MailNone     MailSecurity = "none"     // development only, e.g. a local test server
+)
+
+// Mail configures outgoing mail.
+type Mail struct {
+	Host     string
+	Port     int
+	Security MailSecurity
+	Username string
+	Password Secret
+	// From is the sender, e.g. "Cloud <cloud@example.com>".
+	From string
 }
 
 // Storage configures the S3-compatible object store.
@@ -106,6 +129,7 @@ func Load(getenv func(string) string) (Config, error) {
 
 	l.validateDatabaseURL(cfg.Database.URL, cfg.Env)
 	cfg.PublicURL = l.publicURL("PUBLIC_URL", cfg.Env)
+	cfg.Mail = l.mail(cfg.Env)
 	cfg.EncryptionKey = l.encryptionKey("ENCRYPTION_KEY", cfg.EncryptionKey)
 	cfg.Storage.Endpoint, cfg.Storage.UseTLS = l.storageEndpoint("S3_ENDPOINT", cfg.Env)
 
@@ -231,6 +255,49 @@ func (l *loader) publicURL(name string, env Env) *url.URL {
 	}
 	u.Path = ""
 	return u
+}
+
+// mail reads the optional SMTP settings. Without SMTP_HOST mail is off.
+func (l *loader) mail(env Env) *Mail {
+	host := l.str("SMTP_HOST", "")
+	if host == "" {
+		return nil
+	}
+	m := &Mail{
+		Host:     host,
+		Security: MailSecurity(l.str("SMTP_SECURITY", string(MailTLS))),
+		Username: l.str("SMTP_USERNAME", ""),
+		From:     l.required("SMTP_FROM"),
+	}
+	switch m.Security {
+	case MailTLS:
+		m.Port = 465
+	case MailStartTLS:
+		m.Port = 587
+	case MailNone:
+		m.Port = 25
+		if env == EnvProduction {
+			l.fail("SMTP_SECURITY=none is only allowed in development")
+		}
+	default:
+		l.fail("SMTP_SECURITY must be tls, starttls or none")
+	}
+	if raw := l.str("SMTP_PORT", ""); raw != "" {
+		port, err := strconv.Atoi(raw)
+		if err != nil || port < 1 || port > 65535 {
+			l.fail("SMTP_PORT must be a port number")
+		}
+		m.Port = port
+	}
+	if m.Username != "" {
+		m.Password = l.secret("SMTP_PASSWORD")
+	}
+	if m.From != "" {
+		if _, err := netmail.ParseAddress(m.From); err != nil {
+			l.fail("SMTP_FROM must be an address like \"Cloud <cloud@example.com>\"")
+		}
+	}
+	return m
 }
 
 // encryptionKey decodes a base64 key and requires exactly 32 bytes (AES-256).

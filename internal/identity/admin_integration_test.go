@@ -47,8 +47,8 @@ func TestInviteUser(t *testing.T) {
 			}
 		}
 	})
-	if !strings.Contains(link, "/activate#") {
-		t.Fatalf("link = %s", link)
+	if !strings.Contains(link.Link, "/activate#") || link.Emailed {
+		t.Fatalf("activation = %+v", link)
 	}
 	got, err := e.svc.GetUser(ctx, u.ID)
 	if err != nil || got.Status != StatusPending || got.IsAdmin {

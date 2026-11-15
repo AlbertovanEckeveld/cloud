@@ -60,7 +60,10 @@ func (s *Service) GenerateRecoveryCodes(ctx context.Context, c Client, sess Sess
 				return fmt.Errorf("store recovery code: %w", err)
 			}
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventRecoveryCodesGenerated, actor: &sess.UserID})
+		if err := s.audit(ctx, tx, c, auditEntry{event: EventRecoveryCodesGenerated, actor: &sess.UserID}); err != nil {
+			return err
+		}
+		return s.notify(ctx, tx, c, sess.UserID, noticeRecoveryNew)
 	})
 	if err != nil {
 		return nil, err
@@ -104,6 +107,9 @@ func (s *Service) VerifyRecoveryCode(ctx context.Context, c Client, sess Session
 			return err
 		}
 		if err := s.audit(ctx, tx, c, auditEntry{event: EventRecoveryCodeUsed, actor: &sess.UserID}); err != nil {
+			return err
+		}
+		if err := s.notify(ctx, tx, c, sess.UserID, noticeRecoveryUsed); err != nil {
 			return err
 		}
 		return s.recordLogin(ctx, tx, c, sess.UserID, "password+recovery_code")

@@ -92,7 +92,7 @@ func (s *Service) GetGroup(ctx context.Context, id uuid.UUID) (GroupDetail, erro
 	}
 	g.CreatedAt = g.CreatedAt.UTC()
 	rows, err := s.db.Query(ctx, `
-		SELECT u.id, u.username, u.display_name, u.is_admin
+		SELECT u.id, u.username, u.display_name, u.is_admin, COALESCE(u.email, '')
 		FROM identity.group_members m JOIN identity.users u ON u.id = m.user_id
 		WHERE m.group_id = $1 ORDER BY u.username`, id)
 	if err != nil {

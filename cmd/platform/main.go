@@ -28,6 +28,7 @@ import (
 	"github.com/AlbertovanEckeveld/cloud/internal/core/health"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/httpserver"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/logging"
+	"github.com/AlbertovanEckeveld/cloud/internal/core/mailer"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/site"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/storage"
@@ -69,6 +70,7 @@ type app struct {
 	cfg      config.Config
 	logger   *slog.Logger
 	pool     *pgxpool.Pool
+	mailer   *mailer.Mailer
 	identity *identity.Service
 }
 
@@ -106,7 +108,12 @@ func setup(ctx context.Context, logOutput io.Writer) (*app, error) {
 		pool.Close()
 		return nil, err
 	}
-	opts := identity.Options{SiteID: cfg.SiteID, PublicURL: cfg.PublicURL, Logger: logger}
+	mail, err := mailer.New(pool, sl, cfg.Mail, cfg.PublicURL.Hostname(), logger)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	opts := identity.Options{SiteID: cfg.SiteID, PublicURL: cfg.PublicURL, Mailer: mail, Logger: logger}
 	if cfg.Env == config.EnvDevelopment {
 		// Passkeys are bound to an origin; allow the Vite dev server of `make dev`.
 		opts.ExtraOrigins = []string{"http://localhost:5173"}
@@ -116,7 +123,7 @@ func setup(ctx context.Context, logOutput io.Writer) (*app, error) {
 		pool.Close()
 		return nil, err
 	}
-	return &app{cfg: cfg, logger: logger, pool: pool, identity: id}, nil
+	return &app{cfg: cfg, logger: logger, pool: pool, mailer: mail, identity: id}, nil
 }
 
 func serve(ctx context.Context) error {
@@ -155,6 +162,23 @@ func serve(ctx context.Context) error {
 	}
 	go registry.Run(ctx)
 	go a.identity.Run(ctx)
+	if a.mailer.Enabled() {
+		// A wrong password or unreachable server should show up in the log
+		// right away, but must neither stop nor delay startup: mail is queued
+		// and retried anyway.
+		go func() {
+			verifyCtx, cancel := context.WithTimeout(ctx, time.Minute)
+			defer cancel()
+			if err := a.mailer.Verify(verifyCtx); err != nil {
+				logger.Warn("mail server check failed; mail stays queued until it works", "error", err)
+				return
+			}
+			logger.Info("mail server reachable", "host", cfg.Mail.Host)
+		}()
+		go a.mailer.Run(ctx)
+	} else {
+		logger.Info("mail disabled: no SMTP_HOST configured")
+	}
 
 	checker := health.NewChecker(logger,
 		health.Check{Name: "database", Run: a.pool.Ping},

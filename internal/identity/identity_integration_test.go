@@ -21,6 +21,7 @@ import (
 
 	"github.com/AlbertovanEckeveld/cloud/internal/core/config"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/database"
+	"github.com/AlbertovanEckeveld/cloud/internal/core/mailer"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
 	"github.com/AlbertovanEckeveld/cloud/migrations"
 )
@@ -33,6 +34,7 @@ var testSeq atomic.Int64
 type testEnv struct {
 	svc    *Service
 	pool   *pgxpool.Pool
+	sealer *sealer.Sealer
 	clock  time.Time
 	client Client
 }
@@ -48,11 +50,15 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	t.Cleanup(pool.Close)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	fsys, err := migrations.For("identity")
-	if err != nil {
-		t.Fatal(err)
+	var modules []database.Module
+	for _, name := range []string{"core", "identity"} {
+		fsys, err := migrations.For(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		modules = append(modules, database.Module{Name: name, FS: fsys})
 	}
-	if err := database.Migrate(ctx, pool, logger, database.Module{Name: "identity", FS: fsys}); err != nil {
+	if err := database.Migrate(ctx, pool, logger, modules...); err != nil {
 		t.Fatal(err)
 	}
 	sl, err := sealer.New(bytes.Repeat([]byte{7}, 32))
@@ -60,12 +66,19 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 
+	// An enabled mailer whose dispatcher never runs: mail stays in the outbox,
+	// where tests inspect it.
+	mail, err := mailer.New(pool, sl, &config.Mail{From: "Cloud <cloud@example.test>"}, "localhost", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
 	env := &testEnv{
 		pool:   pool,
+		sealer: sl,
 		clock:  time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC),
 		client: Client{IP: fmt.Sprintf("it-%d-%d", time.Now().UnixNano(), testSeq.Add(1)), UserAgent: "integration-test"},
 	}
-	env.svc, err = New(pool, sl, Options{SiteID: "test", PublicURL: &url.URL{Scheme: "http", Host: "localhost:8080"}, Logger: logger})
+	env.svc, err = New(pool, sl, Options{SiteID: "test", PublicURL: &url.URL{Scheme: "http", Host: "localhost:8080"}, Mailer: mail, Logger: logger})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +165,7 @@ func (e *testEnv) activate(t *testing.T, u User) ([]byte, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	partial, err := e.svc.Activate(ctx, e.client, tokenFromLink(t, link), testPassword)
+	partial, err := e.svc.Activate(ctx, e.client, tokenFromLink(t, link.Link), testPassword)
 	if err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
@@ -197,10 +210,10 @@ func TestActivationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(link, "http://localhost:8080/activate#") {
-		t.Fatalf("link = %s", link)
+	if !strings.HasPrefix(link.Link, "http://localhost:8080/activate#") || link.Emailed {
+		t.Fatalf("activation = %+v", link)
 	}
-	token := tokenFromLink(t, link)
+	token := tokenFromLink(t, link.Link)
 
 	if _, err := e.svc.Activate(ctx, e.client, token, "short"); err == nil {
 		t.Fatal("weak password accepted")
@@ -255,7 +268,7 @@ func TestActivationLinkExpires(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.advance(activationTTL + time.Minute)
-	if _, err := e.svc.Activate(context.Background(), e.client, tokenFromLink(t, link), testPassword); !errors.Is(err, ErrInvalidToken) {
+	if _, err := e.svc.Activate(context.Background(), e.client, tokenFromLink(t, link.Link), testPassword); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -437,7 +450,7 @@ func TestOldLinkVoidedByNewLinkDuringEnrollment(t *testing.T) {
 	u := e.newUser(t)
 	ctx := context.Background()
 	link, _ := e.svc.IssueActivation(ctx, e.client, u.Username)
-	partial, err := e.svc.Activate(ctx, e.client, tokenFromLink(t, link), testPassword)
+	partial, err := e.svc.Activate(ctx, e.client, tokenFromLink(t, link.Link), testPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,7 +478,7 @@ func TestAbandonedEnrollmentCannotLogIn(t *testing.T) {
 	u := e.newUser(t)
 	ctx := context.Background()
 	link, _ := e.svc.IssueActivation(ctx, e.client, u.Username)
-	if _, err := e.svc.Activate(ctx, e.client, tokenFromLink(t, link), testPassword); err != nil {
+	if _, err := e.svc.Activate(ctx, e.client, tokenFromLink(t, link.Link), testPassword); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.Login(ctx, e.client, u.Username, testPassword); !errors.Is(err, ErrNotActivated) {

@@ -49,10 +49,12 @@ type GroupRef struct {
 type UserUpdate struct {
 	DisplayName *string
 	IsAdmin     *bool
+	// Email: nil leaves it unchanged, "" removes it.
+	Email *string
 }
 
 const adminUserQuery = `
-	SELECT u.id, u.username, u.display_name, u.is_admin, u.created_at, u.last_login_at,
+	SELECT u.id, u.username, u.display_name, u.is_admin, COALESCE(u.email, ''), u.created_at, u.last_login_at,
 	       CASE WHEN u.disabled_at IS NOT NULL THEN 'disabled'
 	            WHEN t.confirmed_at IS NULL THEN 'pending'
 	            ELSE 'active' END,
@@ -67,7 +69,7 @@ const adminUserQuery = `
 
 func scanAdminUser(row pgx.CollectableRow) (AdminUser, error) {
 	var u AdminUser
-	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.IsAdmin, &u.CreatedAt, &u.LastLoginAt,
+	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.IsAdmin, &u.Email, &u.CreatedAt, &u.LastLoginAt,
 		&u.Status, &u.HasTOTP, &u.Passkeys, &u.RecoveryCodes, &u.Groups)
 	u.CreatedAt = u.CreatedAt.UTC()
 	if u.LastLoginAt != nil {
@@ -107,32 +109,32 @@ func (s *Service) GetUser(ctx context.Context, id uuid.UUID) (AdminUser, error) 
 
 // InviteUser creates an account and returns its activation link. Only for
 // administrators who signed in recently.
-func (s *Service) InviteUser(ctx context.Context, c Client, actor Session, in NewUser) (User, string, error) {
+func (s *Service) InviteUser(ctx context.Context, c Client, actor Session, in NewUser) (User, Activation, error) {
 	if err := s.requireRecentAuth(actor); err != nil {
-		return User{}, "", err
+		return User{}, Activation{}, err
 	}
 	u, err := s.createUser(ctx, c, &actor.UserID, in)
 	if err != nil {
-		return User{}, "", err
+		return User{}, Activation{}, err
 	}
-	link, err := s.issueActivation(ctx, c, &actor.UserID, u.Username)
-	return u, link, err
+	a, err := s.issueActivation(ctx, c, &actor.UserID, u.Username)
+	return u, a, err
 }
 
 // ResetUser revokes an account's credentials and returns a new activation link.
-func (s *Service) ResetUser(ctx context.Context, c Client, actor Session, id uuid.UUID) (string, error) {
+func (s *Service) ResetUser(ctx context.Context, c Client, actor Session, id uuid.UUID) (Activation, error) {
 	if err := s.requireRecentAuth(actor); err != nil {
-		return "", err
+		return Activation{}, err
 	}
 	if id == actor.UserID {
-		return "", ErrSelf
+		return Activation{}, ErrSelf
 	}
 	var username string
 	if err := s.db.QueryRow(ctx, `SELECT username FROM identity.users WHERE id = $1`, id).Scan(&username); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", ErrNotFound
+			return Activation{}, ErrNotFound
 		}
-		return "", fmt.Errorf("load user: %w", err)
+		return Activation{}, fmt.Errorf("load user: %w", err)
 	}
 	return s.issueActivation(ctx, c, &actor.UserID, username)
 }
@@ -172,6 +174,13 @@ func (s *Service) UpdateUser(ctx context.Context, c Client, actor Session, id uu
 	if upd.IsAdmin != nil && !*upd.IsAdmin && id == actor.UserID {
 		return ErrSelf
 	}
+	var email *string
+	if upd.Email != nil {
+		var err error
+		if email, err = normalizeEmail(*upd.Email); err != nil {
+			return err
+		}
+	}
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if upd.IsAdmin != nil && !*upd.IsAdmin {
 			others, err := lockAdmins(ctx, tx, id)
@@ -184,8 +193,12 @@ func (s *Service) UpdateUser(ctx context.Context, c Client, actor Session, id uu
 		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE identity.users
-			SET display_name = COALESCE($2, display_name), is_admin = COALESCE($3, is_admin), updated_at = $4
-			WHERE id = $1`, id, upd.DisplayName, upd.IsAdmin, s.now())
+			SET display_name = COALESCE($2, display_name), is_admin = COALESCE($3, is_admin),
+			    email = CASE WHEN $5 THEN $6 ELSE email END, updated_at = $4
+			WHERE id = $1`, id, upd.DisplayName, upd.IsAdmin, s.now(), upd.Email != nil, email)
+		if conflict := userConflict(err); conflict != nil {
+			return conflict
+		}
 		if err != nil {
 			return fmt.Errorf("update user: %w", err)
 		}
@@ -198,6 +211,9 @@ func (s *Service) UpdateUser(ctx context.Context, c Client, actor Session, id uu
 		}
 		if upd.IsAdmin != nil {
 			details["is_admin"] = *upd.IsAdmin
+		}
+		if upd.Email != nil {
+			details["email_changed"] = true // the address itself stays out of the log
 		}
 		return s.audit(ctx, tx, c, auditEntry{event: EventUserUpdated, actor: &actor.UserID, subject: &id, details: details})
 	})

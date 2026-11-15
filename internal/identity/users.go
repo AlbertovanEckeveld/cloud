@@ -22,6 +22,26 @@ type NewUser struct {
 	Username    string
 	DisplayName string
 	IsAdmin     bool
+	Email       string // optional
+}
+
+// Activation is the result of issuing an activation link.
+type Activation struct {
+	Link string `json:"activation_link"`
+	// Emailed reports whether the link was also sent to the user's address.
+	Emailed bool `json:"emailed"`
+}
+
+// userConflict maps a unique violation on users to the matching error.
+func userConflict(err error) error {
+	pgErr, ok := errors.AsType[*pgconn.PgError](err)
+	if !ok || pgErr.Code != "23505" {
+		return nil
+	}
+	if pgErr.ConstraintName == "users_email_key" {
+		return ErrEmailExists
+	}
+	return ErrUserExists
 }
 
 // InputError is a validation error whose message is safe to show to users.
@@ -64,15 +84,22 @@ func (s *Service) createUser(ctx context.Context, c Client, actor *uuid.UUID, in
 	if err := validateDisplayName(u.DisplayName); err != nil {
 		return User{}, err
 	}
+	email, err := normalizeEmail(in.Email)
+	if err != nil {
+		return User{}, err
+	}
+	if email != nil {
+		u.Email = *email
+	}
 
-	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		now := s.now()
 		_, err := tx.Exec(ctx, `
-			INSERT INTO identity.users (id, username, display_name, is_admin, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $5)`,
-			u.ID, u.Username, u.DisplayName, u.IsAdmin, now)
-		if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == "23505" {
-			return ErrUserExists
+			INSERT INTO identity.users (id, username, display_name, is_admin, email, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $6)`,
+			u.ID, u.Username, u.DisplayName, u.IsAdmin, email, now)
+		if conflict := userConflict(err); conflict != nil {
+			return conflict
 		}
 		if err != nil {
 			return fmt.Errorf("insert user: %w", err)
@@ -93,18 +120,24 @@ func (s *Service) createUser(ctx context.Context, c Client, actor *uuid.UUID, in
 // account: the old password, second factor, passkeys, recovery codes,
 // sessions and links stop working.
 // That makes it the recovery path for a user who lost their authenticator.
-func (s *Service) IssueActivation(ctx context.Context, c Client, username string) (string, error) {
+func (s *Service) IssueActivation(ctx context.Context, c Client, username string) (Activation, error) {
 	return s.issueActivation(ctx, c, nil, username)
 }
 
-func (s *Service) issueActivation(ctx context.Context, c Client, actor *uuid.UUID, username string) (string, error) {
+func (s *Service) issueActivation(ctx context.Context, c Client, actor *uuid.UUID, username string) (Activation, error) {
 	token, hash := newToken()
+	// The token is in the fragment (#): browsers never send it to the server
+	// in requests or Referer headers, so it cannot end up in access logs.
+	result := Activation{Link: s.opts.PublicURL.String() + "/activate#" + token}
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		now := s.now()
 		var u User
-		var disabled bool
-		err := tx.QueryRow(ctx, `SELECT id, username, disabled_at IS NOT NULL FROM identity.users WHERE username = $1 FOR UPDATE`,
-			normalizeUsername(username)).Scan(&u.ID, &u.Username, &disabled)
+		var disabled, reset bool
+		// An account that already had a password is being reset, not invited.
+		err := tx.QueryRow(ctx, `
+			SELECT id, username, disabled_at IS NOT NULL, password_hash IS NOT NULL
+			FROM identity.users WHERE username = $1 FOR UPDATE`,
+			normalizeUsername(username)).Scan(&u.ID, &u.Username, &disabled, &reset)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrUserNotFound
 		}
@@ -135,12 +168,14 @@ func (s *Service) issueActivation(ctx context.Context, c Client, actor *uuid.UUI
 			VALUES ($1, $2, $3, $4)`, hash, u.ID, now, now.Add(activationTTL)); err != nil {
 			return fmt.Errorf("insert activation token: %w", err)
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventActivationIssued, actor: actor, subject: &u.ID})
+		if err := s.audit(ctx, tx, c, auditEntry{event: EventActivationIssued, actor: actor, subject: &u.ID}); err != nil {
+			return err
+		}
+		result.Emailed, err = s.activationMail(ctx, tx, u.ID, u.Username, result.Link, reset)
+		return err
 	})
 	if err != nil {
-		return "", err
+		return Activation{}, err
 	}
-	// The token is in the fragment (#): browsers never send it to the server
-	// in requests or Referer headers, so it cannot end up in access logs.
-	return s.opts.PublicURL.String() + "/activate#" + token, nil
+	return result, nil
 }

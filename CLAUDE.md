@@ -196,11 +196,14 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   migraties + Dockerfile), 0.2 NATS + outbox, 0.3 CI, 0.4 back-ups
 - Laatst afgerond: 0.1 skelet (2026-11-15). 0.2–0.4 uitgesteld op mijn verzoek;
   back-ups (0.4) moeten er zijn vóór er echte data in staat.
-- Bezig met: **fase 1 – identity**. 1.1 en 1.2 gecommit. 1.3 (gebruikers- en groepsbeheer,
-  beheer-audit-log, admin-UI) gebouwd en getest; wacht op mijn eigen test. Het deelmodel is
-  ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`. Daarna: 1.4 OIDC-provider.
-- Testen: de dev-database wordt gedeeld met mijn eigen account. Tests ruimen alleen hun eigen
-  data op (`it-*`, `e2e-*`); nooit `TRUNCATE` op tabellen met echte gegevens.
+- Bezig met: **fase 1 – identity**. 1.1–1.3 gecommit, plus uitgaande mail (ADR 0007:
+  activatielinks en beveiligingsmeldingen via outbox + SMTP). Volgende: 1.4 OIDC-provider.
+  Het deelmodel is ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`.
+- Testen: integratie- en browsertests draaien tegen een aparte database (`TEST_DATABASE_URL`,
+  `ave_cloud_test`), nooit tegen de dev-database met mijn eigen account. Tests ruimen ook daar
+  alleen hun eigen data op (`it-*`, `e2e-*`).
+- Mail: SMTP-gegevens staan in `.skills/mail.md` en `.env`. Stuur geen echte mail naar
+  buiten zonder mijn akkoord; tests gebruiken een nep-SMTP-server.
 - Klaar als (fase 1): inloggen met passkey; admin nodigt gebruiker uit en beheert groepen;
   een externe app (Grafana) logt in via onze OIDC; alle auth-events in de audit-log; getest.
 - Open vragen: definitieve keuze Go vs. Rust (huidige keuze: Go)

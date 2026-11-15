@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
+	"github.com/AlbertovanEckeveld/cloud/internal/core/mailer"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
 )
 
@@ -59,6 +60,7 @@ var (
 	ErrNotFound           = errors.New("not found")
 	ErrPasskeyRejected    = errors.New("passkey rejected")
 	ErrChallengeInvalid   = errors.New("webauthn challenge unknown, used or expired")
+	ErrEmailExists        = errors.New("e-mail address already in use")
 )
 
 // User is an account.
@@ -67,6 +69,7 @@ type User struct {
 	Username    string    `json:"username"`
 	DisplayName string    `json:"display_name"`
 	IsAdmin     bool      `json:"is_admin"`
+	Email       string    `json:"email"` // empty when unknown
 }
 
 // Session is a browser session as stored in the database.
@@ -95,7 +98,10 @@ type Options struct {
 	// ExtraOrigins are additional origins allowed for passkey ceremonies,
 	// such as the Vite dev server during development.
 	ExtraOrigins []string
-	Logger       *slog.Logger
+	// Mailer sends activation links and security notifications; it may be
+	// a disabled mailer, but never nil.
+	Mailer *mailer.Mailer
+	Logger *slog.Logger
 }
 
 // Service implements the identity module.
@@ -104,6 +110,7 @@ type Service struct {
 	sealer   *sealer.Sealer
 	hasher   *passwordHasher
 	webauthn *webauthn.WebAuthn
+	mail     *mailer.Mailer
 	opts     Options
 	log      *slog.Logger
 	now      func() time.Time
@@ -123,6 +130,7 @@ func New(db *pgxpool.Pool, s *sealer.Sealer, opts Options) (*Service, error) {
 		db:       db,
 		sealer:   s,
 		webauthn: wa,
+		mail:     opts.Mailer,
 		// Two concurrent hashes cap Argon2id memory use at 128 MiB.
 		hasher: newPasswordHasher(defaultArgonParams, 2),
 		opts:   opts,

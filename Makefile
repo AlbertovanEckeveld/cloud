@@ -34,8 +34,9 @@ test: web ## Unit tests (Go with race detector, frontend)
 	cd web && npm test
 
 .PHONY: test-integration
-test-integration: web ## Integration tests against the Postgres and S3 from .env
-	$(ENV) && go test -tags integration -race -count=1 ./...
+test-integration: web ## Integration tests against TEST_DATABASE_URL and the S3 from .env
+	@$(ENV) && test -n "$$TEST_DATABASE_URL" || (echo "TEST_DATABASE_URL is not set in .env"; exit 1)
+	$(ENV) && DATABASE_URL="$$TEST_DATABASE_URL" go test -tags integration -race -count=1 ./...
 
 .PHONY: run
 run: build ## Run the platform with .env

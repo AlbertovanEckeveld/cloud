@@ -77,6 +77,11 @@
 					<dd>{data.user.display_name}</dd>
 					<dt>Gebruikersnaam</dt>
 					<dd><code>{data.user.username}</code></dd>
+					<dt>E-mailadres</dt>
+					<dd>
+						{#if data.user.email}{data.user.email}{:else}<span class="muted">Geen</span>{/if}
+						<span class="muted small block">Wijzigen kan via een beheerder.</span>
+					</dd>
 					<dt>Rol</dt>
 					<dd>{data.user.is_admin ? 'Beheerder' : 'Gebruiker'}</dd>
 					<dt>Groepen</dt>

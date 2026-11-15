@@ -167,7 +167,7 @@ func TestHTTPActivationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := tokenFromLink(t, link)
+	token := tokenFromLink(t, link.Link)
 
 	resp, body := h.do(t, "POST", "/auth/activate", map[string]string{"token": token, "password": "short"})
 	if resp.StatusCode != http.StatusUnprocessableEntity || body["error"].(map[string]any)["code"] != "weak_password" {

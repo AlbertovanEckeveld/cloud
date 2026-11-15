@@ -43,29 +43,27 @@ func (s *Service) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	}{users})
 }
 
-type activationResponse struct {
-	ActivationLink string `json:"activation_link"`
-}
-
 func (s *Service) handleInviteUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Username    string `json:"username"`
 		DisplayName string `json:"display_name"`
 		IsAdmin     bool   `json:"is_admin"`
+		Email       string `json:"email"`
 	}
 	if !httpserver.DecodeJSON(w, r, &in) {
 		return
 	}
 	p, _ := PrincipalFrom(r.Context())
-	u, link, err := s.InviteUser(r.Context(), clientFrom(r), p.Session, NewUser{Username: in.Username, DisplayName: in.DisplayName, IsAdmin: in.IsAdmin})
+	u, a, err := s.InviteUser(r.Context(), clientFrom(r), p.Session,
+		NewUser{Username: in.Username, DisplayName: in.DisplayName, IsAdmin: in.IsAdmin, Email: in.Email})
 	if err != nil {
 		s.writeError(w, r, err)
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusCreated, struct {
 		User User `json:"user"`
-		activationResponse
-	}{u, activationResponse{link}})
+		Activation
+	}{u, a})
 }
 
 func (s *Service) handleGetUser(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +83,7 @@ func (s *Service) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		DisplayName *string `json:"display_name"`
 		IsAdmin     *bool   `json:"is_admin"`
+		Email       *string `json:"email"`
 	}
 	if !httpserver.DecodeJSON(w, r, &in) {
 		return
@@ -92,7 +91,7 @@ func (s *Service) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err == nil {
 		p, _ := PrincipalFrom(r.Context())
-		err = s.UpdateUser(r.Context(), clientFrom(r), p.Session, id, UserUpdate{DisplayName: in.DisplayName, IsAdmin: in.IsAdmin})
+		err = s.UpdateUser(r.Context(), clientFrom(r), p.Session, id, UserUpdate{DisplayName: in.DisplayName, IsAdmin: in.IsAdmin, Email: in.Email})
 	}
 	if err != nil {
 		s.writeError(w, r, err)
@@ -118,16 +117,16 @@ func (s *Service) handleUserActivity(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleResetUser(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
-	var link string
+	var a Activation
 	if err == nil {
 		p, _ := PrincipalFrom(r.Context())
-		link, err = s.ResetUser(r.Context(), clientFrom(r), p.Session, id)
+		a, err = s.ResetUser(r.Context(), clientFrom(r), p.Session, id)
 	}
 	if err != nil {
 		s.writeError(w, r, err)
 		return
 	}
-	httpserver.WriteJSON(w, http.StatusOK, activationResponse{link})
+	httpserver.WriteJSON(w, http.StatusOK, a)
 }
 
 func (s *Service) handleSetDisabled(disabled bool) http.HandlerFunc {

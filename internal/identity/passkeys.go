@@ -190,7 +190,10 @@ func (s *Service) FinishPasskeyRegistration(ctx context.Context, c Client, sess 
 			VALUES ($1, $2, $3, $4, $5, $6)`, pk.ID, sess.UserID, cred.ID, pk.Name, raw, pk.CreatedAt); err != nil {
 			return fmt.Errorf("store passkey: %w", err)
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventPasskeyAdded, actor: &sess.UserID, details: map[string]any{"name": pk.Name}})
+		if err := s.audit(ctx, tx, c, auditEntry{event: EventPasskeyAdded, actor: &sess.UserID, details: map[string]any{"name": pk.Name}}); err != nil {
+			return err
+		}
+		return s.notify(ctx, tx, c, sess.UserID, noticePasskeyAdded)
 	})
 	if err != nil {
 		return Passkey{}, err
@@ -238,7 +241,10 @@ func (s *Service) DeletePasskey(ctx context.Context, c Client, sess Session, id 
 		if err != nil {
 			return fmt.Errorf("delete passkey: %w", err)
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventPasskeyRemoved, actor: &sess.UserID, details: map[string]any{"name": name}})
+		if err := s.audit(ctx, tx, c, auditEntry{event: EventPasskeyRemoved, actor: &sess.UserID, details: map[string]any{"name": name}}); err != nil {
+			return err
+		}
+		return s.notify(ctx, tx, c, sess.UserID, noticePasskeyRemoved)
 	})
 }
 

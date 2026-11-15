@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,6 +151,53 @@ func TestLoadNeverLeaksDatabasePassword(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "hunter2") {
 		t.Fatalf("error leaks password: %v", err)
+	}
+}
+
+func TestMailConfig(t *testing.T) {
+	env := validEnv()
+	cfg, err := Load(getenv(env))
+	if err != nil || cfg.Mail != nil {
+		t.Fatalf("mail must be off without SMTP_HOST: %+v, %v", cfg.Mail, err)
+	}
+
+	env["SMTP_HOST"] = "mail.example.com"
+	env["SMTP_USERNAME"] = "cloud@example.com"
+	env["SMTP_PASSWORD"] = "pw"
+	env["SMTP_FROM"] = "Cloud <cloud@example.com>"
+	cfg, err = Load(getenv(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := cfg.Mail; m.Port != 465 || m.Security != MailTLS || m.Password.Reveal() != "pw" {
+		t.Errorf("mail = %+v", m)
+	}
+
+	env["SMTP_SECURITY"] = "starttls"
+	if cfg, _ := Load(getenv(env)); cfg.Mail.Port != 587 {
+		t.Errorf("starttls default port = %d", cfg.Mail.Port)
+	}
+
+	for key, value := range map[string]string{
+		"SMTP_SECURITY": "ssl",
+		"SMTP_PORT":     "99999",
+		"SMTP_FROM":     "not an address",
+		"SMTP_PASSWORD": "",
+	} {
+		bad := maps.Clone(env)
+		bad[key] = value
+		if _, err := Load(getenv(bad)); err == nil {
+			t.Errorf("%s=%q accepted", key, value)
+		}
+	}
+
+	env["SMTP_SECURITY"] = "none"
+	env["APP_ENV"] = "production"
+	env["DATABASE_URL"] += "?sslmode=verify-full"
+	env["S3_ENDPOINT"] = "https://s3.internal"
+	env["PUBLIC_URL"] = "https://cloud.example.com"
+	if _, err := Load(getenv(env)); err == nil || !strings.Contains(err.Error(), "SMTP_SECURITY=none") {
+		t.Errorf("unencrypted SMTP in production: err = %v", err)
 	}
 }
 

@@ -337,6 +337,8 @@ func (s *Service) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpserver.WriteError(w, http.StatusConflict, "user_disabled", "Dit account is uitgeschakeld. Schakel het eerst in.")
 	case errors.Is(err, ErrUserExists):
 		httpserver.WriteError(w, http.StatusConflict, "username_taken", "Deze gebruikersnaam is al in gebruik.")
+	case errors.Is(err, ErrEmailExists):
+		httpserver.WriteError(w, http.StatusConflict, "email_taken", "Dit e-mailadres is al in gebruik.")
 	case errors.Is(err, ErrGroupExists):
 		httpserver.WriteError(w, http.StatusConflict, "group_exists", "Er bestaat al een groep met deze naam.")
 	case errors.Is(err, ErrUserNotFound):

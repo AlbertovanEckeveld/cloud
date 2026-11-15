@@ -43,6 +43,14 @@ export interface User {
 	username: string;
 	display_name: string;
 	is_admin: boolean;
+	/** Empty when the user has no e-mail address. */
+	email: string;
+}
+
+export interface Activation {
+	link: string;
+	/** True when the link was also mailed to the user. */
+	emailed: boolean;
 }
 
 export type SessionState = 'mfa_required' | 'mfa_enrollment_required' | 'authenticated';
@@ -203,7 +211,8 @@ export const parseUser: Validator<User> = (v) => {
 		id: str(o, 'id'),
 		username: str(o, 'username'),
 		display_name: str(o, 'display_name'),
-		is_admin: bool(o, 'is_admin')
+		is_admin: bool(o, 'is_admin'),
+		email: str(o, 'email')
 	};
 };
 
@@ -334,11 +343,12 @@ const parseAuditEntry: Validator<AuditEntry> = (e) => {
 	};
 };
 
-const parseActivationLink: Validator<string> = (v) => {
-	const link = str(record(v, 'activation'), 'activation_link');
+const parseActivation: Validator<Activation> = (v) => {
+	const o = record(v, 'activation');
+	const link = str(o, 'activation_link');
 	// Shape check: an http(s) activation link, never e.g. a javascript: URL.
 	if (!/^https?:\/\/[^\s/]+\/activate#[A-Za-z0-9_-]+$/.test(link)) fail('activation_link');
-	return link;
+	return { link, emailed: bool(o, 'emailed') };
 };
 
 const parseRemaining: Validator<number> = (v) => num(record(v, 'recovery'), 'remaining');
@@ -445,17 +455,18 @@ export const api = {
 		users: (f: typeof fetch = fetch) =>
 			get('/api/v1/admin/users', (v) => list(record(v, 'users'), 'users', parseAdminUser), f),
 		user: (id: string, f: typeof fetch = fetch) => get(`/api/v1/admin/users/${enc(id)}`, parseAdminUser, f),
-		invite: (username: string, displayName: string, isAdmin: boolean, f: typeof fetch = fetch) =>
-			post(
-				'/api/v1/admin/users',
-				parseActivationLink,
-				{ username, display_name: displayName, is_admin: isAdmin },
-				f
-			),
-		updateUser: (id: string, changes: { display_name?: string; is_admin?: boolean }, f: typeof fetch = fetch) =>
+		invite: (
+			user: { username: string; display_name: string; is_admin: boolean; email: string },
+			f: typeof fetch = fetch
+		) => post('/api/v1/admin/users', parseActivation, user, f),
+		updateUser: (
+			id: string,
+			changes: { display_name?: string; is_admin?: boolean; email?: string },
+			f: typeof fetch = fetch
+		) =>
 			request('PATCH', `/api/v1/admin/users/${enc(id)}`, noContent, changes, f),
 		resetUser: (id: string, f: typeof fetch = fetch) =>
-			post(`/api/v1/admin/users/${enc(id)}/reset`, parseActivationLink, undefined, f),
+			post(`/api/v1/admin/users/${enc(id)}/reset`, parseActivation, undefined, f),
 		setDisabled: (id: string, disabled: boolean, f: typeof fetch = fetch) =>
 			post(`/api/v1/admin/users/${enc(id)}/${disabled ? 'disable' : 'enable'}`, noContent, undefined, f),
 		userActivity: (id: string, f: typeof fetch = fetch) =>

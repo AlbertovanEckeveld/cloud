@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { api, type AdminUser, type AuditEvent, type Group } from '#lib/api.ts';
+	import { api, type Activation, type AdminUser, type AuditEvent, type Group } from '#lib/api.ts';
 	import { dateTime, timeAgo } from '#lib/format.ts';
 	import ActivationLink from '#lib/components/ActivationLink.svelte';
 	import ActivityList from '#lib/components/ActivityList.svelte';
@@ -14,10 +14,11 @@
 	let events = $state<AuditEvent[]>([]);
 	let error = $state<unknown>(null);
 	let saved = $state(false);
-	let link = $state<string | null>(null);
+	let activation = $state<Activation | null>(null);
 	let busy = $state(false);
 
 	let displayName = $state('');
+	let email = $state('');
 	let isAdmin = $state(false);
 
 	const id = $derived(page.params.id ?? '');
@@ -28,6 +29,7 @@
 		try {
 			[user, groups, events] = await Promise.all([api.admin.user(id), api.admin.groups(), api.admin.userActivity(id)]);
 			displayName = user.display_name;
+			email = user.email;
 			isAdmin = user.is_admin;
 		} catch (e) {
 			error = e;
@@ -55,8 +57,9 @@
 	function save(e: SubmitEvent) {
 		e.preventDefault();
 		if (!user) return;
-		const changes: { display_name?: string; is_admin?: boolean } = {};
+		const changes: { display_name?: string; is_admin?: boolean; email?: string } = {};
 		if (displayName !== user.display_name) changes.display_name = displayName;
+		if (email.trim() !== user.email) changes.email = email.trim();
 		if (isAdmin !== user.is_admin) changes.is_admin = isAdmin;
 		return act(async () => {
 			await api.admin.updateUser(id, changes);
@@ -67,7 +70,7 @@
 	const reset = () =>
 		confirm('Wachtwoord, authenticator-app, passkeys en herstelcodes van dit account vervallen en alle sessies worden beëindigd. Doorgaan?') &&
 		act(async () => {
-			link = await api.admin.resetUser(id);
+			activation = await api.admin.resetUser(id);
 		});
 
 	const toggleDisabled = () => {
@@ -86,7 +89,7 @@
 <p><a href="/admin/users">← Gebruikers</a></p>
 
 <ErrorNotice {error} />
-{#if link && user}<ActivationLink {link} username={user.username} />{/if}
+{#if activation && user}<ActivationLink {activation} username={user.username} email={user.email} />{/if}
 
 {#if user}
 	<div class="page-header">
@@ -110,6 +113,10 @@
 				<label class="field">
 					<span>Naam</span>
 					<input bind:value={displayName} required maxlength="100" />
+				</label>
+				<label class="field">
+					<span>E-mailadres</span>
+					<input type="email" bind:value={email} maxlength="254" placeholder="Geen" />
 				</label>
 				<label class="check">
 					<input type="checkbox" bind:checked={isAdmin} disabled={self} /> Beheerder

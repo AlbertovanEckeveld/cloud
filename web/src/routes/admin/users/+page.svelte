@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, type AccountStatus, type AdminUser } from '#lib/api.ts';
+	import { api, type AccountStatus, type Activation, type AdminUser } from '#lib/api.ts';
 	import { dateTime, timeAgo } from '#lib/format.ts';
 	import ActivationLink from '#lib/components/ActivationLink.svelte';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
@@ -11,9 +11,10 @@
 	let inviting = $state(false);
 	let username = $state('');
 	let displayName = $state('');
+	let email = $state('');
 	let isAdmin = $state(false);
 	let busy = $state(false);
-	let issued = $state<{ username: string; link: string } | null>(null);
+	let issued = $state<{ username: string; email: string; activation: Activation } | null>(null);
 
 	const statusLabels: Record<AccountStatus, string> = {
 		active: 'Actief',
@@ -35,9 +36,9 @@
 		busy = true;
 		error = null;
 		try {
-			const link = await api.admin.invite(username, displayName, isAdmin);
-			issued = { username: username.trim().toLowerCase(), link };
-			username = displayName = '';
+			const activation = await api.admin.invite({ username, display_name: displayName, is_admin: isAdmin, email });
+			issued = { username: username.trim().toLowerCase(), email: email.trim(), activation };
+			username = displayName = email = '';
 			isAdmin = inviting = false;
 			await load();
 		} catch (err) {
@@ -60,7 +61,7 @@
 </div>
 
 <ErrorNotice {error} />
-{#if issued}<ActivationLink link={issued.link} username={issued.username} />{/if}
+{#if issued}<ActivationLink activation={issued.activation} username={issued.username} email={issued.email} />{/if}
 
 {#if inviting}
 	<form class="panel form invite" onsubmit={invite}>
@@ -72,6 +73,11 @@
 		<label class="field">
 			<span>Naam</span>
 			<input bind:value={displayName} autocomplete="off" required maxlength="100" />
+		</label>
+		<label class="field">
+			<span>E-mailadres (optioneel)</span>
+			<input type="email" bind:value={email} autocomplete="off" maxlength="254" />
+			<p class="field__hint">De activatielink en beveiligingsmeldingen gaan naar dit adres.</p>
 		</label>
 		<label class="check">
 			<input type="checkbox" bind:checked={isAdmin} /> Beheerder
