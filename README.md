@@ -4,8 +4,8 @@ Een zelfgebouwd private-cloudplatform: één Go-binary met een ingebedde SvelteK
 PostgreSQL voor metadata en S3 voor bestanden. Achtergrond, roadmap en werkafspraken staan in
 [CLAUDE.md](CLAUDE.md); architectuurbeslissingen in [docs/adr/](docs/adr/).
 
-**Status:** fase 0.1 — skelet. Het platform start, migreert de database, controleert Postgres
-en S3, en toont een statuspagina met alle actieve sites.
+**Status:** fase 1.1 — accounts en inloggen. Inloggen met wachtwoord plus verplichte
+authenticator-app (TOTP), sessies, audit-log en een statuspagina voor beheerders.
 
 ## Vereisten
 
@@ -17,9 +17,21 @@ en S3, en toont een statuspagina met alle actieve sites.
 ## Snel starten
 
 ```sh
-cp .env.example .env    # vul database- en S3-gegevens in
+cp .env.example .env    # vul database- en S3-gegevens in, en een sleutel:
+                        #   ENCRYPTION_KEY=$(openssl rand -base64 32)
 make run                # bouwt frontend + binary en start op http://127.0.0.1:8080
 ```
+
+Maak daarna in een tweede terminal de eerste beheerder aan:
+
+```sh
+make build && (set -a; . ./.env; ./bin/platform user create -username jouwnaam -name "Jouw Naam" -admin)
+```
+
+Dit drukt een eenmalige activatielink af (72 uur geldig). Open die in de browser, kies een
+wachtwoord en koppel een authenticator-app (Aegis, 2FAS, Google Authenticator, …).
+Kwijtgeraakt? `platform user reset -username jouwnaam` maakt het account leeg en geeft een
+nieuwe link. Draait het platform in Docker, gebruik dan `docker exec <container> /platform user …`.
 
 Tijdens het ontwikkelen: `make dev` start de backend op `:8080` en Vite met hot reload op
 <http://localhost:5173>; Vite stuurt `/api` door naar de backend.
@@ -55,12 +67,11 @@ problemen tegelijk.
 |---|---|
 | `/healthz` | Liveness: draait het proces? Controleert bewust geen afhankelijkheden. |
 | `/readyz` | Readiness: zijn Postgres en S3 bereikbaar? `503` tijdens afsluiten. |
-| `/api/v1/status` | Status van deze instantie en de afhankelijkheden (JSON). |
-| `/api/v1/sites` | Alle sites met versie en laatste heartbeat (JSON). |
+| `/api/v1/auth/*` | Inloggen, activeren, TOTP, uitloggen, sessie opvragen. |
+| `/api/v1/account/*` | Eigen account: wachtwoord wijzigen, recente activiteit. Vereist login. |
+| `/api/v1/status` | Status van deze instantie en de afhankelijkheden. Alleen beheerders. |
+| `/api/v1/sites` | Alle sites met versie en laatste heartbeat. Alleen beheerders. |
 | overige paden | De frontend (single-page app). |
-
-> De API heeft nog geen authenticatie; die komt met `identity` (fase 1). Stel het platform
-> tot die tijd niet open buiten je eigen netwerk.
 
 ## Container
 
@@ -75,8 +86,10 @@ health check (`/platform healthcheck`, die `/readyz` aanroept).
 ## Structuur
 
 ```
-cmd/platform/        main: configuratie, opstarten, routes
-internal/core/       gedeelde basis: config, logging, database, storage, health, httpserver, site
+cmd/platform/        main: configuratie, opstarten, routes, CLI (user create/reset)
+internal/core/       gedeelde basis: config, logging, database, storage, health, httpserver,
+                     sealer (versleuteling at rest), site
+internal/identity/   accounts, wachtwoorden, TOTP, sessies, throttling, audit-log
 migrations/<module>/ SQL-migraties per module; de mapnaam is ook het Postgres-schema
 web/                 SvelteKit-frontend; web/embed.go bedt web/build in de binary in
 docker/dev-setup/    Postgres, pgAdmin en RustFS (S3) voor de ontwikkelserver

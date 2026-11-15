@@ -19,14 +19,17 @@ import (
 
 func testClient(t *testing.T, mutate func(map[string]string)) *Client {
 	t.Helper()
-	env := map[string]string{}
-	for _, k := range []string{"APP_ENV", "SITE_ID", "DATABASE_URL", "S3_ENDPOINT", "S3_REGION", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_FORCE_PATH_STYLE"} {
-		env[k] = os.Getenv(k)
-	}
+	// Overrides on top of the real environment.
+	overrides := map[string]string{}
 	if mutate != nil {
-		mutate(env)
+		mutate(overrides)
 	}
-	cfg, err := config.Load(func(k string) string { return env[k] })
+	cfg, err := config.Load(func(k string) string {
+		if v, ok := overrides[k]; ok {
+			return v
+		}
+		return os.Getenv(k)
+	})
 	if err != nil {
 		t.Fatalf("integration config: %v", err)
 	}

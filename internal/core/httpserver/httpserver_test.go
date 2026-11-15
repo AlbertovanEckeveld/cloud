@@ -281,3 +281,40 @@ func TestSPACSPWithoutStyleAttributes(t *testing.T) {
 		t.Fatalf("CSP = %s", csp)
 	}
 }
+
+func TestDecodeJSON(t *testing.T) {
+	type body struct {
+		Name string `json:"name"`
+	}
+	tests := []struct {
+		name, contentType, body string
+		wantOK                  bool
+		wantStatus              int
+	}{
+		{"valid", "application/json", `{"name":"x"}`, true, 0},
+		{"with charset", "application/json; charset=utf-8", `{"name":"x"}`, true, 0},
+		{"form content type", "application/x-www-form-urlencoded", `{"name":"x"}`, false, http.StatusUnsupportedMediaType},
+		{"text/plain (CSRF-able)", "text/plain", `{"name":"x"}`, false, http.StatusUnsupportedMediaType},
+		{"unknown field", "application/json", `{"name":"x","admin":true}`, false, http.StatusBadRequest},
+		{"trailing data", "application/json", `{"name":"x"}{"name":"y"}`, false, http.StatusBadRequest},
+		{"malformed", "application/json", `{"name":`, false, http.StatusBadRequest},
+		{"too large", "application/json", `{"name":"` + strings.Repeat("a", 20<<10) + `"}`, false, http.StatusRequestEntityTooLarge},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", tt.contentType)
+			rec := httptest.NewRecorder()
+			var dst body
+			if ok := DecodeJSON(rec, req, &dst); ok != tt.wantOK {
+				t.Fatalf("ok = %v, body %s", ok, rec.Body.String())
+			}
+			if !tt.wantOK && rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if tt.wantOK && dst.Name != "x" {
+				t.Errorf("decoded %+v", dst)
+			}
+		})
+	}
+}

@@ -38,6 +38,36 @@ export interface Site {
 	online: boolean;
 }
 
+export interface User {
+	id: string;
+	username: string;
+	display_name: string;
+	is_admin: boolean;
+}
+
+export type SessionState = 'mfa_required' | 'mfa_enrollment_required' | 'authenticated';
+
+export interface Session {
+	state: SessionState;
+	user: User | null;
+}
+
+export interface TotpEnrollment {
+	secret: string;
+	uri: string;
+	/** PNG QR code as a data: URI. */
+	qr: string;
+}
+
+export interface AuditEvent {
+	id: string;
+	occurred_at: string;
+	event: string;
+	site_id: string;
+	ip: string;
+	user_agent: string;
+}
+
 type Validator<T> = (v: unknown) => T;
 
 function fail(what: string): never {
@@ -73,6 +103,14 @@ function list<T>(o: Record<string, unknown>, key: string, item: Validator<T>): T
 	return v.map(item);
 }
 
+const sessionStates: readonly string[] = ['mfa_required', 'mfa_enrollment_required', 'authenticated'];
+
+function parseState(o: Record<string, unknown>): SessionState {
+	const state = str(o, 'state');
+	if (!sessionStates.includes(state)) fail('state');
+	return state as SessionState;
+}
+
 export const parseStatus: Validator<Status> = (v) => {
 	const o = record(v, 'status');
 	return {
@@ -100,23 +138,82 @@ export const parseSites: Validator<Site[]> = (v) =>
 		};
 	});
 
-async function getJSON<T>(path: string, parse: Validator<T>, fetchFn: typeof fetch): Promise<T> {
+export const parseUser: Validator<User> = (v) => {
+	const o = record(v, 'user');
+	return {
+		id: str(o, 'id'),
+		username: str(o, 'username'),
+		display_name: str(o, 'display_name'),
+		is_admin: bool(o, 'is_admin')
+	};
+};
+
+export const parseSession: Validator<Session> = (v) => {
+	const o = record(v, 'session');
+	const state = parseState(o);
+	// The server only sends user details for a fully authenticated session.
+	const user = state === 'authenticated' ? parseUser(o.user) : null;
+	return { state, user };
+};
+
+const parseStateOnly: Validator<SessionState> = (v) => parseState(record(v, 'session'));
+
+const parseEnrollment: Validator<TotpEnrollment> = (v) => {
+	const o = record(v, 'enrollment');
+	const uri = str(o, 'uri');
+	if (!uri.startsWith('otpauth://')) fail('uri');
+	const qr = str(o, 'qr');
+	if (!qr.startsWith('data:image/png;base64,')) fail('qr');
+	return { secret: str(o, 'secret'), uri, qr };
+};
+
+export const parseActivity: Validator<AuditEvent[]> = (v) =>
+	list(record(v, 'activity'), 'events', (e) => {
+		const r = record(e, 'event');
+		return {
+			id: str(r, 'id'),
+			occurred_at: str(r, 'occurred_at'),
+			event: str(r, 'event'),
+			site_id: str(r, 'site_id'),
+			ip: str(r, 'ip'),
+			user_agent: str(r, 'user_agent')
+		};
+	});
+
+const noContent: Validator<void> = () => undefined;
+
+async function request<T>(
+	method: 'GET' | 'POST',
+	path: string,
+	parse: Validator<T>,
+	body: unknown,
+	fetchFn: typeof fetch
+): Promise<T> {
+	const headers: Record<string, string> = { Accept: 'application/json' };
+	if (body !== undefined) headers['Content-Type'] = 'application/json';
+
 	let res: Response;
 	try {
-		res = await fetchFn(path, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+		res = await fetchFn(path, {
+			method,
+			headers,
+			body: body === undefined ? undefined : JSON.stringify(body),
+			credentials: 'same-origin'
+		});
 	} catch {
 		throw new ApiError(0, 'network', 'De server is niet bereikbaar');
 	}
+	if (res.status === 204) return parse(undefined);
 
-	let body: unknown;
+	let data: unknown;
 	try {
-		body = await res.json();
+		data = await res.json();
 	} catch {
 		throw new ApiError(res.status, 'invalid_response', 'Onverwacht antwoord van de server');
 	}
 
 	if (!res.ok) {
-		const err = record(body, 'error').error;
+		const err = record(data, 'error').error;
 		const detail = typeof err === 'object' && err !== null ? (err as Record<string, unknown>) : {};
 		throw new ApiError(
 			res.status,
@@ -124,10 +221,50 @@ async function getJSON<T>(path: string, parse: Validator<T>, fetchFn: typeof fet
 			typeof detail.message === 'string' ? detail.message : `Serverfout (${res.status})`
 		);
 	}
-	return parse(body);
+	return parse(data);
 }
 
+const get = <T>(path: string, parse: Validator<T>, f: typeof fetch) =>
+	request('GET', path, parse, undefined, f);
+const post = <T>(path: string, parse: Validator<T>, body: unknown, f: typeof fetch) =>
+	request('POST', path, parse, body, f);
+
 export const api = {
-	status: (fetchFn: typeof fetch = fetch) => getJSON('/api/v1/status', parseStatus, fetchFn),
-	sites: (fetchFn: typeof fetch = fetch) => getJSON('/api/v1/sites', parseSites, fetchFn)
+	status: (f: typeof fetch = fetch) => get('/api/v1/status', parseStatus, f),
+	sites: (f: typeof fetch = fetch) => get('/api/v1/sites', parseSites, f),
+
+	/** The current session, or null when not signed in. */
+	session: async (f: typeof fetch = fetch): Promise<Session | null> => {
+		try {
+			return await get('/api/v1/auth/session', parseSession, f);
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 401) return null;
+			throw e;
+		}
+	},
+	login: (username: string, password: string, f: typeof fetch = fetch) =>
+		post('/api/v1/auth/login', parseStateOnly, { username, password }, f),
+	loginTotp: (code: string, f: typeof fetch = fetch) =>
+		post('/api/v1/auth/login/totp', parseStateOnly, { code }, f),
+	activate: (token: string, password: string, f: typeof fetch = fetch) =>
+		post('/api/v1/auth/activate', parseStateOnly, { token, password }, f),
+	beginTotpEnrollment: (f: typeof fetch = fetch) =>
+		post('/api/v1/auth/totp/enrollment', parseEnrollment, undefined, f),
+	confirmTotpEnrollment: (code: string, f: typeof fetch = fetch) =>
+		post('/api/v1/auth/totp/enrollment/confirm', parseStateOnly, { code }, f),
+	logout: (f: typeof fetch = fetch) => post('/api/v1/auth/logout', noContent, {}, f),
+
+	activity: (f: typeof fetch = fetch) => get('/api/v1/account/activity', parseActivity, f),
+	changePassword: (currentPassword: string, newPassword: string, f: typeof fetch = fetch) =>
+		post(
+			'/api/v1/account/password',
+			noContent,
+			{ current_password: currentPassword, new_password: newPassword },
+			f
+		)
 };
+
+/** The message to show for a failed API call. */
+export function errorMessage(e: unknown): string {
+	return e instanceof ApiError ? e.message : 'Er ging iets mis. Probeer het opnieuw.';
+}

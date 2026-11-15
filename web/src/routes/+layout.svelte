@@ -1,8 +1,22 @@
 <script lang="ts">
 	import '../app.css';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
+	import { api } from '#lib/api.ts';
 	import type { LayoutProps } from './$types';
 
-	let { children }: LayoutProps = $props();
+	let { data, children }: LayoutProps = $props();
+
+	async function logout() {
+		try {
+			await api.logout();
+		} finally {
+			await invalidateAll();
+			await goto('/login');
+		}
+	}
+
+	const current = (path: string) => (page.url.pathname === path ? 'page' : undefined);
 </script>
 
 <a class="skip-link" href="#main">Naar inhoud</a>
@@ -10,6 +24,18 @@
 <header class="site-header">
 	<div class="container site-header__inner">
 		<a class="brand" href="/">Cloud</a>
+		{#if data.user}
+			<nav class="nav" aria-label="Hoofdmenu">
+				<a href="/" aria-current={current('/')}>Start</a>
+				{#if data.user.is_admin}
+					<a href="/system" aria-current={current('/system')}>Systeem</a>
+				{/if}
+			</nav>
+			<div class="site-header__actions">
+				<a href="/account" aria-current={current('/account')}>{data.user.display_name}</a>
+				<button class="button" onclick={logout}>Uitloggen</button>
+			</div>
+		{/if}
 	</div>
 </header>
 
@@ -26,7 +52,8 @@
 		display: flex;
 		align-items: center;
 		gap: 1.5rem;
-		padding-block: 1rem;
+		flex-wrap: wrap;
+		padding-block: 0.75rem;
 	}
 	.brand {
 		font-weight: 700;
@@ -34,6 +61,30 @@
 	}
 	.brand:hover {
 		text-decoration: none;
+	}
+	.nav {
+		display: flex;
+		gap: 1.25rem;
+	}
+	.nav a,
+	.site-header__actions a {
+		color: var(--muted);
+	}
+	.nav a:hover,
+	.nav a[aria-current='page'],
+	.site-header__actions a:hover,
+	.site-header__actions a[aria-current='page'] {
+		color: var(--text-strong);
+		text-decoration: none;
+	}
+	.nav a[aria-current='page'] {
+		box-shadow: inset 0 -2px 0 var(--accent);
+	}
+	.site-header__actions {
+		margin-left: auto;
+		display: flex;
+		align-items: center;
+		gap: 1rem;
 	}
 	main {
 		padding-block: 2.5rem 4rem;

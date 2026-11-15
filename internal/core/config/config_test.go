@@ -20,6 +20,8 @@ func validEnv() map[string]string {
 		"S3_BUCKET":            "platform",
 		"S3_ACCESS_KEY_ID":     "access",
 		"S3_SECRET_ACCESS_KEY": "s3cr3t",
+		"PUBLIC_URL":           "http://127.0.0.1:8080",
+		"ENCRYPTION_KEY":       "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
 	}
 }
 
@@ -50,6 +52,12 @@ func TestLoadValid(t *testing.T) {
 	if cfg.Storage.SecretAccessKey.Reveal() != "s3cr3t" {
 		t.Error("secret not loaded")
 	}
+	if cfg.PublicURL.String() != "http://127.0.0.1:8080" {
+		t.Errorf("PublicURL = %q", cfg.PublicURL)
+	}
+	if key := cfg.EncryptionKey.Reveal(); len(key) != 32 || key[1] != 1 || key[31] != 31 {
+		t.Errorf("EncryptionKey not decoded to 32 raw bytes")
+	}
 }
 
 func TestLoadDefaultsToProduction(t *testing.T) {
@@ -60,7 +68,7 @@ func TestLoadDefaultsToProduction(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected production rules to reject insecure transports")
 	}
-	for _, want := range []string{"sslmode=verify-full", "S3_ENDPOINT must use https"} {
+	for _, want := range []string{"sslmode=verify-full", "S3_ENDPOINT must use https", "PUBLIC_URL must use https"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
@@ -72,6 +80,7 @@ func TestLoadProductionValid(t *testing.T) {
 	env["APP_ENV"] = "production"
 	env["DATABASE_URL"] = "postgres://user:pw@db.internal/app?sslmode=verify-full"
 	env["S3_ENDPOINT"] = "https://s3.internal"
+	env["PUBLIC_URL"] = "https://cloud.example.com/"
 	cfg, err := Load(getenv(env))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -86,7 +95,7 @@ func TestLoadReportsAllErrorsAtOnce(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"SITE_ID", "DATABASE_URL", "S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"} {
+	for _, want := range []string{"SITE_ID", "PUBLIC_URL", "ENCRYPTION_KEY", "DATABASE_URL", "S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %s:\n%v", want, err)
 		}
@@ -111,6 +120,11 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{"S3_ENDPOINT", "https://s3.internal/bucket", "S3_ENDPOINT"},
 		{"DATABASE_URL", "mysql://db/app", "DATABASE_URL"},
 		{"DATABASE_URL", "postgres:///app", "DATABASE_URL"},
+		{"PUBLIC_URL", "cloud.example.com", "PUBLIC_URL"},
+		{"PUBLIC_URL", "https://cloud.example.com/app", "PUBLIC_URL"},
+		{"PUBLIC_URL", "javascript://x", "PUBLIC_URL"},
+		{"ENCRYPTION_KEY", "too-short", "ENCRYPTION_KEY"},
+		{"ENCRYPTION_KEY", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwd", "ENCRYPTION_KEY"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.key+"="+tt.value, func(t *testing.T) {

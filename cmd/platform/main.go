@@ -3,13 +3,16 @@
 //
 // Usage:
 //
-//	platform              run the server (configured via environment variables)
-//	platform healthcheck  probe /readyz of a running server; for container health checks
+//	platform                       run the server (configured via environment variables)
+//	platform user create ...       create an account and print its activation link
+//	platform user reset ...        reset an account's credentials and print a new activation link
+//	platform healthcheck           probe /readyz of a running server; for container health checks
 package main
 
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -18,13 +21,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/AlbertovanEckeveld/cloud/internal/core/config"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/database"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/health"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/httpserver"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/logging"
+	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/site"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/storage"
+	"github.com/AlbertovanEckeveld/cloud/internal/identity"
 	"github.com/AlbertovanEckeveld/cloud/migrations"
 	"github.com/AlbertovanEckeveld/cloud/web"
 )
@@ -32,47 +39,91 @@ import (
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
+// modules lists every module with migrations, in dependency order.
+var modules = []string{"core", "identity"}
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
-		os.Exit(healthcheck(os.Getenv("HTTP_ADDR")))
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx); err != nil {
+
+	var err error
+	args := os.Args[1:]
+	switch {
+	case len(args) == 0:
+		err = serve(ctx)
+	case args[0] == "healthcheck":
+		os.Exit(healthcheck(os.Getenv("HTTP_ADDR")))
+	case args[0] == "user":
+		err = userCommand(ctx, os.Stdout, args[1:])
+	default:
+		err = fmt.Errorf("unknown command %q (commands: user, healthcheck)", args[0])
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "platform:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context) error {
+// app holds what both the server and the CLI need.
+type app struct {
+	cfg      config.Config
+	logger   *slog.Logger
+	pool     *pgxpool.Pool
+	identity *identity.Service
+}
+
+// setup loads configuration, connects to the database and migrates it.
+func setup(ctx context.Context, logOutput io.Writer) (*app, error) {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	logger := logging.New(os.Stdout, cfg.LogLevel, cfg.Env == config.EnvDevelopment)
+	logger := logging.New(logOutput, cfg.LogLevel, cfg.Env == config.EnvDevelopment)
 	slog.SetDefault(logger)
-	logger.Info("starting platform", "version", version, "site", cfg.SiteID, "env", cfg.Env)
-	if cfg.Env == config.EnvDevelopment {
-		logger.Warn("development mode: unencrypted connections to database and storage are allowed")
-	}
 
 	startupCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-
 	pool, err := database.Open(startupCtx, cfg.Database)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer pool.Close()
+	var mods []database.Module
+	for _, name := range modules {
+		fsys, err := migrations.For(name)
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		mods = append(mods, database.Module{Name: name, FS: fsys})
+	}
+	if err := database.Migrate(startupCtx, pool, logger, mods...); err != nil {
+		pool.Close()
+		return nil, err
+	}
 
-	coreMigrations, err := migrations.For("core")
+	sl, err := sealer.New([]byte(cfg.EncryptionKey.Reveal()))
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	id := identity.New(pool, sl, identity.Options{SiteID: cfg.SiteID, PublicURL: cfg.PublicURL, Logger: logger})
+	return &app{cfg: cfg, logger: logger, pool: pool, identity: id}, nil
+}
+
+func serve(ctx context.Context) error {
+	a, err := setup(ctx, os.Stdout)
 	if err != nil {
 		return err
 	}
-	if err := database.Migrate(startupCtx, pool, logger, database.Module{Name: "core", FS: coreMigrations}); err != nil {
-		return err
+	defer a.pool.Close()
+	cfg, logger := a.cfg, a.logger
+	logger.Info("starting platform", "version", version, "site", cfg.SiteID, "env", cfg.Env, "public_url", cfg.PublicURL.String())
+	if cfg.Env == config.EnvDevelopment {
+		logger.Warn("development mode: unencrypted connections are allowed")
 	}
 
+	startupCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	store, err := storage.New(cfg.Storage)
 	if err != nil {
 		return err
@@ -81,14 +132,23 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("object storage: %w", err)
 	}
 
-	registry := site.NewRegistry(pool, cfg.SiteID, version, logger)
+	// Claim the port before starting background work, so a port conflict
+	// fails fast without anything left running.
+	ln, err := net.Listen("tcp", cfg.HTTPAddr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", cfg.HTTPAddr, err)
+	}
+	defer ln.Close()
+
+	registry := site.NewRegistry(a.pool, cfg.SiteID, version, logger)
 	if err := registry.Heartbeat(startupCtx); err != nil {
 		return err
 	}
 	go registry.Run(ctx)
+	go a.identity.Run(ctx)
 
 	checker := health.NewChecker(logger,
-		health.Check{Name: "database", Run: pool.Ping},
+		health.Check{Name: "database", Run: a.pool.Ping},
 		health.Check{Name: "storage", Run: store.Ping},
 	)
 
@@ -101,20 +161,18 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", cfg.HTTPAddr)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", cfg.HTTPAddr, err)
-	}
-
 	router := newRouter(routerDeps{
-		logger:    logger,
-		hsts:      cfg.Env == config.EnvProduction,
-		siteID:    cfg.SiteID,
-		version:   version,
-		startedAt: time.Now().UTC(),
-		health:    checker,
-		sites:     registry,
-		frontend:  spa,
+		logger:       logger,
+		hsts:         cfg.Env == config.EnvProduction,
+		siteID:       cfg.SiteID,
+		version:      version,
+		startedAt:    time.Now().UTC(),
+		health:       checker,
+		sites:        registry,
+		frontend:     spa,
+		identity:     a.identity.Routes,
+		requireUser:  a.identity.RequireUser,
+		requireAdmin: identity.RequireAdmin,
 	})
 	return httpserver.Run(ctx, logger, ln, router, checker.Drain)
 }

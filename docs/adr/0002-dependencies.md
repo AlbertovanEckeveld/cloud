@@ -1,4 +1,4 @@
-# ADR 0002: Dependencies fase 0
+# ADR 0002: Dependencies
 
 - Status: geaccepteerd
 - Datum: 2026-11-15
@@ -17,6 +17,8 @@ actief onderhouden libraries met een permissieve licentie.
 | `github.com/pressly/goose/v3` | MIT | SQL-migraties als bestanden, als library aan te roepen, één versietabel per schema. |
 | `github.com/minio/minio-go/v7` | Apache-2.0 | S3-client die lichter is dan de AWS SDK v2 en goed werkt met zelfgehoste S3. |
 | `github.com/google/uuid` | BSD-3-Clause | UUIDv7 (RFC 9562) voor IDs en request-ID's. |
+| `golang.org/x/crypto` | BSD-3-Clause | Argon2id voor wachtwoorden (fase 1.1). Onderhouden door het Go-team. |
+| `rsc.io/qr` | BSD-3-Clause | QR-code voor het koppelen van een authenticator-app (fase 1.1). Klein, zonder eigen dependencies. |
 
 Alternatieven die zijn afgevallen: `golang-migrate` (minder fijne Go-API), AWS SDK v2
 (zwaar, veel indirecte dependencies) en `database/sql` met `lib/pq` (onderhoudsmodus).

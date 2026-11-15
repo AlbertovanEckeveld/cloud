@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkLabel, timeAgo } from './format.ts';
+import { checkLabel, eventLabel, groupSecret, safeNext, timeAgo } from './format.ts';
 
 const now = new Date('2026-11-15T12:00:00Z');
 
@@ -20,5 +20,35 @@ describe('checkLabel', () => {
 	it('translates known checks and passes through unknown ones', () => {
 		expect(checkLabel('storage')).toBe('Objectopslag (S3)');
 		expect(checkLabel('nats')).toBe('nats');
+	});
+});
+
+describe('safeNext', () => {
+	const origin = 'https://cloud.example.com';
+	it.each([
+		['/account', '/account'],
+		['/system?tab=sites#top', '/system?tab=sites#top'],
+		[null, '/'],
+		['', '/'],
+		['https://evil.example', '/'],
+		['//evil.example/path', '/'],
+		['/\\evil.example', '/'],
+		['javascript:alert(1)', '/'],
+		['account', '/']
+	])('%s → %s', (next, want) => {
+		expect(safeNext(next, origin)).toBe(want);
+	});
+});
+
+describe('eventLabel', () => {
+	it('translates known events and passes through unknown ones', () => {
+		expect(eventLabel('auth.login.failed')).toBe('Mislukte inlogpoging');
+		expect(eventLabel('x.y')).toBe('x.y');
+	});
+});
+
+describe('groupSecret', () => {
+	it('groups in blocks of four', () => {
+		expect(groupSecret('ABCDEFGHIJ')).toBe('ABCD EFGH IJ');
 	});
 });

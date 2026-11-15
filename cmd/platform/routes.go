@@ -24,6 +24,11 @@ type routerDeps struct {
 	health    healthReporter
 	sites     siteLister
 	frontend  http.Handler
+
+	// identity mounts the identity module's routes under /api/v1.
+	identity     func(chi.Router)
+	requireUser  func(http.Handler) http.Handler
+	requireAdmin func(http.Handler) http.Handler
 }
 
 type healthReporter interface {
@@ -37,12 +42,21 @@ type siteLister interface {
 }
 
 func newRouter(d routerDeps) http.Handler {
+	// CSRF protection for every state-changing request: browsers mark
+	// cross-site requests with Sec-Fetch-Site (or Origin), and those are
+	// rejected. Session cookies are SameSite=Lax as a second layer.
+	csrf := http.NewCrossOriginProtection()
+	csrf.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		httpserver.WriteError(w, http.StatusForbidden, "cross_origin", "Verzoek van een andere website geweigerd.")
+	}))
+
 	r := chi.NewRouter()
 	r.Use(
 		httpserver.RequestID,
 		httpserver.AccessLog(d.logger),
 		httpserver.SecurityHeaders(d.hsts),
 		httpserver.Recover(d.logger),
+		csrf.Handler,
 	)
 
 	r.Get("/healthz", d.health.Liveness)
@@ -50,13 +64,17 @@ func newRouter(d routerDeps) http.Handler {
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(httpserver.NoStore)
-		r.Get("/status", statusHandler(d))
-		r.Get("/sites", sitesHandler(d))
+		d.identity(r)
+		r.Group(func(r chi.Router) {
+			r.Use(d.requireUser, d.requireAdmin)
+			r.Get("/status", statusHandler(d))
+			r.Get("/sites", sitesHandler(d))
+		})
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
-			httpserver.WriteError(w, http.StatusNotFound, "not_found", "Not found")
+			httpserver.WriteError(w, http.StatusNotFound, "not_found", "Niet gevonden.")
 		})
 		r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
-			httpserver.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			httpserver.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Deze methode is niet toegestaan.")
 		})
 	})
 
@@ -92,7 +110,7 @@ func sitesHandler(d routerDeps) http.HandlerFunc {
 		sites, err := d.sites.List(r.Context())
 		if err != nil {
 			d.logger.Error("list sites", "request_id", httpserver.RequestIDFrom(r.Context()), "error", err)
-			httpserver.WriteError(w, http.StatusServiceUnavailable, "unavailable", "Site list is temporarily unavailable")
+			httpserver.WriteError(w, http.StatusServiceUnavailable, "unavailable", "De lijst met sites is tijdelijk niet beschikbaar.")
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, struct {

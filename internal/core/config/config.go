@@ -6,6 +6,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -30,9 +31,13 @@ type Config struct {
 	Env      Env
 	SiteID   string
 	HTTPAddr string
-	LogLevel slog.Level
-	Database Database
-	Storage  Storage
+	// PublicURL is the origin users reach the platform at, e.g. https://cloud.example.com.
+	PublicURL *url.URL
+	// EncryptionKey is the 32-byte key for encrypting secrets at rest.
+	EncryptionKey Secret
+	LogLevel      slog.Level
+	Database      Database
+	Storage       Storage
 }
 
 // Database configures the PostgreSQL connection.
@@ -69,10 +74,11 @@ func Load(getenv func(string) string) (Config, error) {
 	l := loader{getenv: getenv}
 
 	cfg := Config{
-		Env:      Env(l.str("APP_ENV", string(EnvProduction))),
-		SiteID:   l.required("SITE_ID"),
-		HTTPAddr: l.str("HTTP_ADDR", "127.0.0.1:8080"),
-		LogLevel: l.logLevel("LOG_LEVEL"),
+		Env:           Env(l.str("APP_ENV", string(EnvProduction))),
+		SiteID:        l.required("SITE_ID"),
+		HTTPAddr:      l.str("HTTP_ADDR", "127.0.0.1:8080"),
+		LogLevel:      l.logLevel("LOG_LEVEL"),
+		EncryptionKey: l.secret("ENCRYPTION_KEY"),
 		Database: Database{
 			URL: l.secret("DATABASE_URL"),
 		},
@@ -99,6 +105,8 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	l.validateDatabaseURL(cfg.Database.URL, cfg.Env)
+	cfg.PublicURL = l.publicURL("PUBLIC_URL", cfg.Env)
+	cfg.EncryptionKey = l.encryptionKey("ENCRYPTION_KEY", cfg.EncryptionKey)
 	cfg.Storage.Endpoint, cfg.Storage.UseTLS = l.storageEndpoint("S3_ENDPOINT", cfg.Env)
 
 	if err := errors.Join(l.errs...); err != nil {
@@ -195,6 +203,43 @@ func (l *loader) validateDatabaseURL(s Secret, env Env) {
 	if env == EnvProduction && u.Query().Get("sslmode") != "verify-full" {
 		l.fail("DATABASE_URL must use sslmode=verify-full in production")
 	}
+}
+
+// publicURL requires a bare origin (scheme, host, optional port). In
+// production it must be https, because session cookies are then Secure-only.
+func (l *loader) publicURL(name string, env Env) *url.URL {
+	raw := l.required(name)
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		l.fail("%s must be a URL like https://cloud.example.com", name)
+		return nil
+	}
+	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		l.fail("%s must contain only scheme, host and port", name)
+		return nil
+	}
+	if env == EnvProduction && u.Scheme != "https" {
+		l.fail("%s must use https in production", name)
+	}
+	u.Path = ""
+	return u
+}
+
+// encryptionKey decodes a base64 key and requires exactly 32 bytes (AES-256).
+// Generate one with: openssl rand -base64 32
+func (l *loader) encryptionKey(name string, s Secret) Secret {
+	if s == "" {
+		return ""
+	}
+	key, err := base64.StdEncoding.DecodeString(s.Reveal())
+	if err != nil || len(key) != 32 {
+		l.fail("%s must be 32 random bytes, base64-encoded (openssl rand -base64 32)", name)
+		return ""
+	}
+	return Secret(key)
 }
 
 func (l *loader) storageEndpoint(name string, env Env) (hostport string, useTLS bool) {

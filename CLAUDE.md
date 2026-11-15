@@ -194,8 +194,14 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 
 - Fase: **0 – Fundament**, opgesplitst in 0.1 skelet (Go + SvelteKit + health/readiness +
   migraties + Dockerfile), 0.2 NATS + outbox, 0.3 CI, 0.4 back-ups
-- Laatst afgerond: 0.1 gebouwd en getest (2026-11-15); wacht op eigen test door mij
-- Bezig met: –
+- Laatst afgerond: 0.1 skelet (2026-11-15). 0.2–0.4 uitgesteld op mijn verzoek;
+  back-ups (0.4) moeten er zijn vóór er echte data in staat.
+- Bezig met: **fase 1 – identity**. 1.1 (accounts, activatielink, wachtwoord + verplichte TOTP,
+  sessies, CSRF, throttling, audit-log, CLI, UI) is gebouwd en getest; wacht op mijn eigen test.
+  Daarna: 1.2 passkeys, herstelcodes, sessiebeheer; 1.3 gebruikers/groepen, centrale autorisatie,
+  deelmodel; 1.4 OIDC-provider.
+- Klaar als (fase 1): inloggen met passkey; admin nodigt gebruiker uit en beheert groepen;
+  een externe app (Grafana) logt in via onze OIDC; alle auth-events in de audit-log; getest.
 - Open vragen: definitieve keuze Go vs. Rust (huidige keuze: Go)
 
 ## 12. Beslissingen
@@ -205,4 +211,9 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - Frontend: SvelteKit met `adapter-static`, ingebed in de Go-binary (één origin, geen Node in productie).
 - Go-dependencies fase 0: chi, pgx/v5, goose, minio-go, google/uuid. Frontend: SvelteKit, Vite, Vitest.
 - CI: GitHub Actions.
+- Inloggen: passkey als hoofdroute; wachtwoord alleen samen met een tweede factor (TOTP of passkey); herstelcodes.
+- Eerste admin via CLI (`platform user create --admin`), die een eenmalige activatielink geeft.
+- OIDC-provider op basis van `zitadel/oidc` (OpenID-gecertificeerd).
+- Go-dependencies fase 1: golang.org/x/crypto (argon2id), go-webauthn/webauthn, zitadel/oidc.
+- Geen Caddy/WireGuard; het platform verzorgt zelf HTTPS zodra het buiten het thuisnetwerk komt.
 - Multi-site hot-hot: nu nog niet repliceren, wel alles multi-site-proof ontwerpen (zie §3); replicatie wordt een eigen fase.

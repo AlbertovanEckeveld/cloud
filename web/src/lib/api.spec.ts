@@ -72,3 +72,60 @@ describe('api.sites', () => {
 		await expect(api.sites(respond({}))).rejects.toMatchObject({ code: 'invalid_response' });
 	});
 });
+
+describe('api.session', () => {
+	const user = { id: 'u1', username: 'alice', display_name: 'Alice', is_admin: false };
+
+	it('returns the user for an authenticated session', async () => {
+		expect(await api.session(respond({ state: 'authenticated', user }))).toEqual({
+			state: 'authenticated',
+			user
+		});
+	});
+
+	it('never exposes a user for a partial session', async () => {
+		const session = await api.session(respond({ state: 'mfa_required', user }));
+		expect(session).toEqual({ state: 'mfa_required', user: null });
+	});
+
+	it('returns null when not signed in', async () => {
+		const res = respond({ error: { code: 'unauthenticated', message: 'x' } }, 401);
+		expect(await api.session(res)).toBeNull();
+	});
+
+	it('rejects an unknown state', async () => {
+		await expect(api.session(respond({ state: 'superuser' }))).rejects.toMatchObject({
+			code: 'invalid_response'
+		});
+	});
+});
+
+describe('POST requests', () => {
+	it('send JSON with the right content type', async () => {
+		let seen: RequestInit | undefined;
+		const capture: typeof fetch = async (_input, init) => {
+			seen = init;
+			return new Response(JSON.stringify({ state: 'mfa_required' }), { status: 200 });
+		};
+		expect(await api.login('alice', 'pw', capture)).toBe('mfa_required');
+		expect(seen?.method).toBe('POST');
+		expect(new Headers(seen?.headers).get('Content-Type')).toBe('application/json');
+		expect(JSON.parse(String(seen?.body))).toEqual({ username: 'alice', password: 'pw' });
+	});
+
+	it('accept 204 No Content', async () => {
+		const empty: typeof fetch = async () => new Response(null, { status: 204 });
+		await expect(api.logout(empty)).resolves.toBeUndefined();
+	});
+
+	it('reject an enrollment URI that is not otpauth', async () => {
+		const res = respond({ secret: 'ABC', uri: 'javascript:alert(1)', qr: 'data:image/png;base64,AA' });
+		await expect(api.beginTotpEnrollment(res)).rejects.toMatchObject({ code: 'invalid_response' });
+	});
+
+	it('reject a QR code that is not a PNG data URI', async () => {
+		const svg = 'data:image/svg+xml;base64,PHN2Zz4=';
+		const res = respond({ secret: 'ABC', uri: 'otpauth://totp/x', qr: svg });
+		await expect(api.beginTotpEnrollment(res)).rejects.toMatchObject({ code: 'invalid_response' });
+	});
+});

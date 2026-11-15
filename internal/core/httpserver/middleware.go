@@ -77,7 +77,7 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 					"panic", rec,
 					"stack", string(debug.Stack()),
 				)
-				WriteError(w, http.StatusInternalServerError, "internal", "Internal server error")
+				WriteError(w, http.StatusInternalServerError, "internal", "Er ging iets mis aan onze kant.")
 			}()
 			next.ServeHTTP(w, r)
 		})

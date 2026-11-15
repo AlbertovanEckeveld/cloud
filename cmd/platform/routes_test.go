@@ -13,6 +13,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/AlbertovanEckeveld/cloud/internal/core/health"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/httpserver"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/site"
@@ -48,13 +50,67 @@ func testRouter(t *testing.T, sites fakeSites) http.Handler {
 		}},
 		sites:    sites,
 		frontend: spa,
+		identity: func(r chi.Router) {
+			r.Post("/auth/login", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+		},
+		requireUser: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Test-User") == "" {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+		},
+		requireAdmin: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Test-User") != "admin" {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+		},
 	})
 }
 
+// get requests target as an admin.
 func get(h http.Handler, target string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Header.Set("X-Test-User", "admin")
+	h.ServeHTTP(rec, req)
 	return rec
+}
+
+func TestSystemEndpointsRequireAdmin(t *testing.T) {
+	h := testRouter(t, fakeSites{})
+	for _, path := range []string{"/api/v1/status", "/api/v1/sites"} {
+		for user, want := range map[string]int{"": http.StatusUnauthorized, "user": http.StatusForbidden, "admin": http.StatusOK} {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			if user != "" {
+				req.Header.Set("X-Test-User", user)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != want {
+				t.Errorf("%s as %q: status = %d, want %d", path, user, rec.Code, want)
+			}
+		}
+	}
+}
+
+func TestCrossOriginPostRejected(t *testing.T) {
+	h := testRouter(t, fakeSites{})
+	for fetchSite, want := range map[string]int{"same-origin": http.StatusNoContent, "cross-site": http.StatusForbidden, "same-site": http.StatusForbidden} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.Header.Set("Sec-Fetch-Site", fetchSite)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("Sec-Fetch-Site %s: status = %d, want %d", fetchSite, rec.Code, want)
+		}
+	}
 }
 
 func TestStatusEndpoint(t *testing.T) {
