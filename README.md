@@ -4,10 +4,11 @@ Een zelfgebouwd private-cloudplatform: één Go-binary met een ingebedde SvelteK
 PostgreSQL voor metadata en S3 voor bestanden. Achtergrond, roadmap en werkafspraken staan in
 [CLAUDE.md](CLAUDE.md); architectuurbeslissingen in [docs/adr/](docs/adr/).
 
-**Status:** fase 1.3 — accounts, inloggen en beheer. Inloggen met passkey, of met wachtwoord
+**Status:** fase 1 — `identity` (vervangt Authentik). Inloggen met passkey, of met wachtwoord
 plus authenticator-app (TOTP) of herstelcode; sessiebeheer; een beheeromgeving voor
-gebruikers, groepen, audit-log en systeemstatus. Optioneel uitgaande mail voor
-activatielinks en beveiligingsmeldingen.
+gebruikers, groepen, apps, audit-log en systeemstatus; een OpenID Connect-provider zodat
+andere apps met je Cloud-account inloggen; optioneel mail voor activatielinks en
+beveiligingsmeldingen.
 
 ## Vereisten
 
@@ -38,7 +39,8 @@ Met een SMTP-server in `.env` (`SMTP_*`) worden activatielinks en beveiligingsme
 gemaild (zie [ADR 0007](docs/adr/0007-uitgaande-mail.md)).
 
 `PUBLIC_URL` moet een hostnaam zijn (geen IP-adres), anders werken passkeys niet: lokaal
-`http://localhost:8080`.
+`http://localhost:8080`. Browsers staan passkeys alleen toe via HTTPS of op `localhost`; op een
+andere hostnaam via http (zoals nu via NetBird) log je in met wachtwoord + authenticator-app.
 Verdere gebruikers nodig je uit via **Beheer → Gebruikers**. Kwijtgeraakt?
 `platform user reset -username jouwnaam` (of **Account resetten** in Beheer) maakt het account
 leeg en geeft een nieuwe link. Draait het platform in Docker, gebruik dan `docker exec <container> /platform user …`.
@@ -48,6 +50,30 @@ Tijdens het ontwikkelen: `make dev` start de backend op `:8080` en Vite met hot 
 
 De Go-code bedt `web/build` in. Bouw daarom eerst de frontend (`make web`) voordat je
 `go build`, `go test` of `go vet` los draait; de make-targets doen dat automatisch.
+
+## Apps laten inloggen (OpenID Connect)
+
+Registreer de app in **Beheer → Apps** en vul bij de app in: de issuer
+(`<PUBLIC_URL>/oidc`), het client-ID en het client-secret. Voorbeeld voor Grafana
+(`grafana.ini`):
+
+```ini
+[auth.generic_oauth]
+enabled = true
+name = Cloud
+client_id = <client-id>
+client_secret = <client-secret>
+scopes = openid profile email groups
+auth_url = <PUBLIC_URL>/oidc/authorize
+token_url = <PUBLIC_URL>/oidc/oauth/token
+api_url = <PUBLIC_URL>/oidc/userinfo
+use_pkce = true
+login_attribute_path = preferred_username
+role_attribute_path = contains(groups[*], 'beheer') && 'Admin' || 'Viewer'
+```
+
+De redirect-URI van Grafana is `<grafana-url>/login/generic_oauth`. Beperk desgewenst de
+toegang tot een groep. Zie [ADR 0008](docs/adr/0008-oidc-provider.md).
 
 ## Make-targets
 
@@ -79,7 +105,9 @@ problemen tegelijk.
 | `/readyz` | Readiness: zijn Postgres en S3 bereikbaar? `503` tijdens afsluiten. |
 | `/api/v1/auth/*` | Inloggen (passkey, wachtwoord + TOTP of herstelcode), activeren, uitloggen. |
 | `/api/v1/account/*` | Eigen account: wachtwoord, passkeys, herstelcodes, sessies, activiteit. Vereist login. |
-| `/api/v1/admin/*` | Gebruikers, groepen en audit-log beheren. Alleen beheerders. |
+| `/api/v1/admin/*` | Gebruikers, groepen, apps en audit-log beheren. Alleen beheerders. |
+| `/api/v1/oidc/*` | Inlogverzoeken van apps afhandelen (voor de pagina `/connect`). |
+| `/oidc/*` | De OpenID Connect-provider: discovery, authorize, token, userinfo, keys. |
 | `/api/v1/status` | Status van deze instantie en de afhankelijkheden. Alleen beheerders. |
 | `/api/v1/sites` | Alle sites met versie en laatste heartbeat. Alleen beheerders. |
 | overige paden | De frontend (single-page app). |
@@ -101,7 +129,7 @@ cmd/platform/        main: configuratie, opstarten, routes, CLI (user create/res
 internal/core/       gedeelde basis: config, logging, database, storage, health, httpserver,
                      sealer (versleuteling at rest), mailer (outbox + SMTP), site
 internal/identity/   accounts, wachtwoorden, TOTP, passkeys, herstelcodes, sessies,
-                     throttling, audit-log, gebruikers- en groepsbeheer
+                     throttling, audit-log, gebruikers- en groepsbeheer, OIDC-provider
 migrations/<module>/ SQL-migraties per module; de mapnaam is ook het Postgres-schema
 web/                 SvelteKit-frontend; web/embed.go bedt web/build in de binary in
 docker/dev-setup/    Postgres, pgAdmin en RustFS (S3) voor de ontwikkelserver

@@ -30,6 +30,12 @@ func (s *Service) adminRoutes(r chi.Router) {
 	r.Put("/groups/{id}/members/{userID}", s.handleSetMember(true))
 	r.Delete("/groups/{id}/members/{userID}", s.handleSetMember(false))
 	r.Get("/audit", s.handleListAudit)
+	r.Get("/apps", s.handleListClients)
+	r.Post("/apps", s.handleCreateClient)
+	r.Get("/apps/{clientID}", s.handleGetClient)
+	r.Patch("/apps/{clientID}", s.handleUpdateClient)
+	r.Post("/apps/{clientID}/secret", s.handleRotateClientSecret)
+	r.Delete("/apps/{clientID}", s.handleDeleteClient)
 }
 
 func (s *Service) handleListUsers(w http.ResponseWriter, r *http.Request) {
@@ -265,4 +271,92 @@ func (s *Service) handleListAudit(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, struct {
 		Entries []AuditEntry `json:"entries"`
 	}{entries})
+}
+
+type clientRequest struct {
+	Name                   string     `json:"name"`
+	Confidential           bool       `json:"confidential"`
+	RedirectURIs           []string   `json:"redirect_uris"`
+	PostLogoutRedirectURIs []string   `json:"post_logout_redirect_uris"`
+	AllowedGroupID         *uuid.UUID `json:"allowed_group_id"`
+}
+
+func (in clientRequest) input() OIDCClientInput {
+	return OIDCClientInput{Name: in.Name, Confidential: in.Confidential, RedirectURIs: in.RedirectURIs,
+		PostLogoutRedirectURIs: in.PostLogoutRedirectURIs, AllowedGroupID: in.AllowedGroupID}
+}
+
+// clientSecretResponse returns a client with its secret, which is shown once.
+type clientSecretResponse struct {
+	OIDCClient
+	Secret string `json:"secret,omitempty"`
+}
+
+func (s *Service) handleListClients(w http.ResponseWriter, r *http.Request) {
+	clients, err := s.ListOIDCClients(r.Context())
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Issuer  string       `json:"issuer"`
+		Clients []OIDCClient `json:"clients"`
+	}{s.oidcIssuer(), clients})
+}
+
+func (s *Service) handleCreateClient(w http.ResponseWriter, r *http.Request) {
+	var in clientRequest
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	p, _ := PrincipalFrom(r.Context())
+	c, secret, err := s.CreateOIDCClient(r.Context(), clientFrom(r), p.Session, in.input())
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusCreated, clientSecretResponse{c, secret})
+}
+
+func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
+	c, err := s.GetOIDCClient(r.Context(), chi.URLParam(r, "clientID"))
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, c)
+}
+
+func (s *Service) handleUpdateClient(w http.ResponseWriter, r *http.Request) {
+	var in clientRequest
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	p, _ := PrincipalFrom(r.Context())
+	if err := s.UpdateOIDCClient(r.Context(), clientFrom(r), p.Session, chi.URLParam(r, "clientID"), in.input()); err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleRotateClientSecret(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	secret, err := s.RotateOIDCClientSecret(r.Context(), clientFrom(r), p.Session, chi.URLParam(r, "clientID"))
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Secret string `json:"secret"`
+	}{secret})
+}
+
+func (s *Service) handleDeleteClient(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	if err := s.DeleteOIDCClient(r.Context(), clientFrom(r), p.Session, chi.URLParam(r, "clientID")); err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

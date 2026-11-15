@@ -259,6 +259,8 @@ func (s *Service) SetUserDisabled(ctx context.Context, c Client, actor Session, 
 			}{
 				{`DELETE FROM identity.sessions WHERE user_id = $1`, []any{id}},
 				{`DELETE FROM identity.webauthn_challenges WHERE user_id = $1`, []any{id}},
+				{`DELETE FROM identity.oidc_refresh_tokens WHERE user_id = $1`, []any{id}},
+				{`DELETE FROM identity.oidc_access_tokens WHERE user_id = $1`, []any{id}},
 				{`UPDATE identity.activation_tokens SET used_at = $2 WHERE user_id = $1 AND used_at IS NULL`, []any{id, now}},
 			}
 			for _, r := range revocations {

@@ -181,6 +181,9 @@ func (s *Service) DeleteGroup(ctx context.Context, c Client, actor Session, id u
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
+		if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == "23503" {
+			return ErrGroupInUse // foreign key: an app is restricted to this group
+		}
 		if err != nil {
 			return fmt.Errorf("delete group: %w", err)
 		}

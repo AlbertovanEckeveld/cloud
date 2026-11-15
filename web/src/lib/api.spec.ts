@@ -149,3 +149,18 @@ describe('admin.invite', () => {
 		}
 	);
 });
+
+describe('oidcApprove', () => {
+	it('follows only the provider callback', async () => {
+		const ok = 'https://cloud.example.com/oidc/authorize/callback?id=01a1e0bb-7af8-7a51-9dde-6451f89621e9';
+		expect(await api.oidcApprove('x', respond({ redirect: ok }))).toBe(ok);
+	});
+
+	it.each([
+		'https://cloud.example.com/oidc/authorize/callback?id=x&next=//evil.example',
+		'javascript:alert(1)',
+		'https://cloud.example.com/somewhere-else'
+	])('rejects %s', async (redirect) => {
+		await expect(api.oidcApprove('x', respond({ redirect }))).rejects.toMatchObject({ code: 'invalid_response' });
+	});
+});

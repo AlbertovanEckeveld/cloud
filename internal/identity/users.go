@@ -156,6 +156,8 @@ func (s *Service) issueActivation(ctx context.Context, c Client, actor *uuid.UUI
 			{`DELETE FROM identity.sessions WHERE user_id = $1`, []any{u.ID}},
 			{`DELETE FROM identity.passkeys WHERE user_id = $1`, []any{u.ID}},
 			{`DELETE FROM identity.recovery_codes WHERE user_id = $1`, []any{u.ID}},
+			{`DELETE FROM identity.oidc_refresh_tokens WHERE user_id = $1`, []any{u.ID}},
+			{`DELETE FROM identity.oidc_access_tokens WHERE user_id = $1`, []any{u.ID}},
 			{`UPDATE identity.activation_tokens SET used_at = $2 WHERE user_id = $1 AND used_at IS NULL`, []any{u.ID, now}},
 		}
 		for _, r := range resets {

@@ -11,6 +11,8 @@ package main
 
 import (
 	"context"
+	"crypto/hkdf"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log/slog"
@@ -113,7 +115,15 @@ func setup(ctx context.Context, logOutput io.Writer) (*app, error) {
 		pool.Close()
 		return nil, err
 	}
-	opts := identity.Options{SiteID: cfg.SiteID, PublicURL: cfg.PublicURL, Mailer: mail, Logger: logger}
+	// A separate key for the OIDC provider's access tokens, derived from the
+	// platform key (HKDF, RFC 5869) so one key never serves two purposes.
+	tokenKey, err := hkdf.Key(sha256.New, []byte(cfg.EncryptionKey.Reveal()), nil, "cloud oidc access tokens", 32)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("derive oidc key: %w", err)
+	}
+	opts := identity.Options{SiteID: cfg.SiteID, PublicURL: cfg.PublicURL, Mailer: mail, Logger: logger,
+		OIDCTokenKey: [32]byte(tokenKey), DevMode: cfg.Env == config.EnvDevelopment}
 	if cfg.Env == config.EnvDevelopment {
 		// Passkeys are bound to an origin; allow the Vite dev server of `make dev`.
 		opts.ExtraOrigins = []string{"http://localhost:5173"}
@@ -185,6 +195,11 @@ func serve(ctx context.Context) error {
 		health.Check{Name: "storage", Run: store.Ping},
 	)
 
+	oidcProvider, err := a.identity.OIDCHandler(startupCtx)
+	if err != nil {
+		return err
+	}
+
 	dist, err := web.Dist()
 	if err != nil {
 		return fmt.Errorf("frontend: %w", err)
@@ -203,6 +218,7 @@ func serve(ctx context.Context) error {
 		health:       checker,
 		sites:        registry,
 		frontend:     spa,
+		oidc:         oidcProvider,
 		identity:     a.identity.Routes,
 		requireUser:  a.identity.RequireUser,
 		requireAdmin: identity.RequireAdmin,

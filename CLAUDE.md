@@ -196,9 +196,10 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   migraties + Dockerfile), 0.2 NATS + outbox, 0.3 CI, 0.4 back-ups
 - Laatst afgerond: 0.1 skelet (2026-11-15). 0.2–0.4 uitgesteld op mijn verzoek;
   back-ups (0.4) moeten er zijn vóór er echte data in staat.
-- Bezig met: **fase 1 – identity**. 1.1–1.3 gecommit, plus uitgaande mail (ADR 0007:
-  activatielinks en beveiligingsmeldingen via outbox + SMTP). Volgende: 1.4 OIDC-provider.
-  Het deelmodel is ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`.
+- Bezig met: **fase 1 – identity**. 1.1–1.3 en uitgaande mail (ADR 0007) gecommit. 1.4
+  OIDC-provider (ADR 0008) gebouwd en getest; wacht op mijn eigen test (o.a. met Grafana).
+  Daarmee is fase 1 functioneel compleet. Het deelmodel is ontworpen (ADR 0006) en wordt
+  gebouwd in fase 2 met `drive`.
 - Testen: integratie- en browsertests draaien tegen een aparte database (`TEST_DATABASE_URL`,
   `ave_cloud_test`), nooit tegen de dev-database met mijn eigen account. Tests ruimen ook daar
   alleen hun eigen data op (`it-*`, `e2e-*`).
@@ -220,4 +221,7 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - OIDC-provider op basis van `zitadel/oidc` (OpenID-gecertificeerd).
 - Go-dependencies fase 1: golang.org/x/crypto (argon2id), go-webauthn/webauthn, zitadel/oidc.
 - Geen Caddy/WireGuard; het platform verzorgt zelf HTTPS zodra het buiten het thuisnetwerk komt.
+- Dev-adres: `http://albertove-msi.albertove.cloud:8443`, alleen op het NetBird-adres
+  (100.80.128.240, versleuteld door WireGuard). Voorlopig http: passkeys werken daar pas met
+  HTTPS (eigen certificaat of Let's Encrypt via DNS-01; besluit volgt).
 - Multi-site hot-hot: nu nog niet repliceren, wel alles multi-site-proof ontwerpen (zie §3); replicatie wordt een eigen fase.

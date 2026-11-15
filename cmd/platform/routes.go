@@ -24,6 +24,8 @@ type routerDeps struct {
 	health    healthReporter
 	sites     siteLister
 	frontend  http.Handler
+	// oidc is the OpenID Connect provider, mounted at /oidc.
+	oidc http.Handler
 
 	// identity mounts the identity module's routes under /api/v1.
 	identity     func(chi.Router)
@@ -46,6 +48,9 @@ func newRouter(d routerDeps) http.Handler {
 	// cross-site requests with Sec-Fetch-Site (or Origin), and those are
 	// rejected. Session cookies are SameSite=Lax as a second layer.
 	csrf := http.NewCrossOriginProtection()
+	// The OIDC endpoints are called by apps, often cross-origin, and do not
+	// rely on cookies: client authentication and PKCE protect them instead.
+	csrf.AddInsecureBypassPattern("/oidc/")
 	csrf.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		httpserver.WriteError(w, http.StatusForbidden, "cross_origin", "Verzoek van een andere website geweigerd.")
 	}))
@@ -78,6 +83,7 @@ func newRouter(d routerDeps) http.Handler {
 		})
 	})
 
+	r.Mount("/oidc", d.oidc)
 	r.Handle("/*", d.frontend)
 	return r
 }

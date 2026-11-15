@@ -60,7 +60,13 @@ const eventLabels: Record<string, string> = {
 	'group.updated': 'Groep gewijzigd',
 	'group.deleted': 'Groep verwijderd',
 	'group.member_added': 'Toegevoegd aan groep',
-	'group.member_removed': 'Verwijderd uit groep'
+	'group.member_removed': 'Verwijderd uit groep',
+	'oidc.login': 'Ingelogd bij een app',
+	'oidc.denied': 'Toegang tot app geweigerd',
+	'oidc.client.created': 'App geregistreerd',
+	'oidc.client.updated': 'App gewijzigd',
+	'oidc.client.deleted': 'App verwijderd',
+	'oidc.client.secret_rotated': 'Client-secret van app vernieuwd'
 };
 
 /** Returns the Dutch description of an audit event. */
@@ -75,7 +81,8 @@ export function isWarningEvent(event: string): boolean {
 		'auth.totp.failed',
 		'auth.passkey.failed',
 		'auth.recovery_code.used',
-		'user.disabled'
+		'user.disabled',
+		'oidc.denied'
 	].includes(event);
 }
 

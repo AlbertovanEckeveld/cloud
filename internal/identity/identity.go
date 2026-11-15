@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/zitadel/oidc/v3/pkg/op"
 
 	"github.com/AlbertovanEckeveld/cloud/internal/core/mailer"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
@@ -101,7 +102,11 @@ type Options struct {
 	// Mailer sends activation links and security notifications; it may be
 	// a disabled mailer, but never nil.
 	Mailer *mailer.Mailer
-	Logger *slog.Logger
+	// OIDCTokenKey encrypts the OIDC provider's opaque access tokens.
+	OIDCTokenKey [32]byte
+	// DevMode allows plain-http redirect URIs for OIDC apps.
+	DevMode bool
+	Logger  *slog.Logger
 }
 
 // Service implements the identity module.
@@ -111,9 +116,11 @@ type Service struct {
 	hasher   *passwordHasher
 	webauthn *webauthn.WebAuthn
 	mail     *mailer.Mailer
-	opts     Options
-	log      *slog.Logger
-	now      func() time.Time
+	// oidcProvider is set by OIDCHandler; used to answer denied requests.
+	oidcProvider op.OpenIDProvider
+	opts         Options
+	log          *slog.Logger
+	now          func() time.Time
 }
 
 // New returns the identity service.
@@ -202,11 +209,15 @@ func (s *Service) cleanup(ctx context.Context) error {
 		{`DELETE FROM identity.activation_tokens WHERE expires_at < $1`,
 			[]any{now.Add(-7 * 24 * time.Hour)}},
 		{`DELETE FROM identity.webauthn_challenges WHERE expires_at < $1`, []any{now}},
+		{`DELETE FROM identity.oidc_auth_requests WHERE expires_at < $1`, []any{now}},
+		{`DELETE FROM identity.oidc_access_tokens WHERE expires_at < $1`, []any{now}},
+		{`DELETE FROM identity.oidc_refresh_tokens WHERE expires_at < $1`, []any{now}},
 	}
 	for _, st := range statements {
 		if _, err := s.db.Exec(ctx, st.sql, st.args...); err != nil {
 			return fmt.Errorf("cleanup: %w", err)
 		}
 	}
-	return nil
+	// Rotate the OIDC signing key when it is due.
+	return s.ensureSigningKey(ctx)
 }

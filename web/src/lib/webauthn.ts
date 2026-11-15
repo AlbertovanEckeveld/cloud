@@ -92,8 +92,21 @@ export function serializeAssertion(cred: PublicKeyCredential): Json {
 	};
 }
 
+type WindowLike = { isSecureContext: boolean; PublicKeyCredential?: unknown };
+
+/**
+ * Why passkeys cannot be used here, or null when they can. Browsers only
+ * offer WebAuthn in a secure context: HTTPS, or localhost.
+ */
+export function passkeyUnavailableReason(w: WindowLike | undefined = globalThis.window): string | null {
+	if (!w) return 'Passkeys zijn hier niet beschikbaar.';
+	if (!w.isSecureContext) return 'Passkeys werken alleen via een beveiligde verbinding (HTTPS).';
+	if (!w.PublicKeyCredential) return 'Deze browser ondersteunt geen passkeys.';
+	return null;
+}
+
 export function passkeysSupported(): boolean {
-	return typeof window !== 'undefined' && 'PublicKeyCredential' in window;
+	return passkeyUnavailableReason() === null;
 }
 
 /** A user-facing message for errors thrown by the WebAuthn API. */

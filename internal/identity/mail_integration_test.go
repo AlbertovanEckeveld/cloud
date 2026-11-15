@@ -76,7 +76,7 @@ func TestInviteAndResetAreMailed(t *testing.T) {
 			arg any
 		}{
 			{`DELETE FROM core.mail_outbox WHERE recipient = $1`, email},
-			{`DELETE FROM identity.audit_events WHERE subject_id = $1`, u.ID},
+			{`DELETE FROM identity.audit_events WHERE subject_id = $1 OR actor_id = $1`, u.ID},
 			{`DELETE FROM identity.users WHERE id = $1`, u.ID},
 		} {
 			if _, err := e.pool.Exec(context.Background(), q.sql, q.arg); err != nil {

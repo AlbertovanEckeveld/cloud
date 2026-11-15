@@ -364,6 +364,13 @@ func (s *Service) ChangePassword(ctx context.Context, c Client, sess Session, cu
 		if _, err := tx.Exec(ctx, `DELETE FROM identity.sessions WHERE user_id = $1 AND id <> $2`, sess.UserID, sess.ID); err != nil {
 			return fmt.Errorf("revoke other sessions: %w", err)
 		}
+		// Apps signed in through OIDC must sign in again too.
+		if _, err := tx.Exec(ctx, `DELETE FROM identity.oidc_refresh_tokens WHERE user_id = $1`, sess.UserID); err != nil {
+			return fmt.Errorf("revoke app tokens: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM identity.oidc_access_tokens WHERE user_id = $1`, sess.UserID); err != nil {
+			return fmt.Errorf("revoke app tokens: %w", err)
+		}
 		if err := s.audit(ctx, tx, c, auditEntry{event: EventPasswordChanged, actor: &sess.UserID}); err != nil {
 			return err
 		}

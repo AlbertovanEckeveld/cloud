@@ -126,6 +126,30 @@ export interface AuditEntry extends AuditEvent {
 	details: Record<string, unknown>;
 }
 
+export interface OidcRequest {
+	app_name: string;
+	/** The app asked for no sign-in page at all (prompt=none). */
+	prompt_none: boolean;
+}
+
+export interface OidcClient {
+	id: string;
+	name: string;
+	confidential: boolean;
+	redirect_uris: string[];
+	post_logout_redirect_uris: string[];
+	allowed_group: GroupRef | null;
+	created_at: string;
+}
+
+export interface OidcClientInput {
+	name: string;
+	confidential: boolean;
+	redirect_uris: string[];
+	post_logout_redirect_uris: string[];
+	allowed_group_id: string | null;
+}
+
 export interface AuditEvent {
 	id: string;
 	occurred_at: string;
@@ -351,6 +375,38 @@ const parseActivation: Validator<Activation> = (v) => {
 	return { link, emailed: bool(o, 'emailed') };
 };
 
+function strList(o: Record<string, unknown>, key: string): string[] {
+	return list(o, key, (v) => {
+		if (typeof v !== 'string') fail(key);
+		return v;
+	});
+}
+
+const parseClient: Validator<OidcClient> = (v) => {
+	const r = record(v, 'client');
+	return {
+		id: str(r, 'id'),
+		name: str(r, 'name'),
+		confidential: bool(r, 'confidential'),
+		redirect_uris: strList(r, 'redirect_uris'),
+		post_logout_redirect_uris: strList(r, 'post_logout_redirect_uris'),
+		allowed_group: r.allowed_group === null ? null : parseGroupRef(r.allowed_group),
+		created_at: str(r, 'created_at')
+	};
+};
+
+const parseClientWithSecret: Validator<{ client: OidcClient; secret: string }> = (v) => {
+	const r = record(v, 'client');
+	return { client: parseClient(r), secret: typeof r.secret === 'string' ? r.secret : '' };
+};
+
+const parseRedirect: Validator<string> = (v) => {
+	const redirect = str(record(v, 'redirect'), 'redirect');
+	// Only follow redirects to the provider's own callback.
+	if (!/^https?:\/\/[^\s/]+\/oidc\/authorize\/callback\?id=[0-9a-f-]+$/.test(redirect)) fail('redirect');
+	return redirect;
+};
+
 const parseRemaining: Validator<number> = (v) => num(record(v, 'recovery'), 'remaining');
 const parseRevoked: Validator<number> = (v) => num(record(v, 'revoked'), 'revoked');
 
@@ -448,6 +504,17 @@ export const api = {
 		request('DELETE', `/api/v1/account/sessions/${encodeURIComponent(id)}`, noContent, undefined, f),
 	revokeOtherSessions: (f: typeof fetch = fetch) =>
 		post('/api/v1/account/sessions/revoke-others', parseRevoked, undefined, f),
+	oidcRequest: (id: string, f: typeof fetch = fetch) =>
+		get(`/api/v1/oidc/requests/${enc(id)}`, (v) => {
+			const r = record(v, 'request');
+			return { app_name: str(r, 'app_name'), prompt_none: bool(r, 'prompt_none') } as OidcRequest;
+		}, f),
+	oidcApprove: (id: string, f: typeof fetch = fetch) =>
+		post(`/api/v1/oidc/requests/${enc(id)}/approve`, parseRedirect, undefined, f),
+	/** Where to send the browser to cancel a sign-in; the app gets an error. */
+	oidcDenyURL: (id: string, reason: 'access_denied' | 'login_required' = 'access_denied') =>
+		`/api/v1/oidc/requests/${enc(id)}/deny?error=${reason}`,
+
 	ownGroups: (f: typeof fetch = fetch) =>
 		get('/api/v1/account/groups', (v) => list(record(v, 'groups'), 'groups', parseGroupRef), f),
 
@@ -483,6 +550,21 @@ export const api = {
 			request('DELETE', `/api/v1/admin/groups/${enc(id)}`, noContent, undefined, f),
 		setMember: (groupId: string, userId: string, member: boolean, f: typeof fetch = fetch) =>
 			request(member ? 'PUT' : 'DELETE', `/api/v1/admin/groups/${enc(groupId)}/members/${enc(userId)}`, noContent, undefined, f),
+
+		apps: (f: typeof fetch = fetch) =>
+			get('/api/v1/admin/apps', (v) => {
+				const r = record(v, 'apps');
+				return { issuer: str(r, 'issuer'), clients: list(r, 'clients', parseClient) };
+			}, f),
+		app: (id: string, f: typeof fetch = fetch) => get(`/api/v1/admin/apps/${enc(id)}`, parseClient, f),
+		createApp: (input: OidcClientInput, f: typeof fetch = fetch) =>
+			post('/api/v1/admin/apps', parseClientWithSecret, input, f),
+		updateApp: (id: string, input: OidcClientInput, f: typeof fetch = fetch) =>
+			request('PATCH', `/api/v1/admin/apps/${enc(id)}`, noContent, input, f),
+		rotateAppSecret: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/admin/apps/${enc(id)}/secret`, (v) => str(record(v, 'secret'), 'secret'), undefined, f),
+		deleteApp: (id: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/admin/apps/${enc(id)}`, noContent, undefined, f),
 
 		audit: (before: string | null, f: typeof fetch = fetch) =>
 			get(

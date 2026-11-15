@@ -144,6 +144,7 @@ func (s *Service) Routes(r chi.Router) {
 		r.Get("/groups", s.handleOwnGroups)
 	})
 	r.Route("/admin", s.adminRoutes)
+	r.Route("/oidc", s.oidcRoutes)
 }
 
 type sessionHandler func(w http.ResponseWriter, r *http.Request, sess Session, u User)
@@ -339,6 +340,10 @@ func (s *Service) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpserver.WriteError(w, http.StatusConflict, "username_taken", "Deze gebruikersnaam is al in gebruik.")
 	case errors.Is(err, ErrEmailExists):
 		httpserver.WriteError(w, http.StatusConflict, "email_taken", "Dit e-mailadres is al in gebruik.")
+	case errors.Is(err, ErrGroupInUse):
+		httpserver.WriteError(w, http.StatusConflict, "group_in_use", "Deze groep bepaalt de toegang tot een app. Pas eerst die app aan.")
+	case errors.Is(err, ErrAppAccessDenied):
+		httpserver.WriteError(w, http.StatusForbidden, "app_access_denied", "Je hebt geen toegang tot deze app.")
 	case errors.Is(err, ErrGroupExists):
 		httpserver.WriteError(w, http.StatusConflict, "group_exists", "Er bestaat al een groep met deze naam.")
 	case errors.Is(err, ErrUserNotFound):

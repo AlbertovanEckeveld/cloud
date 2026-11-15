@@ -17,7 +17,7 @@ import (
 func (e *testEnv) newGroup(t *testing.T, actor Session) Group {
 	t.Helper()
 	g, err := e.svc.CreateGroup(context.Background(), e.client, actor, GroupInput{
-		Name: fmt.Sprintf("it-g-%d", testSeq.Add(1)), Description: "test",
+		Name: fmt.Sprintf("it-g-%d-%d", time.Now().UnixNano()%1e9, testSeq.Add(1)), Description: "test",
 	})
 	if err != nil {
 		t.Fatal(err)

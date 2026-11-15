@@ -2,9 +2,10 @@
 	import { onMount } from 'svelte';
 	import { api, type Passkey } from '#lib/api.ts';
 	import { dateTime, timeAgo } from '#lib/format.ts';
-	import { createPasskey, passkeysSupported } from '#lib/webauthn.ts';
+	import { createPasskey, passkeyUnavailableReason } from '#lib/webauthn.ts';
 	import ErrorNotice from '../ErrorNotice.svelte';
 
+	const unavailable = passkeyUnavailableReason();
 	let passkeys = $state<Passkey[] | null>(null);
 	let name = $state('');
 	let error = $state<unknown>(null);
@@ -76,12 +77,12 @@
 		<p class="muted">Je hebt nog geen passkeys.</p>
 	{/if}
 
-	{#if passkeysSupported()}
+	{#if !unavailable}
 		<form class="add" onsubmit={add}>
 			<input bind:value={name} placeholder="Naam, bijv. Telefoon" maxlength="64" aria-label="Naam van de passkey" />
 			<button class="button button--primary" disabled={busy}>{busy ? 'Bezig…' : 'Passkey toevoegen'}</button>
 		</form>
 	{:else}
-		<p class="muted small">Deze browser ondersteunt geen passkeys.</p>
+		<p class="muted small">{unavailable}</p>
 	{/if}
 </section>

@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { b64urlToBytes, bytesToB64url, toCreationOptions, toRequestOptions } from './webauthn.ts';
+import {
+	b64urlToBytes,
+	bytesToB64url,
+	passkeyUnavailableReason,
+	toCreationOptions,
+	toRequestOptions
+} from './webauthn.ts';
+
+describe('passkeyUnavailableReason', () => {
+	it('explains why passkeys are unavailable', () => {
+		expect(passkeyUnavailableReason({ isSecureContext: false })).toContain('HTTPS');
+		expect(passkeyUnavailableReason({ isSecureContext: true })).toContain('browser');
+		expect(passkeyUnavailableReason({ isSecureContext: true, PublicKeyCredential: class {} })).toBeNull();
+	});
+});
 
 describe('base64url', () => {
 	it('round-trips every byte value', () => {

@@ -43,6 +43,11 @@ func (e *testEnv) advance(d time.Duration) { e.clock = e.clock.Add(d) }
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
+	return newTestEnvURL(t, &url.URL{Scheme: "http", Host: "localhost:8080"})
+}
+
+func newTestEnvURL(t *testing.T, publicURL *url.URL) *testEnv {
+	t.Helper()
 	ctx := context.Background()
 	pool, err := database.Open(ctx, config.Database{URL: config.Secret(os.Getenv("DATABASE_URL"))})
 	if err != nil {
@@ -78,7 +83,8 @@ func newTestEnv(t *testing.T) *testEnv {
 		clock:  time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC),
 		client: Client{IP: fmt.Sprintf("it-%d-%d", time.Now().UnixNano(), testSeq.Add(1)), UserAgent: "integration-test"},
 	}
-	env.svc, err = New(pool, sl, Options{SiteID: "test", PublicURL: &url.URL{Scheme: "http", Host: "localhost:8080"}, Mailer: mail, Logger: logger})
+	env.svc, err = New(pool, sl, Options{SiteID: "test", PublicURL: publicURL, Mailer: mail, Logger: logger,
+		OIDCTokenKey: [32]byte{1, 2, 3}})
 	if err != nil {
 		t.Fatal(err)
 	}

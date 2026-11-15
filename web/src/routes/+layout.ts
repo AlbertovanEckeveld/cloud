@@ -6,15 +6,17 @@ import type { LayoutLoad } from './$types';
 // rendering, everything renders in the browser and talks to /api.
 export const ssr = false;
 
-/** Pages reachable without being signed in. */
+/** Pages only for visitors who are not signed in. */
 const publicPaths = ['/login', '/activate'];
+/** Pages for everyone: signing in to an app works with or without a session. */
+const openPaths = ['/connect'];
 
 export const load: LayoutLoad = async ({ fetch, url }) => {
 	const session = await api.session(fetch);
 	const authenticated = session?.state === 'authenticated';
 	const isPublic = publicPaths.includes(url.pathname);
 
-	if (!authenticated && !isPublic) {
+	if (!authenticated && !isPublic && !openPaths.includes(url.pathname)) {
 		const next = url.pathname === '/' ? '' : `?next=${encodeURIComponent(url.pathname + url.search)}`;
 		redirect(307, `/login${next}`);
 	}

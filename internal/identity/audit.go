@@ -37,6 +37,13 @@ const (
 	EventGroupDeleted       = "group.deleted"
 	EventGroupMemberAdded   = "group.member_added"
 	EventGroupMemberRemoved = "group.member_removed"
+
+	EventOIDCLogin               = "oidc.login"
+	EventOIDCDenied              = "oidc.denied"
+	EventOIDCClientCreated       = "oidc.client.created"
+	EventOIDCClientUpdated       = "oidc.client.updated"
+	EventOIDCClientDeleted       = "oidc.client.deleted"
+	EventOIDCClientSecretRotated = "oidc.client.secret_rotated"
 )
 
 // auditEntry is one event to record. actor is who did it, subject whom it concerns.
