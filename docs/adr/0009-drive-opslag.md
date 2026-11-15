@@ -27,8 +27,8 @@ zijn. Het platform moet multi-site blijven (ADR 0001).
 4. **Namen** worden genormaliseerd naar Unicode NFC (macOS gebruikt NFD), mogen geen `/`, `\`
    of besturingstekens bevatten, en zijn per map uniek ongeacht hoofdletters (Windows en macOS
    zijn hoofdletterongevoelig).
-5. **Autorisatie op één plek:** elke handeling loopt via `authorize()` in drive. In 2.1 alleen
-   de eigenaar; 2.2 breidt dit uit met het deelmodel uit ADR 0006. Bestanden van een ander geven
+5. **Autorisatie op één plek:** elke handeling loopt via `authorize()` in drive: de eigenaar,
+   of wie een share heeft (ADR 0010). Bestanden van een ander geven
    404, niet 403, zodat hun bestaan niet uitlekt. Drive kent identity alleen via een klein
    `Auth`-contract (middleware + "wie is de gebruiker").
 6. **Prullenbak:** verwijderen zet `trashed_at` op het gekozen item; alles eronder verdwijnt mee
@@ -44,6 +44,6 @@ zijn. Het platform moet multi-site blijven (ADR 0001).
 
 ## Gevolgen
 
-- Een bestand vervangen maakt een nieuwe versie; versiebeheer in de UI volgt in 2.2.
+- Een bestand vervangen maakt een nieuwe versie (versiebeheer: ADR 0010).
 - Een object dat na een crash tussen upload en database-commit achterblijft, wordt nog niet
   automatisch gevonden; een periodieke vergelijking S3 ↔ database is een latere taak.

@@ -1,6 +1,6 @@
 # ADR 0006: Beheer, groepen en autorisatie
 
-- Status: geaccepteerd (deelmodel: voorgesteld, wordt gebouwd in fase 2)
+- Status: geaccepteerd (deelmodel gebouwd in fase 2.2, zie ADR 0010)
 - Datum: 2026-11-15
 
 ## Context
@@ -39,7 +39,7 @@ Elke beheeractie wordt vastgelegd met *door* (actor) en *betreft* (subject). Beh
 alle gebeurtenissen, gepagineerd op UUIDv7 (tijdsgeordend), zodat geen offset-paginering
 nodig is.
 
-### Deelmodel (ontwerp, gebouwd in fase 2)
+### Deelmodel (ontwerp; de uitvoering en afwijkingen staan in ADR 0010)
 
 Het deelmodel wordt pas gebouwd zodra `drive` het nodig heeft: code zonder gebruiker wordt
 niet getoetst en hoort niet in de repo. Het voorgestelde ontwerp:

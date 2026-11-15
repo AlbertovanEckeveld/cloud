@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -20,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/AlbertovanEckeveld/cloud/internal/core/authz"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/storage"
 )
 
@@ -39,7 +41,11 @@ var (
 	ErrQuotaExceeded = errors.New("storage quota exceeded")
 	ErrTooLarge      = errors.New("file too large")
 	ErrIncomplete    = errors.New("upload incomplete")
+	ErrForbidden     = errors.New("insufficient permission")
 )
+
+// nodeType is the resource type of files and folders in the sharing model.
+const nodeType = "drive.node"
 
 // InputError is a validation error whose message is safe to show to users.
 type InputError struct{ Reason string }
@@ -57,12 +63,15 @@ type Objects interface {
 type Options struct {
 	Logger      *slog.Logger
 	MaxFileSize int64
+	// Sharing is the central authorization of the identity module.
+	Sharing authz.Authorizer
 }
 
 // Service implements the drive module.
 type Service struct {
 	db      *pgxpool.Pool
 	objects Objects
+	sharing authz.Authorizer
 	log     *slog.Logger
 	maxFile int64
 	now     func() time.Time
@@ -76,7 +85,7 @@ func New(db *pgxpool.Pool, objects Objects, opts Options) *Service {
 	if maxFile <= 0 {
 		maxFile = DefaultMaxFileSize
 	}
-	return &Service{db: db, objects: objects, log: opts.Logger, maxFile: maxFile, now: time.Now}
+	return &Service{db: db, objects: objects, sharing: opts.Sharing, log: opts.Logger, maxFile: maxFile, now: time.Now}
 }
 
 // Node is a file or folder.
@@ -90,9 +99,16 @@ type Node struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	TrashedAt   *time.Time `json:"trashed_at,omitempty"`
+	// Permission is what the requesting user may do with the node.
+	Permission authz.Permission `json:"permission"`
+	// Shared is set when the node itself is shared (shown to managers only).
+	Shared bool `json:"shared,omitempty"`
 
 	ownerID          uuid.UUID
 	currentVersionID *uuid.UUID
+	// accessRoot is the highest node in the path the user has access to:
+	// the top level for the owner, the shared node for anyone else.
+	accessRoot *uuid.UUID
 }
 
 const nodeColumns = `id, parent_id, kind, name, size, content_type, created_at, updated_at, trashed_at, owner_id, current_version_id`
@@ -138,14 +154,16 @@ func uniqueViolation(err error) bool {
 	return ok && pgErr.Code == "23505"
 }
 
-// authorize loads a node for a user and checks access. It is the single
-// place where drive decides who may see or change what: for now only the
-// owner; sharing (phase 2.2) extends this function. Nodes the user may not
-// see are reported as not found, so their existence does not leak.
+// authorize loads a node and checks that the user holds at least need on
+// it. It is the single place where drive decides who may see or change what:
+// the owner may do everything; anyone else needs a share on the node or on a
+// folder above it (shares are inherited down the tree), resolved by the
+// identity module. Nodes the user cannot see are reported as not found, so
+// their existence does not leak; too weak a permission is ErrForbidden.
 // Trashed nodes (or nodes inside a trashed folder) are only found when
-// trashed is true.
-func (s *Service) authorize(ctx context.Context, q dbtx, userID, nodeID uuid.UUID, trashed bool) (Node, error) {
-	rows, err := q.Query(ctx, `SELECT `+nodeColumns+` FROM drive.nodes WHERE id = $1 AND owner_id = $2`, nodeID, userID)
+// trashed is true, and only by their owner.
+func (s *Service) authorize(ctx context.Context, q dbtx, userID, nodeID uuid.UUID, need authz.Permission, trashed bool) (Node, error) {
+	rows, err := q.Query(ctx, `SELECT `+nodeColumns+` FROM drive.nodes WHERE id = $1`, nodeID)
 	if err != nil {
 		return Node{}, fmt.Errorf("load node: %w", err)
 	}
@@ -156,44 +174,81 @@ func (s *Service) authorize(ctx context.Context, q dbtx, userID, nodeID uuid.UUI
 	if err != nil {
 		return Node{}, fmt.Errorf("load node: %w", err)
 	}
-	inTrash, err := s.inTrash(ctx, q, nodeID)
+	path, inTrash, err := s.lineage(ctx, q, nodeID)
 	if err != nil {
 		return Node{}, err
 	}
 	if inTrash != trashed {
 		return Node{}, ErrNotFound
 	}
+	if n.ownerID == userID {
+		n.Permission = authz.Manage
+		return n, nil
+	}
+	if trashed {
+		return Node{}, ErrNotFound // the trash belongs to the owner
+	}
+	perms, err := s.sharing.Permissions(ctx, userID, nodeType, path)
+	if err != nil {
+		return Node{}, fmt.Errorf("check shares: %w", err)
+	}
+	for _, id := range path { // nearest first, so the last match is the highest
+		if p, ok := perms[id]; ok {
+			n.Permission = authz.Max(n.Permission, p)
+			n.accessRoot = &id
+		}
+	}
+	if n.Permission == authz.None {
+		return Node{}, ErrNotFound
+	}
+	if !n.Permission.Allows(need) {
+		return Node{}, ErrForbidden
+	}
+	if *n.accessRoot == n.ID {
+		n.ParentID = nil // the owner's folders above a share stay private
+	}
 	return n, nil
+}
+
+// lineage returns a node and its ancestors, nearest first, and whether any
+// of them is in the trash.
+func (s *Service) lineage(ctx context.Context, q dbtx, nodeID uuid.UUID) ([]uuid.UUID, bool, error) {
+	var ids []uuid.UUID
+	var trashed bool
+	err := q.QueryRow(ctx, `
+		WITH RECURSIVE chain AS (
+			SELECT id, parent_id, trashed_at, 0 AS depth FROM drive.nodes WHERE id = $1
+			UNION ALL
+			SELECT n.id, n.parent_id, n.trashed_at, c.depth + 1 FROM drive.nodes n JOIN chain c ON n.id = c.parent_id)
+		SELECT array_agg(id ORDER BY depth), COALESCE(bool_or(trashed_at IS NOT NULL), false) FROM chain`, nodeID).Scan(&ids, &trashed)
+	if err != nil {
+		return nil, false, fmt.Errorf("load path: %w", err)
+	}
+	return ids, trashed, nil
 }
 
 // inTrash reports whether a node or any of its ancestors is trashed.
 func (s *Service) inTrash(ctx context.Context, q dbtx, nodeID uuid.UUID) (bool, error) {
-	var trashed bool
-	err := q.QueryRow(ctx, `
-		WITH RECURSIVE chain AS (
-			SELECT id, parent_id, trashed_at FROM drive.nodes WHERE id = $1
-			UNION ALL
-			SELECT n.id, n.parent_id, n.trashed_at FROM drive.nodes n JOIN chain c ON n.id = c.parent_id)
-		SELECT COALESCE(bool_or(trashed_at IS NOT NULL), false) FROM chain`, nodeID).Scan(&trashed)
-	if err != nil {
-		return false, fmt.Errorf("check trash: %w", err)
-	}
-	return trashed, nil
+	_, trashed, err := s.lineage(ctx, q, nodeID)
+	return trashed, err
 }
 
-// folder checks that parentID (nil: the top level) is a live folder of userID.
-func (s *Service) folder(ctx context.Context, q dbtx, userID uuid.UUID, parentID *uuid.UUID) error {
+// target checks that the user may add to a folder (nil: their own top
+// level) and returns the folder's owner and the user's permission there.
+// Everything in a folder belongs to the folder's owner, also when someone it
+// is shared with uploads it: a tree never has more than one owner.
+func (s *Service) target(ctx context.Context, q dbtx, userID uuid.UUID, parentID *uuid.UUID) (uuid.UUID, authz.Permission, error) {
 	if parentID == nil {
-		return nil
+		return userID, authz.Manage, nil
 	}
-	n, err := s.authorize(ctx, q, userID, *parentID, false)
+	n, err := s.authorize(ctx, q, userID, *parentID, authz.Edit, false)
 	if err != nil {
-		return err
+		return uuid.Nil, authz.None, err
 	}
 	if n.Kind != "folder" {
-		return ErrNotFolder
+		return uuid.Nil, authz.None, ErrNotFolder
 	}
-	return nil
+	return n.ownerID, n.Permission, nil
 }
 
 // Crumb is one step of a folder path.
@@ -204,47 +259,103 @@ type Crumb struct {
 
 // FolderView is a folder with its path and contents.
 type FolderView struct {
-	Folder   *Node   `json:"folder"` // nil for the top level
+	Folder *Node `json:"folder"` // nil for the top level
+	// Path runs from the highest folder the user has access to down to
+	// Folder: from the top level for the owner, from the share otherwise.
 	Path     []Crumb `json:"path"`
 	Children []Node  `json:"children"`
+	// Shared is set when the folder is someone else's, shared with the user.
+	Shared bool `json:"shared"`
 }
 
 // List returns a folder's contents (folderID nil: the top level), folders first.
 func (s *Service) List(ctx context.Context, userID uuid.UUID, folderID *uuid.UUID) (FolderView, error) {
 	view := FolderView{Path: []Crumb{}}
-	if folderID != nil {
-		n, err := s.authorize(ctx, s.db, userID, *folderID, false)
+	var rows pgx.Rows
+	var err error
+	if folderID == nil {
+		rows, err = s.db.Query(ctx, `
+			SELECT `+nodeColumns+` FROM drive.nodes WHERE owner_id = $1 AND parent_id IS NULL AND trashed_at IS NULL
+			ORDER BY kind = 'file', lower(name)`, userID)
+	} else {
+		n, err := s.authorize(ctx, s.db, userID, *folderID, authz.View, false)
 		if err != nil {
 			return FolderView{}, err
 		}
 		if n.Kind != "folder" {
 			return FolderView{}, ErrNotFolder
 		}
-		view.Folder = &n
-		rows, err := s.db.Query(ctx, `
-			WITH RECURSIVE chain AS (
-				SELECT id, parent_id, name, 0 AS depth FROM drive.nodes WHERE id = $1
-				UNION ALL
-				SELECT n.id, n.parent_id, n.name, c.depth + 1 FROM drive.nodes n JOIN chain c ON n.id = c.parent_id)
-			SELECT id, name FROM chain ORDER BY depth DESC`, *folderID)
-		if err != nil {
-			return FolderView{}, fmt.Errorf("load path: %w", err)
+		view.Folder, view.Shared = &n, n.ownerID != userID
+		if view.Path, err = s.crumbs(ctx, n); err != nil {
+			return FolderView{}, err
 		}
-		if view.Path, err = pgx.CollectRows(rows, pgx.RowToStructByPos[Crumb]); err != nil {
-			return FolderView{}, fmt.Errorf("load path: %w", err)
-		}
+		rows, err = s.db.Query(ctx, `
+			SELECT `+nodeColumns+` FROM drive.nodes WHERE parent_id = $1 AND trashed_at IS NULL
+			ORDER BY kind = 'file', lower(name)`, *folderID)
 	}
-	rows, err := s.db.Query(ctx, `
-		SELECT `+nodeColumns+` FROM drive.nodes
-		WHERE owner_id = $1 AND parent_id IS NOT DISTINCT FROM $2 AND trashed_at IS NULL
-		ORDER BY kind = 'file', lower(name)`, userID, folderID)
 	if err != nil {
 		return FolderView{}, fmt.Errorf("list folder: %w", err)
 	}
 	if view.Children, err = pgx.CollectRows(rows, scanNode); err != nil {
 		return FolderView{}, fmt.Errorf("list folder: %w", err)
 	}
+	inherited := authz.Manage // the user's own top level
+	if view.Folder != nil {
+		inherited = view.Folder.Permission
+	}
+	if err := s.annotate(ctx, userID, inherited, view.Children); err != nil {
+		return FolderView{}, err
+	}
 	return view, nil
+}
+
+// crumbs returns the path to a folder the user may see, starting at their
+// access root, so the names of the owner's folders above a share stay private.
+func (s *Service) crumbs(ctx context.Context, n Node) ([]Crumb, error) {
+	rows, err := s.db.Query(ctx, `
+		WITH RECURSIVE chain AS (
+			SELECT id, parent_id, name, 0 AS depth FROM drive.nodes WHERE id = $1
+			UNION ALL
+			SELECT n.id, n.parent_id, n.name, c.depth + 1 FROM drive.nodes n JOIN chain c ON n.id = c.parent_id
+			WHERE c.id IS DISTINCT FROM $2)
+		SELECT id, name FROM chain ORDER BY depth DESC`, n.ID, n.accessRoot)
+	if err != nil {
+		return nil, fmt.Errorf("load path: %w", err)
+	}
+	path, err := pgx.CollectRows(rows, pgx.RowToStructByPos[Crumb])
+	if err != nil {
+		return nil, fmt.Errorf("load path: %w", err)
+	}
+	return path, nil
+}
+
+// annotate sets the user's permission on nodes in a folder where they hold
+// inherited, plus anything shared with them on the nodes themselves, and
+// marks which nodes are shared for users who may manage them.
+func (s *Service) annotate(ctx context.Context, userID uuid.UUID, inherited authz.Permission, nodes []Node) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, len(nodes))
+	for i, n := range nodes {
+		ids[i] = n.ID
+	}
+	own := map[uuid.UUID]authz.Permission{}
+	if inherited != authz.Manage {
+		var err error
+		if own, err = s.sharing.Permissions(ctx, userID, nodeType, ids); err != nil {
+			return fmt.Errorf("check shares: %w", err)
+		}
+	}
+	shared, err := s.sharing.Shared(ctx, nodeType, ids)
+	if err != nil {
+		return fmt.Errorf("check shares: %w", err)
+	}
+	for i := range nodes {
+		nodes[i].Permission = authz.Max(inherited, own[nodes[i].ID])
+		nodes[i].Shared = shared[nodes[i].ID] && nodes[i].Permission == authz.Manage
+	}
+	return nil
 }
 
 // CreateFolder makes a folder in parentID (nil: the top level).
@@ -253,14 +364,16 @@ func (s *Service) CreateFolder(ctx context.Context, userID uuid.UUID, parentID *
 	if err != nil {
 		return Node{}, err
 	}
-	if err := s.folder(ctx, s.db, userID, parentID); err != nil {
+	owner, perm, err := s.target(ctx, s.db, userID, parentID)
+	if err != nil {
 		return Node{}, err
 	}
 	now := s.now().UTC()
-	n := Node{ID: newID(), ParentID: parentID, Kind: "folder", Name: name, CreatedAt: now, UpdatedAt: now, ownerID: userID}
+	n := Node{ID: newID(), ParentID: parentID, Kind: "folder", Name: name, CreatedAt: now, UpdatedAt: now,
+		Permission: perm, ownerID: owner}
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO drive.nodes (id, owner_id, parent_id, kind, name, created_at, updated_at)
-		VALUES ($1, $2, $3, 'folder', $4, $5, $5)`, n.ID, userID, parentID, name, now)
+		VALUES ($1, $2, $3, 'folder', $4, $5, $5)`, n.ID, owner, parentID, name, now)
 	if uniqueViolation(err) {
 		return Node{}, ErrNameTaken
 	}
@@ -278,13 +391,21 @@ type Change struct {
 	ToTop  bool
 }
 
-// Update renames or moves a node.
+// Update renames or moves a node. A node can only move within its owner's
+// tree, into a folder where the user may edit: files never change owner.
 func (s *Service) Update(ctx context.Context, userID, nodeID uuid.UUID, ch Change) (Node, error) {
 	var out Node
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		n, err := s.authorize(ctx, tx, userID, nodeID, false)
+		n, err := s.authorize(ctx, tx, userID, nodeID, authz.Edit, false)
 		if err != nil {
 			return err
+		}
+		parentID := n.ParentID
+		if n.accessRoot != nil && *n.accessRoot == n.ID {
+			parentID = nil // hidden from the user, but it stays where it is
+			if err := tx.QueryRow(ctx, `SELECT parent_id FROM drive.nodes WHERE id = $1`, nodeID).Scan(&parentID); err != nil {
+				return fmt.Errorf("load node: %w", err)
+			}
 		}
 		if ch.Name != nil {
 			if n.Name, err = normalizeName(*ch.Name); err != nil {
@@ -292,31 +413,28 @@ func (s *Service) Update(ctx context.Context, userID, nodeID uuid.UUID, ch Chang
 			}
 		}
 		if ch.Parent != nil || ch.ToTop {
-			if ch.ToTop {
-				n.ParentID = nil
-			} else {
-				if err := s.folder(ctx, tx, userID, ch.Parent); err != nil {
+			owner, _, err := s.target(ctx, tx, userID, ch.Parent)
+			if err != nil {
+				return err
+			}
+			if owner != n.ownerID {
+				return &InputError{"Je kunt dit alleen verplaatsen binnen de mappen van de eigenaar."}
+			}
+			if ch.Parent != nil {
+				// A folder cannot move into itself or one of its descendants.
+				path, _, err := s.lineage(ctx, tx, *ch.Parent)
+				if err != nil {
 					return err
 				}
-				// A folder cannot move into itself or one of its descendants.
-				var cycle bool
-				if err := tx.QueryRow(ctx, `
-					WITH RECURSIVE chain AS (
-						SELECT id, parent_id FROM drive.nodes WHERE id = $1
-						UNION ALL
-						SELECT n.id, n.parent_id FROM drive.nodes n JOIN chain c ON n.id = c.parent_id)
-					SELECT EXISTS (SELECT 1 FROM chain WHERE id = $2)`, *ch.Parent, nodeID).Scan(&cycle); err != nil {
-					return fmt.Errorf("check move: %w", err)
-				}
-				if cycle {
+				if slices.Contains(path, nodeID) {
 					return ErrCycle
 				}
-				n.ParentID = ch.Parent
 			}
+			parentID, n.ParentID = ch.Parent, ch.Parent
 		}
 		n.UpdatedAt = s.now().UTC()
 		_, err = tx.Exec(ctx, `UPDATE drive.nodes SET name = $2, parent_id = $3, updated_at = $4 WHERE id = $1`,
-			nodeID, n.Name, n.ParentID, n.UpdatedAt)
+			nodeID, n.Name, parentID, n.UpdatedAt)
 		if uniqueViolation(err) {
 			return ErrNameTaken
 		}

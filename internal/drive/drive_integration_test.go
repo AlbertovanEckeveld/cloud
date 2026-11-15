@@ -29,6 +29,7 @@ import (
 
 type testEnv struct {
 	svc     *Service
+	sharing *fakeSharing
 	pool    *pgxpool.Pool
 	objects *storage.Client
 	srv     *httptest.Server
@@ -58,8 +59,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &testEnv{pool: pool, objects: objects, clock: time.Now()}
-	e.svc = New(pool, objects, Options{Logger: logger, MaxFileSize: 1 << 20})
+	e := &testEnv{pool: pool, objects: objects, clock: time.Now(), sharing: newFakeSharing()}
+	e.svc = New(pool, objects, Options{Logger: logger, MaxFileSize: 1 << 20, Sharing: e.sharing})
 	e.svc.now = func() time.Time { return e.clock }
 
 	r := chi.NewRouter()

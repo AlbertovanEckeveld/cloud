@@ -9,12 +9,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/AlbertovanEckeveld/cloud/internal/core/authz"
 )
 
-// Trash moves a node (and with it everything inside) to the trash.
+// Trash moves a node (and with it everything inside) to the trash. It goes
+// to the owner's trash, also when someone it is shared with deletes it.
 func (s *Service) Trash(ctx context.Context, userID, nodeID uuid.UUID) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := s.authorize(ctx, tx, userID, nodeID, false); err != nil {
+		if _, err := s.authorize(ctx, tx, userID, nodeID, authz.Edit, false); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE drive.nodes SET trashed_at = $2 WHERE id = $1`, nodeID, s.now()); err != nil {
@@ -32,7 +35,11 @@ func (s *Service) ListTrash(ctx context.Context, userID uuid.UUID) ([]Node, erro
 	if err != nil {
 		return nil, fmt.Errorf("list trash: %w", err)
 	}
-	return pgx.CollectRows(rows, scanNode)
+	nodes, err := pgx.CollectRows(rows, scanNode)
+	for i := range nodes {
+		nodes[i].Permission = authz.Manage
+	}
+	return nodes, err
 }
 
 // Restore takes a node out of the trash. When its folder is gone (or in the
@@ -64,7 +71,7 @@ func (s *Service) Restore(ctx context.Context, userID, nodeID uuid.UUID) (Node, 
 			nodeID, n.ParentID, n.Name); err != nil {
 			return fmt.Errorf("restore: %w", err)
 		}
-		n.TrashedAt = nil
+		n.TrashedAt, n.Permission = nil, authz.Manage
 		out = n
 		return nil
 	})
@@ -98,33 +105,60 @@ func (s *Service) trashRoot(ctx context.Context, q dbtx, userID, nodeID uuid.UUI
 }
 
 // purge deletes nodes for good: their rows (with everything below them) go,
-// and their objects are scheduled for deletion in the same transaction.
-func (s *Service) purge(ctx context.Context, tx pgx.Tx, nodeIDs []uuid.UUID) error {
-	if _, err := tx.Exec(ctx, `
+// and their objects are scheduled for deletion in the same transaction. It
+// returns every deleted node, whose shares the caller revokes after commit.
+func (s *Service) purge(ctx context.Context, tx pgx.Tx, nodeIDs []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `
 		WITH RECURSIVE tree AS (
 			SELECT id FROM drive.nodes WHERE id = ANY($1)
 			UNION ALL
 			SELECT n.id FROM drive.nodes n JOIN tree t ON n.parent_id = t.id)
+		SELECT id FROM tree`, nodeIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load tree: %w", err)
+	}
+	tree, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, fmt.Errorf("load tree: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO drive.object_deletions (object_key, next_attempt_at)
-		SELECT v.object_key, $2 FROM drive.versions v JOIN tree t ON v.node_id = t.id
-		ON CONFLICT DO NOTHING`, nodeIDs, s.now()); err != nil {
-		return fmt.Errorf("schedule object deletion: %w", err)
+		SELECT object_key, $2 FROM drive.versions WHERE node_id = ANY($1)
+		ON CONFLICT DO NOTHING`, tree, s.now()); err != nil {
+		return nil, fmt.Errorf("schedule object deletion: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM drive.nodes WHERE id = ANY($1)`, nodeIDs); err != nil {
-		return fmt.Errorf("delete nodes: %w", err)
+		return nil, fmt.Errorf("delete nodes: %w", err)
 	}
-	return nil
+	return tree, nil
+}
+
+// revokeShares removes the shares of purged nodes after the purge committed.
+// Shares live in the identity module, so this cannot be part of the same
+// transaction; a share left behind by a failure points at nothing and grants
+// nothing, as node IDs are never reused.
+func (s *Service) revokeShares(ctx context.Context, tree []uuid.UUID) {
+	if len(tree) == 0 {
+		return
+	}
+	if err := s.sharing.RevokeAll(context.WithoutCancel(ctx), nodeType, tree); err != nil {
+		s.log.Warn("revoke shares of deleted nodes", "nodes", len(tree), "error", err)
+	}
 }
 
 // DeleteForever removes one node from the trash permanently.
 func (s *Service) DeleteForever(ctx context.Context, userID, nodeID uuid.UUID) error {
+	var tree []uuid.UUID
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if _, err := s.trashRoot(ctx, tx, userID, nodeID); err != nil {
 			return err
 		}
-		return s.purge(ctx, tx, []uuid.UUID{nodeID})
+		var err error
+		tree, err = s.purge(ctx, tx, []uuid.UUID{nodeID})
+		return err
 	})
 	if err == nil {
+		s.revokeShares(ctx, tree)
 		s.deleteObjectsSoon(ctx)
 	}
 	return err
@@ -132,6 +166,7 @@ func (s *Service) DeleteForever(ctx context.Context, userID, nodeID uuid.UUID) e
 
 // EmptyTrash removes everything in the user's trash permanently.
 func (s *Service) EmptyTrash(ctx context.Context, userID uuid.UUID) error {
+	var tree []uuid.UUID
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT id FROM drive.nodes WHERE owner_id = $1 AND trashed_at IS NOT NULL`, userID)
 		if err != nil {
@@ -141,9 +176,11 @@ func (s *Service) EmptyTrash(ctx context.Context, userID uuid.UUID) error {
 		if err != nil || len(ids) == 0 {
 			return err
 		}
-		return s.purge(ctx, tx, ids)
+		tree, err = s.purge(ctx, tx, ids)
+		return err
 	})
 	if err == nil {
+		s.revokeShares(ctx, tree)
 		s.deleteObjectsSoon(ctx)
 	}
 	return err
@@ -151,7 +188,8 @@ func (s *Service) EmptyTrash(ctx context.Context, userID uuid.UUID) error {
 
 // purgeExpiredTrash empties trash older than the retention period.
 func (s *Service) purgeExpiredTrash(ctx context.Context) error {
-	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+	var tree []uuid.UUID
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT id FROM drive.nodes WHERE trashed_at < $1`, s.now().Add(-trashRetention))
 		if err != nil {
 			return err
@@ -161,8 +199,13 @@ func (s *Service) purgeExpiredTrash(ctx context.Context) error {
 			return err
 		}
 		s.log.Info("purging expired trash", "nodes", len(ids))
-		return s.purge(ctx, tx, ids)
+		tree, err = s.purge(ctx, tx, ids)
+		return err
 	})
+	if err == nil {
+		s.revokeShares(ctx, tree)
+	}
+	return err
 }
 
 // deleteObjectsSoon deletes scheduled objects in the background, so the

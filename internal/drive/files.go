@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/AlbertovanEckeveld/cloud/internal/core/authz"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/storage"
 )
 
@@ -67,7 +68,9 @@ func (s *Service) checkQuota(ctx context.Context, q dbtx, userID uuid.UUID, extr
 
 // Store saves an uploaded file: as a new file, or (with Replace) as a new
 // version of the existing file with that name. The content is streamed to
-// S3 while being hashed; nothing is kept in memory.
+// S3 while being hashed; nothing is kept in memory. In a shared folder the
+// file belongs to (and counts towards the quota of) the folder's owner; the
+// version records who uploaded it.
 func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node, error) {
 	name, err := normalizeName(up.Name)
 	if err != nil {
@@ -76,10 +79,11 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 	if up.Size < 0 || up.Size > s.maxFile {
 		return Node{}, ErrTooLarge
 	}
-	if err := s.folder(ctx, s.db, userID, up.ParentID); err != nil {
+	owner, perm, err := s.target(ctx, s.db, userID, up.ParentID)
+	if err != nil {
 		return Node{}, err
 	}
-	existing, err := s.childByName(ctx, s.db, userID, up.ParentID, name)
+	existing, err := s.childByName(ctx, s.db, owner, up.ParentID, name)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return Node{}, err
 	}
@@ -88,7 +92,7 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 	}
 	// Checked again inside the transaction; this early check avoids
 	// streaming gigabytes only to reject them.
-	if err := s.checkQuota(ctx, s.db, userID, up.Size); err != nil {
+	if err := s.checkQuota(ctx, s.db, owner, up.Size); err != nil {
 		return Node{}, err
 	}
 
@@ -114,17 +118,17 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 
 	var out Node
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if err := s.checkQuota(ctx, tx, userID, up.Size); err != nil {
+		if err := s.checkQuota(ctx, tx, owner, up.Size); err != nil {
 			return err
 		}
 		now := s.now().UTC()
-		node, err := s.childByName(ctx, tx, userID, up.ParentID, name)
+		node, err := s.childByName(ctx, tx, owner, up.ParentID, name)
 		switch {
 		case errors.Is(err, ErrNotFound):
-			node = Node{ID: newID(), ParentID: up.ParentID, Kind: "file", Name: name, CreatedAt: now, ownerID: userID}
+			node = Node{ID: newID(), ParentID: up.ParentID, Kind: "file", Name: name, CreatedAt: now, ownerID: owner}
 			_, err = tx.Exec(ctx, `
 				INSERT INTO drive.nodes (id, owner_id, parent_id, kind, name, created_at, updated_at)
-				VALUES ($1, $2, $3, 'file', $4, $5, $5)`, node.ID, userID, up.ParentID, name, now)
+				VALUES ($1, $2, $3, 'file', $4, $5, $5)`, node.ID, owner, up.ParentID, name, now)
 			if uniqueViolation(err) {
 				return ErrNameTaken
 			}
@@ -152,7 +156,11 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 		s.forget(ctx, key)
 		return Node{}, err
 	}
-	return out, nil
+	nodes := []Node{out}
+	if err := s.annotate(ctx, userID, perm, nodes); err != nil {
+		return Node{}, err
+	}
+	return nodes[0], nil
 }
 
 // forget schedules an object that never got (or no longer has) a database
@@ -165,12 +173,12 @@ func (s *Service) forget(ctx context.Context, key string) {
 	}
 }
 
-// childByName finds a live child of a folder by (case-insensitive) name.
-func (s *Service) childByName(ctx context.Context, q dbtx, userID uuid.UUID, parentID *uuid.UUID, name string) (Node, error) {
+// childByName finds a live child of an owner's folder by (case-insensitive) name.
+func (s *Service) childByName(ctx context.Context, q dbtx, ownerID uuid.UUID, parentID *uuid.UUID, name string) (Node, error) {
 	rows, err := q.Query(ctx, `
 		SELECT `+nodeColumns+` FROM drive.nodes
 		WHERE owner_id = $1 AND parent_id IS NOT DISTINCT FROM $2 AND lower(name) = lower($3) AND trashed_at IS NULL`,
-		userID, parentID, name)
+		ownerID, parentID, name)
 	if err != nil {
 		return Node{}, fmt.Errorf("find by name: %w", err)
 	}
@@ -183,20 +191,25 @@ func (s *Service) childByName(ctx context.Context, q dbtx, userID uuid.UUID, par
 
 // Open returns a file's current content for download.
 func (s *Service) Open(ctx context.Context, userID, nodeID uuid.UUID) (Node, storage.Object, error) {
-	n, err := s.authorize(ctx, s.db, userID, nodeID, false)
+	n, err := s.authorize(ctx, s.db, userID, nodeID, authz.View, false)
 	if err != nil {
 		return Node{}, nil, err
 	}
 	if n.Kind != "file" || n.currentVersionID == nil {
 		return Node{}, nil, ErrNotFound
 	}
+	obj, err := s.openVersion(ctx, *n.currentVersionID)
+	return n, obj, err
+}
+
+func (s *Service) openVersion(ctx context.Context, versionID uuid.UUID) (storage.Object, error) {
 	var key string
-	if err := s.db.QueryRow(ctx, `SELECT object_key FROM drive.versions WHERE id = $1`, *n.currentVersionID).Scan(&key); err != nil {
-		return Node{}, nil, fmt.Errorf("load version: %w", err)
+	if err := s.db.QueryRow(ctx, `SELECT object_key FROM drive.versions WHERE id = $1`, versionID).Scan(&key); err != nil {
+		return nil, fmt.Errorf("load version: %w", err)
 	}
 	obj, _, err := s.objects.Open(ctx, key)
 	if err != nil {
-		return Node{}, nil, err
+		return nil, err
 	}
-	return n, obj, nil
+	return obj, nil
 }

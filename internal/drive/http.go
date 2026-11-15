@@ -2,6 +2,7 @@ package drive
 
 import (
 	"errors"
+	"io"
 	"mime"
 	"net/http"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/AlbertovanEckeveld/cloud/internal/core/authz"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/httpserver"
 )
 
@@ -34,6 +36,14 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 		r.Post("/folders", s.handleCreateFolder)
 		r.Put("/files", s.handleUpload)
 		r.Get("/files/{id}/content", s.handleDownload)
+		r.Get("/files/{id}/versions", s.handleVersions)
+		r.Get("/files/{id}/versions/{version}/content", s.handleDownloadVersion)
+		r.Post("/files/{id}/versions/{version}/restore", s.handleRestoreVersion)
+		r.Delete("/files/{id}/versions/{version}", s.handleDeleteVersion)
+		r.Get("/nodes/{id}/shares", s.handleShares)
+		r.Put("/nodes/{id}/shares", s.handleShare)
+		r.Delete("/nodes/{id}/shares/{type}/{subject}", s.handleUnshare)
+		r.Get("/shared", s.handleSharedWithMe)
 		r.Patch("/nodes/{id}", s.handleUpdate)
 		r.Delete("/nodes/{id}", s.handleTrash)
 		r.Get("/trash", s.handleListTrash)
@@ -46,8 +56,10 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 	})
 }
 
-func pathID(r *http.Request) (uuid.UUID, error) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+func pathID(r *http.Request) (uuid.UUID, error) { return pathUUID(r, "id") }
+
+func pathUUID(r *http.Request, param string) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, param))
 	if err != nil {
 		return uuid.Nil, ErrNotFound
 	}
@@ -74,6 +86,8 @@ func (s *Service) writeError(w http.ResponseWriter, r *http.Request, err error) 
 	switch {
 	case errors.Is(err, ErrNotFound):
 		httpserver.WriteError(w, http.StatusNotFound, "not_found", "Niet gevonden.")
+	case errors.Is(err, ErrForbidden):
+		httpserver.WriteError(w, http.StatusForbidden, "forbidden", "Je hebt hier niet genoeg rechten voor.")
 	case errors.Is(err, ErrNameTaken):
 		httpserver.WriteError(w, http.StatusConflict, "name_taken", "Er bestaat al een bestand of map met deze naam.")
 	case errors.Is(err, ErrNotFolder):
@@ -160,9 +174,7 @@ func (s *Service) handleUpload(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusCreated, n)
 }
 
-// handleDownload serves a file as an attachment. Files are never rendered by
-// the browser: an uploaded HTML or SVG page must not run script on this
-// origin (stored XSS), so the type is generic and the CSP sandboxes it too.
+// handleDownload serves a file's current content.
 func (s *Service) handleDownload(w http.ResponseWriter, r *http.Request) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(transferDeadline))
 	id, err := pathID(r)
@@ -176,20 +188,47 @@ func (s *Service) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer obj.Close()
+	serveFile(w, r, n.Name, *n.currentVersionID, n.UpdatedAt, obj)
+}
+
+func (s *Service) handleDownloadVersion(w http.ResponseWriter, r *http.Request) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(transferDeadline))
+	id, err := pathID(r)
+	var version uuid.UUID
+	if err == nil {
+		version, err = pathUUID(r, "version")
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	n, v, obj, err := s.OpenVersion(r.Context(), s.userID(r), id, version)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	defer obj.Close()
+	serveFile(w, r, n.Name, v.ID, v.CreatedAt, obj)
+}
+
+// serveFile sends content as an attachment. Files are never rendered by the
+// browser: an uploaded HTML or SVG page must not run script on this origin
+// (stored XSS), so the type is generic and the CSP sandboxes it too.
+func serveFile(w http.ResponseWriter, r *http.Request, name string, version uuid.UUID, modified time.Time, content io.ReadSeeker) {
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")
 	// FormatMediaType quotes or RFC 2231-encodes the name, so quotes, line
 	// breaks or non-ASCII characters cannot break out of the header.
-	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": n.Name})
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name})
 	if disposition == "" {
 		disposition = "attachment" // never let a failed encoding drop the header
 	}
 	h.Set("Content-Disposition", disposition)
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	h.Set("Cache-Control", "private, no-cache")
-	h.Set("ETag", `"`+n.currentVersionID.String()+`"`)
+	h.Set("ETag", `"`+version.String()+`"`)
 	// ServeContent handles Range and conditional requests (resumable downloads).
-	http.ServeContent(w, r, "", n.UpdatedAt, obj)
+	http.ServeContent(w, r, "", modified, content)
 }
 
 func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -312,4 +351,120 @@ func (s *Service) handleAdminQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.handleAdminUsage(w, r)
+}
+
+func (s *Service) handleVersions(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	var versions []Version
+	if err == nil {
+		versions, err = s.Versions(r.Context(), s.userID(r), id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Versions []Version `json:"versions"`
+	}{versions})
+}
+
+func (s *Service) handleRestoreVersion(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	var version uuid.UUID
+	if err == nil {
+		version, err = pathUUID(r, "version")
+	}
+	var n Node
+	if err == nil {
+		n, err = s.RestoreVersion(r.Context(), s.userID(r), id, version)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, n)
+}
+
+func (s *Service) handleDeleteVersion(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	var version uuid.UUID
+	if err == nil {
+		version, err = pathUUID(r, "version")
+	}
+	if err == nil {
+		err = s.DeleteVersion(r.Context(), s.userID(r), id, version)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleShares(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	var grants []authz.Grant
+	if err == nil {
+		grants, err = s.Shares(r.Context(), s.userID(r), id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Shares []authz.Grant `json:"shares"`
+	}{grants})
+}
+
+// handleShare creates or changes a share: {"subject": {"type", "id"}, "permission"}.
+func (s *Service) handleShare(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Subject    authz.Subject    `json:"subject"`
+		Permission authz.Permission `json:"permission"`
+	}
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	id, err := pathID(r)
+	if err == nil && in.Subject.Type != authz.User && in.Subject.Type != authz.Group {
+		err = &InputError{"Kies een gebruiker of groep."}
+	}
+	if err == nil {
+		err = s.Share(r.Context(), s.userID(r), id, in.Subject, in.Permission)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.handleShares(w, r)
+}
+
+func (s *Service) handleUnshare(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	from := authz.Subject{Type: authz.SubjectType(chi.URLParam(r, "type"))}
+	if err == nil {
+		from.ID, err = pathUUID(r, "subject")
+	}
+	if err == nil && from.Type != authz.User && from.Type != authz.Group {
+		err = ErrNotFound
+	}
+	if err == nil {
+		err = s.Unshare(r.Context(), s.userID(r), id, from)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleSharedWithMe(w http.ResponseWriter, r *http.Request) {
+	nodes, err := s.SharedWithMe(r.Context(), s.userID(r))
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Nodes []SharedNode `json:"nodes"`
+	}{nodes})
 }

@@ -69,7 +69,9 @@ const eventLabels: Record<string, string> = {
 	'oidc.client.secret_rotated': 'Client-secret van app vernieuwd',
 	'oidc.app_revoked': 'Toegang van app ingetrokken',
 	'auth.logout_everywhere': 'Overal uitgelogd, ook bij apps',
-	'user.profile_updated': 'Profiel gewijzigd'
+	'user.profile_updated': 'Profiel gewijzigd',
+	'share.granted': 'Gedeeld',
+	'share.revoked': 'Delen gestopt'
 };
 
 /** Returns the Dutch description of an audit event. */
@@ -155,4 +157,18 @@ export function uniqueName(name: string, taken: Set<string>): string {
 		const candidate = `${base} (${i})${ext}`;
 		if (!lower.has(candidate.toLowerCase())) return candidate;
 	}
+}
+
+const permissionLabels = { view: 'Kan bekijken', edit: 'Kan bewerken', manage: 'Kan beheren' } as const;
+
+/** Returns the Dutch description of a sharing level. */
+export function permissionLabel(p: keyof typeof permissionLabels): string {
+	return permissionLabels[p];
+}
+
+const rank = { view: 1, edit: 2, manage: 3 } as const;
+
+/** Whether permission p includes need (view < edit < manage). */
+export function allows(p: keyof typeof rank, need: keyof typeof rank): boolean {
+	return rank[p] >= rank[need];
 }

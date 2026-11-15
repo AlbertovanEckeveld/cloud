@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkLabel, describeUserAgent, eventLabel, formatBytes, groupSecret, safeNext, timeAgo, uniqueName } from './format.ts';
+import { allows, checkLabel, describeUserAgent, eventLabel, formatBytes, groupSecret, permissionLabel, safeNext, timeAgo, uniqueName } from './format.ts';
 
 const now = new Date('2026-11-15T12:00:00Z');
 
@@ -85,5 +85,14 @@ describe('uniqueName', () => {
 		expect(uniqueName('foto.JPG', taken)).toBe('foto (3).JPG');
 		expect(uniqueName('Map', taken)).toBe('Map (2)');
 		expect(uniqueName('.bashrc', new Set(['.bashrc']))).toBe('.bashrc (2)');
+	});
+});
+
+describe('permissions', () => {
+	it('orders view < edit < manage', () => {
+		expect(allows('manage', 'edit')).toBe(true);
+		expect(allows('edit', 'edit')).toBe(true);
+		expect(allows('view', 'edit')).toBe(false);
+		expect(permissionLabel('edit')).toBe('Kan bewerken');
 	});
 });

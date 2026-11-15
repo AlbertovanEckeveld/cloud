@@ -156,6 +156,7 @@ func (s *Service) Routes(r chi.Router) {
 		r.Put("/avatar", s.handleSetAvatar)
 		r.Delete("/avatar", s.handleDeleteAvatar)
 	})
+	r.With(s.RequireUser).Get("/directory", s.handleDirectory)
 	r.Route("/admin", s.adminRoutes)
 	r.Route("/oidc", s.oidcRoutes)
 }

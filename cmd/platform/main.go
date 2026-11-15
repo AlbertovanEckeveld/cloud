@@ -176,7 +176,7 @@ func serve(ctx context.Context) error {
 	if err := registry.Heartbeat(startupCtx); err != nil {
 		return err
 	}
-	files := drive.New(a.pool, store, drive.Options{Logger: logger})
+	files := drive.New(a.pool, store, drive.Options{Logger: logger, Sharing: a.identity})
 	go registry.Run(ctx)
 	go a.identity.Run(ctx)
 	go files.Run(ctx)

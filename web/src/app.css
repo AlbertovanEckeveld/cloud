@@ -344,3 +344,36 @@ select {
 	overflow: hidden;
 	clip-path: inset(50%);
 }
+
+dialog {
+	width: min(520px, 92vw);
+	background: var(--surface);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 1.25rem;
+}
+
+dialog::backdrop {
+	background: rgb(0 0 0 / 0.5);
+}
+
+/* A text button inside running text or a table row. */
+.link-button {
+	font: inherit;
+	background: none;
+	border: 0;
+	padding: 0;
+	color: var(--accent);
+	cursor: pointer;
+}
+
+.link-button:hover {
+	text-decoration: underline;
+}
+
+.dialog-actions {
+	display: flex;
+	gap: 0.5rem;
+	margin-top: 1rem;
+}

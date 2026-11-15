@@ -187,6 +187,10 @@ func (s *Service) DeleteGroup(ctx context.Context, c Client, actor Session, id u
 		if err != nil {
 			return fmt.Errorf("delete group: %w", err)
 		}
+		// Shares with the group end with it.
+		if _, err := tx.Exec(ctx, `DELETE FROM identity.grants WHERE subject_type = 'group' AND subject_id = $1`, id); err != nil {
+			return fmt.Errorf("delete group shares: %w", err)
+		}
 		return s.audit(ctx, tx, c, auditEntry{event: EventGroupDeleted, actor: &actor.UserID, details: map[string]any{"group": name}})
 	})
 }

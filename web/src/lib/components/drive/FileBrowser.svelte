@@ -1,12 +1,15 @@
 <script lang="ts">
 	// A folder's contents with everything you can do with them: create
-	// folders, upload (button or drag and drop), download, rename, move and
-	// move to the trash.
+	// folders, upload (button or drag and drop), download, rename, move, move
+	// to the trash, share and see versions. Actions depend on the user's
+	// permission; the server checks it again for every request.
 	import { onMount } from 'svelte';
 	import { api, ApiError, errorMessage, type DriveNode, type FolderView, type Usage } from '#lib/api.ts';
-	import { dateTime, formatBytes, timeAgo, uniqueName } from '#lib/format.ts';
+	import { allows, dateTime, formatBytes, permissionLabel, timeAgo, uniqueName } from '#lib/format.ts';
 	import ErrorNotice from '../ErrorNotice.svelte';
 	import MoveDialog from './MoveDialog.svelte';
+	import ShareDialog from './ShareDialog.svelte';
+	import VersionsDialog from './VersionsDialog.svelte';
 
 	let { folderId }: { folderId: string | null } = $props();
 
@@ -19,6 +22,8 @@
 	let newFolder = $state<string | null>(null);
 	let renaming = $state<{ id: string; name: string } | null>(null);
 	let moving = $state<DriveNode | null>(null);
+	let sharing = $state<DriveNode | null>(null);
+	let history = $state<DriveNode | null>(null);
 	let dragging = $state(false);
 	let uploadKey = 0;
 
@@ -116,25 +121,33 @@
 	function drop(e: DragEvent) {
 		e.preventDefault();
 		dragging = false;
-		if (e.dataTransfer?.files.length) uploadAll(e.dataTransfer.files);
+		if (canEdit && e.dataTransfer?.files.length) uploadAll(e.dataTransfer.files);
 	}
+
+	// The top level is the user's own; elsewhere the folder says what they may do.
+	const canEdit = $derived(!view?.folder || allows(view.folder.permission, 'edit'));
+	const shareRoot = $derived(view?.shared ? (view.path[0] ?? null) : null);
 
 	const percent = (u: Usage) => (u.limit_bytes ? Math.min(100, (u.used_bytes / u.limit_bytes) * 100) : 0);
 </script>
 
 <div class="toolbar">
 	<nav class="crumbs" aria-label="Map">
-		<a href="/files">Bestanden</a>
+		<a href={view?.shared ? '/files/shared' : '/files'}>{view?.shared ? 'Gedeeld met mij' : 'Bestanden'}</a>
 		{#each view?.path ?? [] as c (c.id)}
 			<span class="muted">/</span> <a href="/files/{c.id}">{c.name}</a>
 		{/each}
+		{#if view?.folder && view.shared}<span class="badge">{permissionLabel(view.folder.permission)}</span>{/if}
 	</nav>
 	<div class="actions">
-		<button class="button" onclick={() => (newFolder = '')}>Nieuwe map</button>
-		<label class="button button--primary">
-			Uploaden
-			<input type="file" multiple hidden onchange={pick} />
-		</label>
+		{#if canEdit}
+			<button class="button" onclick={() => (newFolder = '')}>Nieuwe map</button>
+			<label class="button button--primary">
+				Uploaden
+				<input type="file" multiple hidden onchange={pick} />
+			</label>
+		{/if}
+		<a class="button" href="/files/shared">Gedeeld met mij</a>
 		<a class="button" href="/files/trash">Prullenbak</a>
 	</div>
 </div>
@@ -156,7 +169,7 @@
 <section
 	class="panel drop"
 	class:drop--active={dragging}
-	ondragover={(e) => (e.preventDefault(), (dragging = true))}
+	ondragover={(e) => canEdit && (e.preventDefault(), (dragging = true))}
 	ondragleave={() => (dragging = false)}
 	ondrop={drop}
 	aria-label="Bestanden in deze map"
@@ -171,7 +184,7 @@
 	{/if}
 
 	{#if view && view.children.length === 0}
-		<p class="empty muted">Deze map is leeg. Sleep bestanden hierheen of gebruik Uploaden.</p>
+		<p class="empty muted">Deze map is leeg.{canEdit ? ' Sleep bestanden hierheen of gebruik Uploaden.' : ''}</p>
 	{:else if view}
 		<table class="table">
 			<thead><tr><th>Naam</th><th class="num">Grootte</th><th>Gewijzigd</th><th><span class="visually-hidden">Acties</span></th></tr></thead>
@@ -191,13 +204,22 @@
 							{:else}
 								<a href={api.drive.downloadURL(n.id)} download>📄 {n.name}</a>
 							{/if}
+							{#if n.shared}<span class="badge" title="Gedeeld met anderen">👥 Gedeeld</span>{/if}
 						</td>
 						<td class="num muted">{n.kind === 'file' ? formatBytes(n.size) : ''}</td>
 						<td class="muted"><time datetime={n.updated_at} title={dateTime(n.updated_at)}>{timeAgo(n.updated_at)}</time></td>
 						<td class="row-actions">
-							<button class="link" onclick={() => (renaming = { id: n.id, name: n.name })}>Hernoemen</button>
-							<button class="link" onclick={() => (moving = n)}>Verplaatsen</button>
-							<button class="link" onclick={() => trash(n)}>Verwijderen</button>
+							{#if allows(n.permission, 'manage')}
+								<button class="link" onclick={() => (sharing = n)}>Delen</button>
+							{/if}
+							{#if n.kind === 'file'}
+								<button class="link" onclick={() => (history = n)}>Versies</button>
+							{/if}
+							{#if allows(n.permission, 'edit')}
+								<button class="link" onclick={() => (renaming = { id: n.id, name: n.name })}>Hernoemen</button>
+								<button class="link" onclick={() => (moving = n)}>Verplaatsen</button>
+								<button class="link" onclick={() => trash(n)}>Verwijderen</button>
+							{/if}
 						</td>
 					</tr>
 				{/each}
@@ -206,7 +228,7 @@
 	{/if}
 </section>
 
-{#if usage}
+{#if usage && !view?.shared}
 	<p class="usage muted small">
 		{#if usage.limit_bytes !== null}
 			<progress max="100" value={percent(usage)}></progress>
@@ -218,7 +240,18 @@
 {/if}
 
 {#if moving}
-	<MoveDialog node={moving} onMove={(target) => moving && move(moving, target)} onClose={() => (moving = null)} />
+	<MoveDialog
+		node={moving}
+		root={shareRoot}
+		onMove={(target) => moving && move(moving, target)}
+		onClose={() => (moving = null)}
+	/>
+{/if}
+{#if sharing}
+	<ShareDialog node={sharing} onClose={() => ((sharing = null), load())} />
+{/if}
+{#if history}
+	<VersionsDialog node={history} onChanged={load} onClose={() => (history = null)} />
 {/if}
 
 <style>
@@ -262,6 +295,7 @@
 	.name a {
 		color: var(--text-strong);
 		overflow-wrap: anywhere;
+		margin-right: 0.5rem;
 	}
 	.num {
 		text-align: right;

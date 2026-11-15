@@ -145,12 +145,53 @@ export interface DriveNode {
 	created_at: string;
 	updated_at: string;
 	trashed_at: string | null;
+	/** What the signed-in user may do with it. */
+	permission: Permission;
+	/** Shared with others (only reported to users who may manage it). */
+	shared: boolean;
 }
+
+/** Sharing levels; each includes the ones before it. */
+export type Permission = 'view' | 'edit' | 'manage';
 
 export interface FolderView {
 	folder: DriveNode | null;
 	path: { id: string; name: string }[];
 	children: DriveNode[];
+	/** The folder belongs to someone else and is shared with the user. */
+	shared: boolean;
+}
+
+export interface SharedNode extends DriveNode {
+	owner_name: string;
+}
+
+export interface Subject {
+	type: 'user' | 'group';
+	id: string;
+}
+
+export interface Share {
+	subject: Subject;
+	name: string;
+	permission: Permission;
+	granted_at: string;
+}
+
+export interface DirectoryEntry extends Subject {
+	name: string;
+	/** Username, or the group's description. */
+	detail: string;
+	picture: string;
+}
+
+export interface FileVersion {
+	id: string;
+	size: number;
+	content_type: string;
+	created_at: string;
+	created_by_name: string;
+	current: boolean;
 }
 
 export interface Usage {
@@ -469,6 +510,18 @@ const parseProfile: Validator<Profile> = (v) => {
 	};
 };
 
+function permission(o: Record<string, unknown>, key: string): Permission {
+	const p = str(o, key);
+	if (p !== 'view' && p !== 'edit' && p !== 'manage') fail(key);
+	return p;
+}
+
+function subjectType(o: Record<string, unknown>): Subject['type'] {
+	const t = str(o, 'type');
+	if (t !== 'user' && t !== 'group') fail('type');
+	return t;
+}
+
 const parseNode: Validator<DriveNode> = (v) => {
 	const r = record(v, 'node');
 	const kind = str(r, 'kind');
@@ -482,7 +535,46 @@ const parseNode: Validator<DriveNode> = (v) => {
 		content_type: str(r, 'content_type'),
 		created_at: str(r, 'created_at'),
 		updated_at: str(r, 'updated_at'),
-		trashed_at: r.trashed_at === undefined || r.trashed_at === null ? null : str(r, 'trashed_at')
+		trashed_at: r.trashed_at === undefined || r.trashed_at === null ? null : str(r, 'trashed_at'),
+		permission: permission(r, 'permission'),
+		shared: r.shared === true
+	};
+};
+
+const parseSharedNode: Validator<SharedNode> = (v) => ({
+	...parseNode(v),
+	owner_name: str(record(v, 'node'), 'owner_name')
+});
+
+const parseShare: Validator<Share> = (v) => {
+	const r = record(v, 'share');
+	const sub = record(r.subject, 'subject');
+	return {
+		subject: { type: subjectType(sub), id: str(sub, 'id') },
+		name: str(r, 'name'),
+		permission: permission(r, 'permission'),
+		granted_at: str(r, 'granted_at')
+	};
+};
+
+const parseShares: Validator<Share[]> = (v) => list(record(v, 'shares'), 'shares', parseShare);
+
+const parseDirectoryEntry: Validator<DirectoryEntry> = (v) => {
+	const r = record(v, 'entry');
+	const picture = str(r, 'picture');
+	if (picture && !/^https?:\/\/[^\s/]+\/avatars\/[0-9a-f]{32}\.jpg$/.test(picture)) fail('picture');
+	return { type: subjectType(r), id: str(r, 'id'), name: str(r, 'name'), detail: str(r, 'detail'), picture };
+};
+
+const parseVersion: Validator<FileVersion> = (v) => {
+	const r = record(v, 'version');
+	return {
+		id: str(r, 'id'),
+		size: num(r, 'size'),
+		content_type: str(r, 'content_type'),
+		created_at: str(r, 'created_at'),
+		created_by_name: str(r, 'created_by_name'),
+		current: bool(r, 'current')
 	};
 };
 
@@ -494,7 +586,8 @@ const parseFolderView: Validator<FolderView> = (v) => {
 			const p = record(c, 'crumb');
 			return { id: str(p, 'id'), name: str(p, 'name') };
 		}),
-		children: list(r, 'children', parseNode)
+		children: list(r, 'children', parseNode),
+		shared: bool(r, 'shared')
 	};
 };
 
@@ -675,6 +768,21 @@ export const api = {
 		emptyTrash: (f: typeof fetch = fetch) => request('DELETE', '/api/v1/drive/trash', noContent, undefined, f),
 		usage: (f: typeof fetch = fetch) => get('/api/v1/drive/usage', parseUsage, f),
 		downloadURL: (id: string) => `/api/v1/drive/files/${enc(id)}/content`,
+		sharedWithMe: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/shared', (v) => list(record(v, 'shared'), 'nodes', parseSharedNode), f),
+		shares: (id: string, f: typeof fetch = fetch) => get(`/api/v1/drive/nodes/${enc(id)}/shares`, parseShares, f),
+		share: (id: string, subject: Subject, permission: Permission, f: typeof fetch = fetch) =>
+			request('PUT', `/api/v1/drive/nodes/${enc(id)}/shares`, parseShares, { subject, permission }, f),
+		unshare: (id: string, subject: Subject, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/nodes/${enc(id)}/shares/${subject.type}/${enc(subject.id)}`, noContent, undefined, f),
+		versions: (id: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/files/${enc(id)}/versions`, (v) => list(record(v, 'versions'), 'versions', parseVersion), f),
+		versionURL: (id: string, versionId: string) =>
+			`/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}/content`,
+		restoreVersion: (id: string, versionId: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}/restore`, parseNode, undefined, f),
+		deleteVersion: (id: string, versionId: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}`, noContent, undefined, f),
 		userUsage: (userId: string, f: typeof fetch = fetch) =>
 			get(`/api/v1/drive/admin/users/${enc(userId)}/usage`, parseUsage, f),
 		setQuota: (userId: string, limitBytes: number | null, f: typeof fetch = fetch) =>
@@ -719,6 +827,9 @@ export const api = {
 				xhr.send(file);
 			})
 	},
+	/** Users and groups to share with. */
+	directory: (query: string, f: typeof fetch = fetch) =>
+		get(`/api/v1/directory?q=${enc(query)}`, (v) => list(record(v, 'directory'), 'entries', parseDirectoryEntry), f),
 	ownGroups: (f: typeof fetch = fetch) =>
 		get('/api/v1/account/groups', (v) => list(record(v, 'groups'), 'groups', parseGroupRef), f),
 
