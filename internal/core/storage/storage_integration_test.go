@@ -117,3 +117,33 @@ func TestPutGetDelete(t *testing.T) {
 		t.Errorf("deleting a missing key: %v", err)
 	}
 }
+
+func TestPutStreamAndOpen(t *testing.T) {
+	c := testClient(t, nil)
+	key := fmt.Sprintf("_integration-test/stream-%d", time.Now().UnixNano())
+	data := bytes.Repeat([]byte("0123456789"), 1000)
+	if err := c.PutStream(ctx(t), key, bytes.NewReader(data), int64(len(data)), "application/octet-stream"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := c.Delete(context.Background(), key); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	})
+	obj, size, err := c.Open(ctx(t), key)
+	if err != nil || size != int64(len(data)) {
+		t.Fatalf("Open = %d, %v", size, err)
+	}
+	defer obj.Close()
+	// Seeking is what makes HTTP range requests possible.
+	if _, err := obj.Seek(9990, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	tail, _ := io.ReadAll(obj)
+	if string(tail) != "0123456789" {
+		t.Errorf("tail after seek = %q", tail)
+	}
+	if _, _, err := c.Open(ctx(t), key+"-missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing object: err = %v", err)
+	}
+}

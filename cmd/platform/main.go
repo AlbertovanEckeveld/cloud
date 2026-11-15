@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AlbertovanEckeveld/cloud/internal/core/config"
@@ -34,6 +36,7 @@ import (
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/site"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/storage"
+	"github.com/AlbertovanEckeveld/cloud/internal/drive"
 	"github.com/AlbertovanEckeveld/cloud/internal/identity"
 	"github.com/AlbertovanEckeveld/cloud/migrations"
 	"github.com/AlbertovanEckeveld/cloud/web"
@@ -43,7 +46,7 @@ import (
 var version = "dev"
 
 // modules lists every module with migrations, in dependency order.
-var modules = []string{"core", "identity"}
+var modules = []string{"core", "identity", "drive"}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -173,8 +176,10 @@ func serve(ctx context.Context) error {
 	if err := registry.Heartbeat(startupCtx); err != nil {
 		return err
 	}
+	files := drive.New(a.pool, store, drive.Options{Logger: logger})
 	go registry.Run(ctx)
 	go a.identity.Run(ctx)
+	go files.Run(ctx)
 	if a.mailer.Enabled() {
 		// A wrong password or unreachable server should show up in the log
 		// right away, but must neither stop nor delay startup: mail is queued
@@ -213,16 +218,26 @@ func serve(ctx context.Context) error {
 	}
 
 	router := newRouter(routerDeps{
-		logger:       logger,
-		hsts:         cfg.Env == config.EnvProduction,
-		siteID:       cfg.SiteID,
-		version:      version,
-		startedAt:    time.Now().UTC(),
-		health:       checker,
-		sites:        registry,
-		frontend:     spa,
-		oidc:         oidcProvider,
-		avatars:      a.identity.AvatarHandler,
+		logger:    logger,
+		hsts:      cfg.Env == config.EnvProduction,
+		siteID:    cfg.SiteID,
+		version:   version,
+		startedAt: time.Now().UTC(),
+		health:    checker,
+		sites:     registry,
+		frontend:  spa,
+		oidc:      oidcProvider,
+		avatars:   a.identity.AvatarHandler,
+		drive: func(r chi.Router) {
+			files.Routes(r, drive.Auth{
+				RequireUser:  a.identity.RequireUser,
+				RequireAdmin: identity.RequireAdmin,
+				UserID: func(r *http.Request) uuid.UUID {
+					p, _ := identity.PrincipalFrom(r.Context())
+					return p.User.ID
+				},
+			})
+		},
 		identity:     a.identity.Routes,
 		requireUser:  a.identity.RequireUser,
 		requireAdmin: identity.RequireAdmin,

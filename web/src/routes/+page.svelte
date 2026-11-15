@@ -10,9 +10,13 @@
 
 {#if data.user}
 	<h1>Welkom, {data.user.display_name}</h1>
-	<p class="muted">Bestanden, agenda, foto's en meer volgen in de komende fases.</p>
+	<p class="muted">Agenda, foto's en meer volgen in de komende fases.</p>
 
 	<div class="cards">
+		<a class="panel card" href="/files">
+			<h2>Bestanden</h2>
+			<p class="muted">Je bestanden en mappen: uploaden, ordenen en downloaden.</p>
+		</a>
 		<a class="panel card" href="/account">
 			<h2>Account</h2>
 			<p class="muted">Wachtwoord wijzigen en je recente activiteit bekijken.</p>

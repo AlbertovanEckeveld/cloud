@@ -130,3 +130,29 @@ export function describeUserAgent(ua: string): string {
 		].find(([re]) => (re as RegExp).test(ua))?.[1];
 	return os ? `${browser} op ${os}` : String(browser);
 }
+
+const byteUnits = ['B', 'KB', 'MB', 'GB', 'TB'];
+
+/** Formats a byte count for people: 1536 → "1,5 KB" (powers of 1024). */
+export function formatBytes(bytes: number): string {
+	let value = bytes;
+	let unit = 0;
+	while (value >= 1024 && unit < byteUnits.length - 1) {
+		value /= 1024;
+		unit++;
+	}
+	const digits = unit === 0 || value >= 10 ? 0 : 1;
+	return `${value.toLocaleString('nl-NL', { maximumFractionDigits: digits })} ${byteUnits[unit]}`;
+}
+
+/** A name that does not clash with existing ones: "foto.jpg" → "foto (2).jpg". */
+export function uniqueName(name: string, taken: Set<string>): string {
+	const lower = new Set([...taken].map((n) => n.toLowerCase()));
+	if (!lower.has(name.toLowerCase())) return name;
+	const dot = name.lastIndexOf('.');
+	const [base, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+	for (let i = 2; ; i++) {
+		const candidate = `${base} (${i})${ext}`;
+		if (!lower.has(candidate.toLowerCase())) return candidate;
+	}
+}

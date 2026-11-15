@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkLabel, describeUserAgent, eventLabel, groupSecret, safeNext, timeAgo } from './format.ts';
+import { checkLabel, describeUserAgent, eventLabel, formatBytes, groupSecret, safeNext, timeAgo, uniqueName } from './format.ts';
 
 const now = new Date('2026-11-15T12:00:00Z');
 
@@ -63,5 +63,27 @@ describe('describeUserAgent', () => {
 		['curl/8.0', 'Onbekende browser']
 	])('%s', (ua, want) => {
 		expect(describeUserAgent(ua)).toBe(want);
+	});
+});
+
+describe('formatBytes', () => {
+	it.each([
+		[0, '0 B'],
+		[1023, '1.023 B'],
+		[1536, '1,5 KB'],
+		[10 * 1024 * 1024, '10 MB'],
+		[10 * 1024 ** 3, '10 GB']
+	])('%d → %s', (n, want) => {
+		expect(formatBytes(n)).toBe(want);
+	});
+});
+
+describe('uniqueName', () => {
+	it('adds a number before the extension, ignoring case', () => {
+		const taken = new Set(['Foto.jpg', 'foto (2).jpg', 'map']);
+		expect(uniqueName('nieuw.txt', taken)).toBe('nieuw.txt');
+		expect(uniqueName('foto.JPG', taken)).toBe('foto (3).JPG');
+		expect(uniqueName('Map', taken)).toBe('Map (2)');
+		expect(uniqueName('.bashrc', new Set(['.bashrc']))).toBe('.bashrc (2)');
 	});
 });

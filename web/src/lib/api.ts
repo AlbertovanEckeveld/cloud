@@ -135,6 +135,29 @@ export interface Profile {
 	picture: string;
 }
 
+export interface DriveNode {
+	id: string;
+	parent_id: string | null;
+	kind: 'folder' | 'file';
+	name: string;
+	size: number;
+	content_type: string;
+	created_at: string;
+	updated_at: string;
+	trashed_at: string | null;
+}
+
+export interface FolderView {
+	folder: DriveNode | null;
+	path: { id: string; name: string }[];
+	children: DriveNode[];
+}
+
+export interface Usage {
+	used_bytes: number;
+	limit_bytes: number | null;
+}
+
 export interface OidcRequest {
 	app_name: string;
 	/** The app asked for no sign-in page at all (prompt=none). */
@@ -446,6 +469,40 @@ const parseProfile: Validator<Profile> = (v) => {
 	};
 };
 
+const parseNode: Validator<DriveNode> = (v) => {
+	const r = record(v, 'node');
+	const kind = str(r, 'kind');
+	if (kind !== 'folder' && kind !== 'file') fail('kind');
+	return {
+		id: str(r, 'id'),
+		parent_id: r.parent_id === null || r.parent_id === undefined ? null : str(r, 'parent_id'),
+		kind,
+		name: str(r, 'name'),
+		size: num(r, 'size'),
+		content_type: str(r, 'content_type'),
+		created_at: str(r, 'created_at'),
+		updated_at: str(r, 'updated_at'),
+		trashed_at: r.trashed_at === undefined || r.trashed_at === null ? null : str(r, 'trashed_at')
+	};
+};
+
+const parseFolderView: Validator<FolderView> = (v) => {
+	const r = record(v, 'folder');
+	return {
+		folder: r.folder === null ? null : parseNode(r.folder),
+		path: list(r, 'path', (c) => {
+			const p = record(c, 'crumb');
+			return { id: str(p, 'id'), name: str(p, 'name') };
+		}),
+		children: list(r, 'children', parseNode)
+	};
+};
+
+const parseUsage: Validator<Usage> = (v) => {
+	const r = record(v, 'usage');
+	return { used_bytes: num(r, 'used_bytes'), limit_bytes: r.limit_bytes === null ? null : num(r, 'limit_bytes') };
+};
+
 const parseRemaining: Validator<number> = (v) => num(record(v, 'recovery'), 'remaining');
 const parseRevoked: Validator<number> = (v) => num(record(v, 'revoked'), 'revoked');
 
@@ -600,6 +657,68 @@ export const api = {
 			if (!/^https?:\/\//.test(redirect)) fail('redirect');
 			return { app_name: str(r, 'app_name'), redirect } as LogoutRequest;
 		}, f),
+	drive: {
+		folder: (id: string | null, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/folders/${id ? enc(id) : 'root'}`, parseFolderView, f),
+		createFolder: (parentId: string | null, name: string, f: typeof fetch = fetch) =>
+			post('/api/v1/drive/folders', parseNode, { parent_id: parentId ?? 'root', name }, f),
+		update: (id: string, change: { name?: string; parent_id?: string }, f: typeof fetch = fetch) =>
+			request('PATCH', `/api/v1/drive/nodes/${enc(id)}`, parseNode, change, f),
+		trash: (id: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/nodes/${enc(id)}`, noContent, undefined, f),
+		listTrash: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/trash', (v) => list(record(v, 'trash'), 'nodes', parseNode), f),
+		restore: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/trash/${enc(id)}/restore`, parseNode, undefined, f),
+		deleteForever: (id: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/trash/${enc(id)}`, noContent, undefined, f),
+		emptyTrash: (f: typeof fetch = fetch) => request('DELETE', '/api/v1/drive/trash', noContent, undefined, f),
+		usage: (f: typeof fetch = fetch) => get('/api/v1/drive/usage', parseUsage, f),
+		downloadURL: (id: string) => `/api/v1/drive/files/${enc(id)}/content`,
+		userUsage: (userId: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/admin/users/${enc(userId)}/usage`, parseUsage, f),
+		setQuota: (userId: string, limitBytes: number | null, f: typeof fetch = fetch) =>
+			request('PUT', `/api/v1/drive/admin/users/${enc(userId)}/quota`, parseUsage, { limit_bytes: limitBytes }, f),
+
+		/**
+		 * Uploads a file with progress reporting. fetch() cannot report upload
+		 * progress, so this uses XMLHttpRequest.
+		 */
+		upload: (
+			parentId: string | null,
+			file: File,
+			replace: boolean,
+			onProgress: (fraction: number) => void
+		): Promise<DriveNode> =>
+			new Promise((resolve, reject) => {
+				const q = new URLSearchParams({ parent: parentId ?? 'root', name: file.name, replace: String(replace) });
+				const xhr = new XMLHttpRequest();
+				xhr.open('PUT', `/api/v1/drive/files?${q}`);
+				xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+				xhr.setRequestHeader('Accept', 'application/json');
+				xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+				xhr.onerror = () => reject(new ApiError(0, 'network', 'De server is niet bereikbaar'));
+				xhr.onload = () => {
+					let data: unknown = null;
+					try {
+						data = JSON.parse(xhr.responseText);
+					} catch {
+						/* handled below */
+					}
+					if (xhr.status >= 200 && xhr.status < 300) {
+						try {
+							resolve(parseNode(data));
+						} catch (e) {
+							reject(e);
+						}
+						return;
+					}
+					const err = (data as { error?: { code?: string; message?: string } } | null)?.error;
+					reject(new ApiError(xhr.status, err?.code ?? 'http_error', err?.message ?? `Serverfout (${xhr.status})`));
+				};
+				xhr.send(file);
+			})
+	},
 	ownGroups: (f: typeof fetch = fetch) =>
 		get('/api/v1/account/groups', (v) => list(record(v, 'groups'), 'groups', parseGroupRef), f),
 

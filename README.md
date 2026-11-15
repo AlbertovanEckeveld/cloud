@@ -4,7 +4,8 @@ Een zelfgebouwd private-cloudplatform: één Go-binary met een ingebedde SvelteK
 PostgreSQL voor metadata en S3 voor bestanden. Achtergrond, roadmap en werkafspraken staan in
 [CLAUDE.md](CLAUDE.md); architectuurbeslissingen in [docs/adr/](docs/adr/).
 
-**Status:** fase 1 — `identity` (vervangt Authentik). Inloggen met passkey, of met wachtwoord
+**Status:** fase 2.1 — `drive`: mappen en bestanden (uploaden, downloaden, verplaatsen,
+prullenbak, quota). Fase 1 — `identity` (vervangt Authentik) is af. Inloggen met passkey, of met wachtwoord
 plus authenticator-app (TOTP) of herstelcode; sessiebeheer; een beheeromgeving voor
 gebruikers, groepen, apps, audit-log en systeemstatus; een OpenID Connect-provider zodat
 andere apps met je Cloud-account inloggen; optioneel mail voor activatielinks en
@@ -112,6 +113,7 @@ problemen tegelijk.
 | `/api/v1/auth/*` | Inloggen (passkey, wachtwoord + TOTP of herstelcode), activeren, uitloggen. |
 | `/api/v1/account/*` | Eigen account: wachtwoord, passkeys, herstelcodes, sessies, activiteit. Vereist login. |
 | `/api/v1/admin/*` | Gebruikers, groepen, apps en audit-log beheren. Alleen beheerders. |
+| `/api/v1/drive/*` | Bestanden en mappen: lijst, upload, download, hernoemen, verplaatsen, prullenbak, verbruik. |
 | `/api/v1/oidc/*` | Inlogverzoeken van apps afhandelen (voor de pagina `/connect`). |
 | `/oidc/*` | De OpenID Connect-provider: discovery, authorize, token, userinfo, keys. |
 | `/api/v1/status` | Status van deze instantie en de afhankelijkheden. Alleen beheerders. |
@@ -136,6 +138,7 @@ internal/core/       gedeelde basis: config, logging, database, storage, health,
                      sealer (versleuteling at rest), mailer (outbox + SMTP), site
 internal/identity/   accounts, wachtwoorden, TOTP, passkeys, herstelcodes, sessies,
                      throttling, audit-log, gebruikers- en groepsbeheer, OIDC-provider
+internal/drive/      bestanden en mappen: boom in Postgres, inhoud in S3, prullenbak, quota
 migrations/<module>/ SQL-migraties per module; de mapnaam is ook het Postgres-schema
 web/                 SvelteKit-frontend; web/embed.go bedt web/build in de binary in
 docker/dev-setup/    Postgres, pgAdmin en RustFS (S3) voor de ontwikkelserver

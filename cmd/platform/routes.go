@@ -28,6 +28,8 @@ type routerDeps struct {
 	oidc http.Handler
 	// avatars serves profile pictures at /avatars/{file}; public by design.
 	avatars http.HandlerFunc
+	// drive mounts the drive module's routes under /api/v1/drive.
+	drive func(chi.Router)
 
 	// identity mounts the identity module's routes under /api/v1.
 	identity     func(chi.Router)
@@ -72,6 +74,7 @@ func newRouter(d routerDeps) http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(httpserver.NoStore)
 		d.identity(r)
+		r.Route("/drive", d.drive)
 		r.Group(func(r chi.Router) {
 			r.Use(d.requireUser, d.requireAdmin)
 			r.Get("/status", statusHandler(d))

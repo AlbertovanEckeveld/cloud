@@ -52,6 +52,7 @@ func testRouter(t *testing.T, sites fakeSites) http.Handler {
 		frontend: spa,
 		oidc:     http.NotFoundHandler(),
 		avatars:  http.NotFound,
+		drive:    func(chi.Router) {},
 		identity: func(r chi.Router) {
 			r.Post("/auth/login", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 		},

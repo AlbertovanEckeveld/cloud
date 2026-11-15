@@ -27,6 +27,7 @@
 		{#if data.user}
 			<nav class="nav" aria-label="Hoofdmenu">
 				<a href="/" aria-current={current('/')}>Start</a>
+				<a href="/files" aria-current={page.url.pathname.startsWith('/files') ? 'page' : undefined}>Bestanden</a>
 				{#if data.user.is_admin}
 					<a href="/admin" aria-current={page.url.pathname.startsWith('/admin') ? 'page' : undefined}>Beheer</a>
 				{/if}

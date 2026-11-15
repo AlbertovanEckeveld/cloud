@@ -198,7 +198,13 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   TOTP, herstelcodes, sessies, beheer van gebruikers/groepen/apps, audit-log, mail
   (ADR 0007), OIDC-provider met amr/acr, profielclaims en back-channel logout (ADR 0008).
   Het deelmodel is ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`.
-- Bezig met: keuze volgende stap.
+- Bezig met: **fase 2 – drive**. 2.1 gebouwd en getest (ADR 0009); wacht op mijn eigen test.
+  Stappen: 2.1 drive-basis (mappen, streaming upload/download,
+  hernoemen, verplaatsen, prullenbak, quota, bestandsbrowser); 2.2 versies + delen met
+  gebruikers/groepen (deelmodel ADR 0006); 2.3 deellinks, voorbeeldweergave, zoeken;
+  2.4 app-wachtwoorden + WebDAV; 2.5 WOPI/Collabora.
+- Klaar als (fase 2): uploaden/downloaden in browser en via WebDAV-client, delen met
+  gebruiker/groep/link, versies terugzetten, prullenbak, document bewerken in Collabora.
 - Testen: integratie- en browsertests draaien tegen een aparte database (`TEST_DATABASE_URL`,
   `ave_cloud_test`), nooit tegen de dev-database met mijn eigen account. Tests ruimen ook daar
   alleen hun eigen data op (`it-*`, `e2e-*`).
@@ -221,4 +227,6 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - Dev-adres: `http://albertove-msi.albertove.cloud:8443`, alleen op het NetBird-adres
   (100.80.128.240, versleuteld door WireGuard). Voorlopig http: passkeys werken daar pas met
   HTTPS (eigen certificaat of Let's Encrypt via DNS-01; besluit volgt).
+- Drive: standaard geen quota (beheerder kan per gebruiker instellen), max. 10 GB per bestand,
+  prullenbak 30 dagen. Beheerders zien geen bestanden van anderen.
 - Multi-site hot-hot: nu nog niet repliceren, wel alles multi-site-proof ontwerpen (zie §3); replicatie wordt een eigen fase.
