@@ -224,6 +224,11 @@ func (l *loader) publicURL(name string, env Env) *url.URL {
 	if env == EnvProduction && u.Scheme != "https" {
 		l.fail("%s must use https in production", name)
 	}
+	// WebAuthn (passkeys) binds credentials to a domain name and rejects IP
+	// addresses (WebAuthn §5.1.3). For local development use localhost.
+	if net.ParseIP(u.Hostname()) != nil {
+		l.fail("%s must use a hostname, not an IP address (passkeys require one); use http://localhost:8080 for development", name)
+	}
 	u.Path = ""
 	return u
 }

@@ -255,3 +255,38 @@ input {
 	color: var(--muted);
 	margin: 0 0 1.5rem;
 }
+
+/* Lists of things with an action, used on the account page */
+.list {
+	list-style: none;
+	margin: 0 0 1rem;
+	padding: 0;
+}
+.list li {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	padding-block: 0.6rem;
+	border-bottom: 1px solid var(--border);
+}
+.list li:last-child {
+	border-bottom: 0;
+}
+.list__title {
+	color: var(--text-strong);
+	margin-right: 0.5rem;
+}
+.small {
+	font-size: 0.85rem;
+}
+.block {
+	display: block;
+}
+.add {
+	display: flex;
+	gap: 0.5rem;
+}
+.add input {
+	flex: 1;
+}

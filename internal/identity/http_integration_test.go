@@ -37,8 +37,7 @@ func newHTTPEnv(t *testing.T, publicURL string) *httpEnv {
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	// The handlers see the test server's loopback address as client IP; set
-	// it before newUser so its cleanup also clears that IP's throttle counter.
+	// The handlers see the test server's loopback address as client IP.
 	e.client.IP = "127.0.0.1"
 	return &httpEnv{testEnv: e, srv: srv, client: &http.Client{Jar: jar}}
 }
@@ -73,7 +72,7 @@ func (h *httpEnv) do(t *testing.T, method, path string, body any) (*http.Respons
 }
 
 func TestHTTPLoginFlow(t *testing.T) {
-	h := newHTTPEnv(t, "http://127.0.0.1:8080")
+	h := newHTTPEnv(t, "http://localhost:8080")
 	u := h.newUser(t)
 	secret, _ := h.activate(t, u)
 
@@ -146,7 +145,7 @@ func TestHTTPSecureCookieForHTTPS(t *testing.T) {
 }
 
 func TestHTTPThrottledResponse(t *testing.T) {
-	h := newHTTPEnv(t, "http://127.0.0.1:8080")
+	h := newHTTPEnv(t, "http://localhost:8080")
 	u := h.newUser(t)
 	h.activate(t, u)
 	for range throttleUser.threshold {
@@ -162,7 +161,7 @@ func TestHTTPThrottledResponse(t *testing.T) {
 }
 
 func TestHTTPActivationFlow(t *testing.T) {
-	h := newHTTPEnv(t, "http://127.0.0.1:8080")
+	h := newHTTPEnv(t, "http://localhost:8080")
 	u := h.newUser(t)
 	link, err := h.svc.IssueActivation(t.Context(), h.testEnv.client, u.Username)
 	if err != nil {

@@ -2,6 +2,9 @@
 	import { onMount } from 'svelte';
 	import { api, errorMessage, type AuditEvent } from '#lib/api.ts';
 	import { dateTime, eventLabel, isWarningEvent, timeAgo } from '#lib/format.ts';
+	import PasskeysPanel from '#lib/components/account/PasskeysPanel.svelte';
+	import RecoveryPanel from '#lib/components/account/RecoveryPanel.svelte';
+	import SessionsPanel from '#lib/components/account/SessionsPanel.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -73,6 +76,9 @@
 			{/if}
 		</section>
 
+		<PasskeysPanel />
+		<RecoveryPanel />
+
 		<section class="panel" aria-labelledby="password-title">
 			<h2 id="password-title">Wachtwoord wijzigen</h2>
 			<p class="muted small">Na het wijzigen word je op al je andere apparaten uitgelogd.</p>
@@ -100,29 +106,33 @@
 		</section>
 	</div>
 
-	<section class="panel" aria-labelledby="activity-title">
-		<h2 id="activity-title">Recente activiteit</h2>
-		<p class="muted small">Herken je iets niet? Wijzig dan direct je wachtwoord.</p>
-		{#if activityError}
-			<p class="flash flash--error" role="alert">{activityError}</p>
-		{:else if events === null}
-			<p class="muted">Laden…</p>
-		{:else}
-			<ul class="activity">
-				{#each events as event (event.id)}
-					<li class:warning={isWarningEvent(event.event)}>
-						<span class="activity__what">{eventLabel(event.event)}</span>
-						<span class="muted small">
-							<time datetime={event.occurred_at} title={dateTime(event.occurred_at)}>
-								{timeAgo(event.occurred_at)}
-							</time>
-							{#if event.ip}· {event.ip}{/if}
-						</span>
-					</li>
-				{/each}
-			</ul>
-		{/if}
-	</section>
+	<div class="stack">
+		<SessionsPanel />
+
+		<section class="panel" aria-labelledby="activity-title">
+			<h2 id="activity-title">Recente activiteit</h2>
+			<p class="muted small">Herken je iets niet? Wijzig dan direct je wachtwoord.</p>
+			{#if activityError}
+				<p class="flash flash--error" role="alert">{activityError}</p>
+			{:else if events === null}
+				<p class="muted">Laden…</p>
+			{:else}
+				<ul class="activity">
+					{#each events as event (event.id)}
+						<li class:warning={isWarningEvent(event.event)}>
+							<span class="activity__what">{eventLabel(event.event)}</span>
+							<span class="muted small">
+								<time datetime={event.occurred_at} title={dateTime(event.occurred_at)}>
+									{timeAgo(event.occurred_at)}
+								</time>
+								{#if event.ip}· {event.ip}{/if}
+							</span>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	</div>
 </div>
 
 <style>
@@ -149,8 +159,7 @@
 	.details dd {
 		margin: 0;
 	}
-	.small {
-		font-size: 0.85rem;
+	.panel .small {
 		margin: 0 0 1rem;
 	}
 	.activity {

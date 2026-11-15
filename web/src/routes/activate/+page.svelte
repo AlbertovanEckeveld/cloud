@@ -4,13 +4,15 @@
 	import { api, errorMessage, type TotpEnrollment } from '#lib/api.ts';
 	import { groupSecret } from '#lib/format.ts';
 	import CodeField from '#lib/components/CodeField.svelte';
+	import RecoveryCodes from '#lib/components/RecoveryCodes.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 
 	const minLength = 12;
 
-	let step = $state<'password' | 'authenticator' | 'invalid'>('password');
+	let step = $state<'password' | 'authenticator' | 'recovery' | 'invalid'>('password');
+	let recoveryCodes = $state<string[]>([]);
 	let token = '';
 	let password = $state('');
 	let confirmation = $state('');
@@ -64,7 +66,13 @@
 		error = null;
 		try {
 			await api.confirmTotpEnrollment(code);
-			await goto('/', { invalidateAll: true });
+			try {
+				recoveryCodes = await api.generateRecoveryCodes();
+				step = 'recovery';
+			} catch {
+				// Signed in already; codes can also be created on the account page.
+				await goto('/', { invalidateAll: true });
+			}
 		} catch (err) {
 			error = errorMessage(err);
 			code = '';
@@ -87,7 +95,7 @@
 			nieuwe aan.
 		</p>
 	{:else if step === 'password'}
-		<p class="lead">Stap 1 van 2: kies een wachtwoord.</p>
+		<p class="lead">Stap 1 van 3: kies een wachtwoord.</p>
 		{#if error}<p class="flash flash--error" role="alert">{error}</p>{/if}
 		<form class="form" onsubmit={submitPassword}>
 			<label class="field">
@@ -101,8 +109,17 @@
 			</label>
 			<button class="button button--primary" disabled={busy}>{busy ? 'Bezig…' : 'Volgende'}</button>
 		</form>
+	{:else if step === 'recovery'}
+		<p class="lead">
+			Stap 3 van 3: bewaar deze herstelcodes, bijvoorbeeld in je wachtwoordmanager. Ben je je telefoon
+			kwijt, dan log je hiermee in. Je ziet ze maar één keer.
+		</p>
+		<RecoveryCodes codes={recoveryCodes} />
+		<button class="button button--primary done" onclick={() => goto('/', { invalidateAll: true })}>
+			Ik heb ze bewaard
+		</button>
 	{:else}
-		<p class="lead">Stap 2 van 2: koppel een authenticator-app, bijvoorbeeld Aegis, 2FAS of Google Authenticator.</p>
+		<p class="lead">Stap 2 van 3: koppel een authenticator-app, bijvoorbeeld Aegis, 2FAS of Google Authenticator.</p>
 		{#if error}<p class="flash flash--error" role="alert">{error}</p>{/if}
 		{#if enrollment}
 			<ol class="steps">
@@ -137,6 +154,10 @@
 	}
 	.steps li + li {
 		margin-top: 0.5rem;
+	}
+	.done {
+		width: 100%;
+		margin-top: 1.5rem;
 	}
 	.qr {
 		display: block;

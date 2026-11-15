@@ -20,7 +20,7 @@ func validEnv() map[string]string {
 		"S3_BUCKET":            "platform",
 		"S3_ACCESS_KEY_ID":     "access",
 		"S3_SECRET_ACCESS_KEY": "s3cr3t",
-		"PUBLIC_URL":           "http://127.0.0.1:8080",
+		"PUBLIC_URL":           "http://localhost:8080",
 		"ENCRYPTION_KEY":       "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
 	}
 }
@@ -52,7 +52,7 @@ func TestLoadValid(t *testing.T) {
 	if cfg.Storage.SecretAccessKey.Reveal() != "s3cr3t" {
 		t.Error("secret not loaded")
 	}
-	if cfg.PublicURL.String() != "http://127.0.0.1:8080" {
+	if cfg.PublicURL.String() != "http://localhost:8080" {
 		t.Errorf("PublicURL = %q", cfg.PublicURL)
 	}
 	if key := cfg.EncryptionKey.Reveal(); len(key) != 32 || key[1] != 1 || key[31] != 31 {
@@ -123,6 +123,8 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{"PUBLIC_URL", "cloud.example.com", "PUBLIC_URL"},
 		{"PUBLIC_URL", "https://cloud.example.com/app", "PUBLIC_URL"},
 		{"PUBLIC_URL", "javascript://x", "PUBLIC_URL"},
+		{"PUBLIC_URL", "http://127.0.0.1:8080", "not an IP address"},
+		{"PUBLIC_URL", "http://[::1]:8080", "not an IP address"},
 		{"ENCRYPTION_KEY", "too-short", "ENCRYPTION_KEY"},
 		{"ENCRYPTION_KEY", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwd", "ENCRYPTION_KEY"},
 	}

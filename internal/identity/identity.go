@@ -18,6 +18,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
 )
 
@@ -28,6 +30,10 @@ const (
 	sessionMaxTTL     = 30 * 24 * time.Hour // and always after 30 days
 	activationTTL     = 72 * time.Hour
 	lastSeenPrecision = time.Minute // avoid a database write on every request
+	// recentAuthWindow is how long after signing in sensitive account changes
+	// (passkeys, recovery codes) are allowed without signing in again. A
+	// stolen session cookie then cannot be turned into lasting access.
+	recentAuthWindow = 15 * time.Minute
 )
 
 // SessionState tells how far a session got through authentication.
@@ -49,6 +55,10 @@ var (
 	ErrWrongState         = errors.New("session is in the wrong state for this action")
 	ErrUserExists         = errors.New("username already taken")
 	ErrUserNotFound       = errors.New("user not found")
+	ErrReauthRequired     = errors.New("recent authentication required")
+	ErrNotFound           = errors.New("not found")
+	ErrPasskeyRejected    = errors.New("passkey rejected")
+	ErrChallengeInvalid   = errors.New("webauthn challenge unknown, used or expired")
 )
 
 // User is an account.
@@ -65,6 +75,9 @@ type Session struct {
 	UserID    uuid.UUID
 	State     SessionState
 	ExpiresAt time.Time
+	// AuthenticatedAt is when the user last proved their identity in this
+	// session; zero for partial sessions.
+	AuthenticatedAt time.Time
 
 	activationTokenHash []byte
 }
@@ -79,30 +92,51 @@ type Client struct {
 type Options struct {
 	SiteID    string
 	PublicURL *url.URL
-	Logger    *slog.Logger
+	// ExtraOrigins are additional origins allowed for passkey ceremonies,
+	// such as the Vite dev server during development.
+	ExtraOrigins []string
+	Logger       *slog.Logger
 }
 
 // Service implements the identity module.
 type Service struct {
-	db     *pgxpool.Pool
-	sealer *sealer.Sealer
-	hasher *passwordHasher
-	opts   Options
-	log    *slog.Logger
-	now    func() time.Time
+	db       *pgxpool.Pool
+	sealer   *sealer.Sealer
+	hasher   *passwordHasher
+	webauthn *webauthn.WebAuthn
+	opts     Options
+	log      *slog.Logger
+	now      func() time.Time
 }
 
 // New returns the identity service.
-func New(db *pgxpool.Pool, s *sealer.Sealer, opts Options) *Service {
+func New(db *pgxpool.Pool, s *sealer.Sealer, opts Options) (*Service, error) {
+	wa, err := webauthn.New(&webauthn.Config{
+		RPID:          opts.PublicURL.Hostname(),
+		RPDisplayName: "Cloud",
+		RPOrigins:     append([]string{opts.PublicURL.String()}, opts.ExtraOrigins...),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configure webauthn: %w", err)
+	}
 	return &Service{
-		db:     db,
-		sealer: s,
+		db:       db,
+		sealer:   s,
+		webauthn: wa,
 		// Two concurrent hashes cap Argon2id memory use at 128 MiB.
 		hasher: newPasswordHasher(defaultArgonParams, 2),
 		opts:   opts,
 		log:    opts.Logger,
 		now:    time.Now,
+	}, nil
+}
+
+// requireRecentAuth allows sensitive changes only shortly after signing in.
+func (s *Service) requireRecentAuth(sess Session) error {
+	if sess.State != StateAuthenticated || s.now().Sub(sess.AuthenticatedAt) > recentAuthWindow {
+		return ErrReauthRequired
 	}
+	return nil
 }
 
 // dbtx is implemented by both the pool and a transaction.
@@ -159,6 +193,7 @@ func (s *Service) cleanup(ctx context.Context) error {
 			[]any{now.Add(-24 * time.Hour), now}},
 		{`DELETE FROM identity.activation_tokens WHERE expires_at < $1`,
 			[]any{now.Add(-7 * 24 * time.Hour)}},
+		{`DELETE FROM identity.webauthn_challenges WHERE expires_at < $1`, []any{now}},
 	}
 	for _, st := range statements {
 		if _, err := s.db.Exec(ctx, st.sql, st.args...); err != nil {

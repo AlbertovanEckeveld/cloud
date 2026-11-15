@@ -84,7 +84,8 @@ func (s *Service) CreateUser(ctx context.Context, c Client, in NewUser) (User, e
 
 // IssueActivation returns a one-time link with which the user sets a new
 // password and enrols a new second factor. Issuing a link resets the
-// account: the old password, second factor, sessions and links stop working.
+// account: the old password, second factor, passkeys, recovery codes,
+// sessions and links stop working.
 // That makes it the recovery path for a user who lost their authenticator.
 func (s *Service) IssueActivation(ctx context.Context, c Client, username string) (string, error) {
 	token, hash := newToken()
@@ -106,6 +107,8 @@ func (s *Service) IssueActivation(ctx context.Context, c Client, username string
 			{`UPDATE identity.users SET password_hash = NULL, updated_at = $2 WHERE id = $1`, []any{u.ID, now}},
 			{`DELETE FROM identity.totp_credentials WHERE user_id = $1`, []any{u.ID}},
 			{`DELETE FROM identity.sessions WHERE user_id = $1`, []any{u.ID}},
+			{`DELETE FROM identity.passkeys WHERE user_id = $1`, []any{u.ID}},
+			{`DELETE FROM identity.recovery_codes WHERE user_id = $1`, []any{u.ID}},
 			{`UPDATE identity.activation_tokens SET used_at = $2 WHERE user_id = $1 AND used_at IS NULL`, []any{u.ID, now}},
 		}
 		for _, r := range resets {

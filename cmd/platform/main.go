@@ -106,7 +106,16 @@ func setup(ctx context.Context, logOutput io.Writer) (*app, error) {
 		pool.Close()
 		return nil, err
 	}
-	id := identity.New(pool, sl, identity.Options{SiteID: cfg.SiteID, PublicURL: cfg.PublicURL, Logger: logger})
+	opts := identity.Options{SiteID: cfg.SiteID, PublicURL: cfg.PublicURL, Logger: logger}
+	if cfg.Env == config.EnvDevelopment {
+		// Passkeys are bound to an origin; allow the Vite dev server of `make dev`.
+		opts.ExtraOrigins = []string{"http://localhost:5173"}
+	}
+	id, err := identity.New(pool, sl, opts)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
 	return &app{cfg: cfg, logger: logger, pool: pool, identity: id}, nil
 }
 

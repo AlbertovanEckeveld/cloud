@@ -196,9 +196,9 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   migraties + Dockerfile), 0.2 NATS + outbox, 0.3 CI, 0.4 back-ups
 - Laatst afgerond: 0.1 skelet (2026-11-15). 0.2–0.4 uitgesteld op mijn verzoek;
   back-ups (0.4) moeten er zijn vóór er echte data in staat.
-- Bezig met: **fase 1 – identity**. 1.1 (accounts, activatielink, wachtwoord + verplichte TOTP,
-  sessies, CSRF, throttling, audit-log, CLI, UI) is gebouwd en getest; wacht op mijn eigen test.
-  Daarna: 1.2 passkeys, herstelcodes, sessiebeheer; 1.3 gebruikers/groepen, centrale autorisatie,
+- Bezig met: **fase 1 – identity**. 1.1 (accounts, wachtwoord + TOTP, sessies, audit-log, CLI)
+  gecommit. 1.2 (passkeys, herstelcodes, sessiebeheer, recente authenticatie) gebouwd en
+  getest; wacht op mijn eigen test. Daarna: 1.3 gebruikers/groepen, centrale autorisatie,
   deelmodel; 1.4 OIDC-provider.
 - Klaar als (fase 1): inloggen met passkey; admin nodigt gebruiker uit en beheert groepen;
   een externe app (Grafana) logt in via onze OIDC; alle auth-events in de audit-log; getest.

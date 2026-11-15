@@ -18,6 +18,7 @@ actief onderhouden libraries met een permissieve licentie.
 | `github.com/minio/minio-go/v7` | Apache-2.0 | S3-client die lichter is dan de AWS SDK v2 en goed werkt met zelfgehoste S3. |
 | `github.com/google/uuid` | BSD-3-Clause | UUIDv7 (RFC 9562) voor IDs en request-ID's. |
 | `golang.org/x/crypto` | BSD-3-Clause | Argon2id voor wachtwoorden (fase 1.1). Onderhouden door het Go-team. |
+| `github.com/go-webauthn/webauthn` | BSD-3-Clause | WebAuthn/passkeys (fase 1.2). Actief onderhouden, de standaard in Go; brengt een CBOR-library mee. |
 | `rsc.io/qr` | BSD-3-Clause | QR-code voor het koppelen van een authenticator-app (fase 1.1). Klein, zonder eigen dependencies. |
 
 Alternatieven die zijn afgevallen: `golang-migrate` (minder fijne Go-API), AWS SDK v2

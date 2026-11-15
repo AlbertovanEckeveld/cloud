@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -18,8 +19,8 @@ import (
 
 // Principal is the authenticated user of a request.
 type Principal struct {
-	User      User
-	SessionID uuid.UUID
+	User    User
+	Session Session
 }
 
 type principalKey struct{}
@@ -96,7 +97,7 @@ func (s *Service) RequireUser(next http.Handler) http.Handler {
 			httpserver.WriteError(w, http.StatusUnauthorized, "unauthenticated", "Rond eerst het inloggen af.")
 			return
 		}
-		ctx := context.WithValue(r.Context(), principalKey{}, Principal{User: u, SessionID: sess.ID})
+		ctx := context.WithValue(r.Context(), principalKey{}, Principal{User: u, Session: sess})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -119,6 +120,9 @@ func (s *Service) Routes(r chi.Router) {
 		r.Get("/session", s.handleSession)
 		r.Post("/login", s.handleLogin)
 		r.Post("/login/totp", s.withSession(s.handleLoginTOTP))
+		r.Post("/login/recovery", s.withSession(s.handleLoginRecovery))
+		r.Post("/passkey/begin", s.handlePasskeyLoginBegin)
+		r.Post("/passkey/finish", s.handlePasskeyLoginFinish)
 		r.Post("/activate", s.handleActivate)
 		r.Post("/totp/enrollment", s.withSession(s.handleBeginEnrollment))
 		r.Post("/totp/enrollment/confirm", s.withSession(s.handleConfirmEnrollment))
@@ -128,6 +132,15 @@ func (s *Service) Routes(r chi.Router) {
 		r.Use(s.RequireUser)
 		r.Get("/activity", s.handleActivity)
 		r.Post("/password", s.handleChangePassword)
+		r.Get("/passkeys", s.handleListPasskeys)
+		r.Post("/passkeys/registration", s.handlePasskeyRegistrationBegin)
+		r.Post("/passkeys/registration/finish", s.handlePasskeyRegistrationFinish)
+		r.Delete("/passkeys/{id}", s.handleDeletePasskey)
+		r.Get("/recovery-codes", s.handleRecoveryCodeStatus)
+		r.Post("/recovery-codes", s.handleGenerateRecoveryCodes)
+		r.Get("/sessions", s.handleListSessions)
+		r.Delete("/sessions/{id}", s.handleRevokeSession)
+		r.Post("/sessions/revoke-others", s.handleRevokeOtherSessions)
 	})
 }
 
@@ -269,8 +282,7 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := PrincipalFrom(r.Context())
-	sess := Session{ID: p.SessionID, UserID: p.User.ID, State: StateAuthenticated}
-	if err := s.ChangePassword(r.Context(), clientFrom(r), sess, in.CurrentPassword, in.NewPassword); err != nil {
+	if err := s.ChangePassword(r.Context(), clientFrom(r), p.Session, in.CurrentPassword, in.NewPassword); err != nil {
 		s.writeError(w, r, err)
 		return
 	}
@@ -307,10 +319,185 @@ func (s *Service) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpserver.WriteError(w, http.StatusUnauthorized, "invalid_code", "Deze code klopt niet. Controleer de tijd op je telefoon.")
 	case errors.Is(err, ErrInvalidToken):
 		httpserver.WriteError(w, http.StatusBadRequest, "invalid_token", "Deze activatielink is ongeldig of verlopen. Vraag een nieuwe aan.")
+	case errors.Is(err, ErrReauthRequired):
+		httpserver.WriteError(w, http.StatusForbidden, "reauth_required", "Log voor de veiligheid opnieuw in om dit te wijzigen.")
+	case errors.Is(err, ErrNotFound):
+		httpserver.WriteError(w, http.StatusNotFound, "not_found", "Niet gevonden.")
+	case errors.Is(err, ErrPasskeyRejected):
+		httpserver.WriteError(w, http.StatusBadRequest, "passkey_rejected", "De passkey kon niet worden geverifieerd.")
+	case errors.Is(err, ErrChallengeInvalid):
+		httpserver.WriteError(w, http.StatusBadRequest, "challenge_expired", "Dit verzoek is verlopen. Probeer het opnieuw.")
 	case errors.Is(err, ErrWrongState):
 		httpserver.WriteError(w, http.StatusConflict, "invalid_state", "Deze stap is nu niet mogelijk. Begin opnieuw met inloggen.")
 	default:
 		s.log.Error("identity request failed", "request_id", httpserver.RequestIDFrom(r.Context()), "error", err)
 		httpserver.WriteError(w, http.StatusInternalServerError, "internal", "Er ging iets mis aan onze kant.")
 	}
+}
+
+func (s *Service) handleLoginRecovery(w http.ResponseWriter, r *http.Request, sess Session, _ User) {
+	var in codeRequest
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	token, err := s.VerifyRecoveryCode(r.Context(), clientFrom(r), sess, in.Code)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.setSessionCookie(w, token, sessionMaxTTL)
+	httpserver.WriteJSON(w, http.StatusOK, sessionResponse{State: StateAuthenticated})
+}
+
+type ceremonyResponse struct {
+	ChallengeID uuid.UUID       `json:"challenge_id"`
+	Credential  json.RawMessage `json:"credential"`
+}
+
+func (s *Service) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request) {
+	ceremony, err := s.BeginPasskeyLogin(r.Context(), clientFrom(r))
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, ceremony)
+}
+
+func (s *Service) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
+	var in ceremonyResponse
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	token, err := s.FinishPasskeyLogin(r.Context(), clientFrom(r), in.ChallengeID, in.Credential)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	s.setSessionCookie(w, token, sessionMaxTTL)
+	httpserver.WriteJSON(w, http.StatusOK, sessionResponse{State: StateAuthenticated})
+}
+
+func (s *Service) handleListPasskeys(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	passkeys, err := s.ListPasskeys(r.Context(), p.User.ID)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Passkeys []Passkey `json:"passkeys"`
+	}{passkeys})
+}
+
+func (s *Service) handlePasskeyRegistrationBegin(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	ceremony, err := s.BeginPasskeyRegistration(r.Context(), p.Session)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, ceremony)
+}
+
+func (s *Service) handlePasskeyRegistrationFinish(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ceremonyResponse
+		Name string `json:"name"`
+	}
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	p, _ := PrincipalFrom(r.Context())
+	passkey, err := s.FinishPasskeyRegistration(r.Context(), clientFrom(r), p.Session, in.ChallengeID, in.Name, in.Credential)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusCreated, passkey)
+}
+
+// pathID parses the {id} URL parameter; an invalid ID is simply not found.
+func pathID(r *http.Request) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		return uuid.Nil, ErrNotFound
+	}
+	return id, nil
+}
+
+func (s *Service) handleDeletePasskey(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err == nil {
+		p, _ := PrincipalFrom(r.Context())
+		err = s.DeletePasskey(r.Context(), clientFrom(r), p.Session, id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleRecoveryCodeStatus(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	n, err := s.RemainingRecoveryCodes(r.Context(), p.User.ID)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Remaining int `json:"remaining"`
+	}{n})
+}
+
+func (s *Service) handleGenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	codes, err := s.GenerateRecoveryCodes(r.Context(), clientFrom(r), p.Session)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Codes []string `json:"codes"`
+	}{codes})
+}
+
+func (s *Service) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	sessions, err := s.ListSessions(r.Context(), p.Session)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Sessions []SessionInfo `json:"sessions"`
+	}{sessions})
+}
+
+func (s *Service) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	id, err := pathID(r)
+	if err == nil {
+		err = s.RevokeSession(r.Context(), clientFrom(r), p.Session, id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	if id == p.Session.ID {
+		s.clearSessionCookie(w)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleRevokeOtherSessions(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	n, err := s.RevokeOtherSessions(r.Context(), clientFrom(r), p.Session)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Revoked int `json:"revoked"`
+	}{n})
 }

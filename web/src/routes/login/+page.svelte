@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { api, ApiError, errorMessage } from '#lib/api.ts';
 	import { safeNext } from '#lib/format.ts';
+	import { getPasskey, passkeysSupported, webauthnErrorMessage } from '#lib/webauthn.ts';
 	import CodeField from '#lib/components/CodeField.svelte';
 	import type { PageProps } from './$types';
 
@@ -12,43 +13,62 @@
 	// A page reload between the two steps resumes at the code. Only the state
 	// at page load matters; after that this page drives the steps itself.
 	const resume = untrack(() => data.session?.state === 'mfa_required');
-	let step = $state<'password' | 'code'>(resume ? 'code' : 'password');
+	let step = $state<'start' | 'code'>(resume ? 'code' : 'start');
+	let useRecovery = $state(false);
 	let username = $state('');
 	let password = $state('');
 	let code = $state('');
+	let recoveryCode = $state('');
 	let error = $state<string | null>(null);
 	let busy = $state(false);
 
-	async function submitPassword(e: SubmitEvent) {
-		e.preventDefault();
+	const done = () => goto(safeNext(page.url.searchParams.get('next'), page.url.origin), { invalidateAll: true });
+
+	async function withBusy(action: () => Promise<void>) {
 		busy = true;
 		error = null;
 		try {
-			await api.login(username, password);
-			step = 'code';
+			await action();
 		} catch (err) {
-			error = errorMessage(err);
+			error = webauthnErrorMessage(err) ?? errorMessage(err);
+			// Too many wrong codes ends the attempt: start over.
+			if (err instanceof ApiError && err.code === 'unauthenticated') step = 'start';
 		} finally {
-			password = '';
 			busy = false;
 		}
 	}
 
-	async function submitCode(e: SubmitEvent) {
+	const loginWithPasskey = () =>
+		withBusy(async () => {
+			const ceremony = await api.passkeyLoginBegin();
+			const credential = await getPasskey(ceremony.options);
+			await api.passkeyLoginFinish(ceremony.challenge_id, credential);
+			await done();
+		});
+
+	function submitPassword(e: SubmitEvent) {
 		e.preventDefault();
-		busy = true;
-		error = null;
-		try {
-			await api.loginTotp(code);
-			await goto(safeNext(page.url.searchParams.get('next'), page.url.origin), { invalidateAll: true });
-		} catch (err) {
-			error = errorMessage(err);
-			code = '';
-			// Too many wrong codes ends the attempt: start over with the password.
-			if (err instanceof ApiError && err.status === 401 && err.code === 'unauthenticated') step = 'password';
-		} finally {
-			busy = false;
-		}
+		return withBusy(async () => {
+			try {
+				await api.login(username, password);
+				step = 'code';
+			} finally {
+				password = '';
+			}
+		});
+	}
+
+	function submitCode(e: SubmitEvent) {
+		e.preventDefault();
+		return withBusy(async () => {
+			try {
+				if (useRecovery) await api.loginRecovery(recoveryCode);
+				else await api.loginTotp(code);
+				await done();
+			} finally {
+				code = recoveryCode = '';
+			}
+		});
 	}
 </script>
 
@@ -58,9 +78,15 @@
 
 <div class="panel auth-card">
 	<h1>Inloggen</h1>
-	{#if step === 'password'}
-		<p class="lead">Log in met je gebruikersnaam en wachtwoord.</p>
-		{#if error}<p class="flash flash--error" role="alert">{error}</p>{/if}
+	{#if error}<p class="flash flash--error" role="alert">{error}</p>{/if}
+
+	{#if step === 'start'}
+		{#if passkeysSupported()}
+			<button class="button button--primary wide" onclick={loginWithPasskey} disabled={busy}>
+				Inloggen met passkey
+			</button>
+			<p class="divider"><span>of met wachtwoord</span></p>
+		{/if}
 		<form class="form" onsubmit={submitPassword}>
 			<label class="field">
 				<span>Gebruikersnaam</span>
@@ -70,16 +96,60 @@
 				<span>Wachtwoord</span>
 				<input type="password" bind:value={password} autocomplete="current-password" required />
 			</label>
-			<button class="button button--primary" disabled={busy}>{busy ? 'Bezig…' : 'Volgende'}</button>
+			<button class="button" disabled={busy}>{busy ? 'Bezig…' : 'Volgende'}</button>
 		</form>
 	{:else}
-		<p class="lead">Vul de code in uit je authenticator-app.</p>
-		{#if error}<p class="flash flash--error" role="alert">{error}</p>{/if}
 		<form class="form" onsubmit={submitCode}>
-			<CodeField bind:value={code} />
-			<button class="button button--primary" disabled={busy || code.length !== 6}>
+			{#if useRecovery}
+				<label class="field">
+					<span>Herstelcode</span>
+					<input bind:value={recoveryCode} autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="xxxx-xxxx-xxxx-xxxx" required />
+					<p class="field__hint">Elke herstelcode werkt maar één keer.</p>
+				</label>
+			{:else}
+				<p class="lead">Vul de code in uit je authenticator-app.</p>
+				<CodeField bind:value={code} />
+			{/if}
+			<button class="button button--primary" disabled={busy || (!useRecovery && code.length !== 6)}>
 				{busy ? 'Bezig…' : 'Inloggen'}
 			</button>
 		</form>
+		<button class="link" onclick={() => ((useRecovery = !useRecovery), (error = null))}>
+			{useRecovery ? 'Toch de authenticator-app gebruiken' : 'Telefoon kwijt? Gebruik een herstelcode'}
+		</button>
 	{/if}
 </div>
+
+<style>
+	.wide {
+		width: 100%;
+	}
+	.divider {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		color: var(--muted);
+		font-size: 0.85rem;
+		margin: 1.25rem 0;
+	}
+	.divider::before,
+	.divider::after {
+		content: '';
+		flex: 1;
+		border-top: 1px solid var(--border);
+	}
+	.link {
+		font: inherit;
+		font-size: 0.85rem;
+		background: none;
+		border: 0;
+		padding: 0;
+		margin-top: 1rem;
+		color: var(--muted);
+		cursor: pointer;
+	}
+	.link:hover {
+		color: var(--text-strong);
+		text-decoration: underline;
+	}
+</style>

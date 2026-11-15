@@ -46,7 +46,13 @@ const eventLabels: Record<string, string> = {
 	'auth.login.failed': 'Mislukte inlogpoging',
 	'auth.totp.failed': 'Onjuiste verificatiecode',
 	'auth.logout': 'Uitgelogd',
-	'auth.password.changed': 'Wachtwoord gewijzigd'
+	'auth.password.changed': 'Wachtwoord gewijzigd',
+	'auth.passkey.added': 'Passkey toegevoegd',
+	'auth.passkey.removed': 'Passkey verwijderd',
+	'auth.passkey.failed': 'Mislukte inlogpoging met passkey',
+	'auth.recovery_codes.generated': 'Nieuwe herstelcodes aangemaakt',
+	'auth.recovery_code.used': 'Herstelcode gebruikt',
+	'auth.session.revoked': 'Uitgelogd op ander apparaat'
 };
 
 /** Returns the Dutch description of an audit event. */
@@ -56,7 +62,7 @@ export function eventLabel(event: string): string {
 
 /** Events that may indicate an attack and deserve attention. */
 export function isWarningEvent(event: string): boolean {
-	return event === 'auth.login.failed' || event === 'auth.totp.failed';
+	return ['auth.login.failed', 'auth.totp.failed', 'auth.passkey.failed', 'auth.recovery_code.used'].includes(event);
 }
 
 /**
@@ -78,4 +84,25 @@ export function safeNext(next: string | null, origin: string): string {
 /** Groups a base32 secret in blocks of four for easier typing. */
 export function groupSecret(secret: string): string {
 	return secret.match(/.{1,4}/g)?.join(' ') ?? secret;
+}
+
+/** A short description such as "Firefox op Linux" from a User-Agent header. */
+export function describeUserAgent(ua: string): string {
+	if (ua === 'cli') return 'Opdrachtregel';
+	const browser =
+		[
+			[/Edg\//, 'Edge'],
+			[/Firefox\//, 'Firefox'],
+			[/Chrome\//, 'Chrome'],
+			[/Safari\//, 'Safari']
+		].find(([re]) => (re as RegExp).test(ua))?.[1] ?? 'Onbekende browser';
+	const os =
+		[
+			[/Android/, 'Android'],
+			[/iPhone|iPad/, 'iOS'],
+			[/Mac OS X/, 'macOS'],
+			[/Windows/, 'Windows'],
+			[/Linux/, 'Linux']
+		].find(([re]) => (re as RegExp).test(ua))?.[1];
+	return os ? `${browser} op ${os}` : String(browser);
 }

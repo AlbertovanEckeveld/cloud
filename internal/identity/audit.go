@@ -21,6 +21,13 @@ const (
 	EventTOTPFailed        = "auth.totp.failed"
 	EventLogout            = "auth.logout"
 	EventPasswordChanged   = "auth.password.changed"
+
+	EventPasskeyAdded           = "auth.passkey.added"
+	EventPasskeyRemoved         = "auth.passkey.removed"
+	EventPasskeyFailed          = "auth.passkey.failed"
+	EventRecoveryCodesGenerated = "auth.recovery_codes.generated"
+	EventRecoveryCodeUsed       = "auth.recovery_code.used"
+	EventSessionRevoked         = "auth.session.revoked"
 )
 
 // auditEntry is one event to record. actor is who did it, subject whom it concerns.

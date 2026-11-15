@@ -59,6 +59,30 @@ export interface TotpEnrollment {
 	qr: string;
 }
 
+export interface Passkey {
+	id: string;
+	name: string;
+	created_at: string;
+	last_used_at: string | null;
+	synced: boolean;
+}
+
+export interface SessionInfo {
+	id: string;
+	created_at: string;
+	last_seen_at: string;
+	ip: string;
+	user_agent: string;
+	site_id: string;
+	current: boolean;
+}
+
+/** A WebAuthn ceremony: options for the browser plus the server's challenge ID. */
+export interface Ceremony {
+	challenge_id: string;
+	options: unknown;
+}
+
 export interface AuditEvent {
 	id: string;
 	occurred_at: string;
@@ -182,8 +206,53 @@ export const parseActivity: Validator<AuditEvent[]> = (v) =>
 
 const noContent: Validator<void> = () => undefined;
 
+function nullableStr(o: Record<string, unknown>, key: string): string | null {
+	return o[key] === null ? null : str(o, key);
+}
+
+const parsePasskey: Validator<Passkey> = (v) => {
+	const r = record(v, 'passkey');
+	return {
+		id: str(r, 'id'),
+		name: str(r, 'name'),
+		created_at: str(r, 'created_at'),
+		last_used_at: nullableStr(r, 'last_used_at'),
+		synced: bool(r, 'synced')
+	};
+};
+
+const parsePasskeys: Validator<Passkey[]> = (v) => list(record(v, 'passkeys'), 'passkeys', parsePasskey);
+
+const parseSessions: Validator<SessionInfo[]> = (v) =>
+	list(record(v, 'sessions'), 'sessions', (s) => {
+		const r = record(s, 'session');
+		return {
+			id: str(r, 'id'),
+			created_at: str(r, 'created_at'),
+			last_seen_at: str(r, 'last_seen_at'),
+			ip: str(r, 'ip'),
+			user_agent: str(r, 'user_agent'),
+			site_id: str(r, 'site_id'),
+			current: bool(r, 'current')
+		};
+	});
+
+const parseCeremony: Validator<Ceremony> = (v) => {
+	const o = record(v, 'ceremony');
+	record(o.options, 'options');
+	return { challenge_id: str(o, 'challenge_id'), options: o.options };
+};
+
+const parseCodes: Validator<string[]> = (v) => list(record(v, 'codes'), 'codes', (c) => {
+	if (typeof c !== 'string') fail('code');
+	return c;
+});
+
+const parseRemaining: Validator<number> = (v) => num(record(v, 'recovery'), 'remaining');
+const parseRevoked: Validator<number> = (v) => num(record(v, 'revoked'), 'revoked');
+
 async function request<T>(
-	method: 'GET' | 'POST',
+	method: 'GET' | 'POST' | 'DELETE',
 	path: string,
 	parse: Validator<T>,
 	body: unknown,
@@ -253,6 +322,27 @@ export const api = {
 	confirmTotpEnrollment: (code: string, f: typeof fetch = fetch) =>
 		post('/api/v1/auth/totp/enrollment/confirm', parseStateOnly, { code }, f),
 	logout: (f: typeof fetch = fetch) => post('/api/v1/auth/logout', noContent, {}, f),
+	loginRecovery: (code: string, f: typeof fetch = fetch) =>
+		post('/api/v1/auth/login/recovery', parseStateOnly, { code }, f),
+	passkeyLoginBegin: (f: typeof fetch = fetch) => post('/api/v1/auth/passkey/begin', parseCeremony, undefined, f),
+	passkeyLoginFinish: (challengeId: string, credential: unknown, f: typeof fetch = fetch) =>
+		post('/api/v1/auth/passkey/finish', parseStateOnly, { challenge_id: challengeId, credential }, f),
+
+	passkeys: (f: typeof fetch = fetch) => get('/api/v1/account/passkeys', parsePasskeys, f),
+	passkeyRegistrationBegin: (f: typeof fetch = fetch) =>
+		post('/api/v1/account/passkeys/registration', parseCeremony, undefined, f),
+	passkeyRegistrationFinish: (challengeId: string, name: string, credential: unknown, f: typeof fetch = fetch) =>
+		post('/api/v1/account/passkeys/registration/finish', parsePasskey, { challenge_id: challengeId, name, credential }, f),
+	deletePasskey: (id: string, f: typeof fetch = fetch) =>
+		request('DELETE', `/api/v1/account/passkeys/${encodeURIComponent(id)}`, noContent, undefined, f),
+	recoveryCodesRemaining: (f: typeof fetch = fetch) => get('/api/v1/account/recovery-codes', parseRemaining, f),
+	generateRecoveryCodes: (f: typeof fetch = fetch) =>
+		post('/api/v1/account/recovery-codes', parseCodes, undefined, f),
+	sessions: (f: typeof fetch = fetch) => get('/api/v1/account/sessions', parseSessions, f),
+	revokeSession: (id: string, f: typeof fetch = fetch) =>
+		request('DELETE', `/api/v1/account/sessions/${encodeURIComponent(id)}`, noContent, undefined, f),
+	revokeOtherSessions: (f: typeof fetch = fetch) =>
+		post('/api/v1/account/sessions/revoke-others', parseRevoked, undefined, f),
 
 	activity: (f: typeof fetch = fetch) => get('/api/v1/account/activity', parseActivity, f),
 	changePassword: (currentPassword: string, newPassword: string, f: typeof fetch = fetch) =>

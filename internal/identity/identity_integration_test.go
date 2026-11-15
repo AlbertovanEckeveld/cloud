@@ -65,8 +65,17 @@ func newTestEnv(t *testing.T) *testEnv {
 		clock:  time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC),
 		client: Client{IP: fmt.Sprintf("it-%d-%d", time.Now().UnixNano(), testSeq.Add(1)), UserAgent: "integration-test"},
 	}
-	env.svc = New(pool, sl, Options{SiteID: "test", PublicURL: &url.URL{Scheme: "http", Host: "127.0.0.1:8080"}, Logger: logger})
+	env.svc, err = New(pool, sl, Options{SiteID: "test", PublicURL: &url.URL{Scheme: "http", Host: "localhost:8080"}, Logger: logger})
+	if err != nil {
+		t.Fatal(err)
+	}
 	env.svc.hasher = newPasswordHasher(fastArgon, 2)
+	t.Cleanup(func() {
+		// Reads env.client at cleanup time: tests may change the IP.
+		if _, err := pool.Exec(context.Background(), `DELETE FROM identity.throttle WHERE key = $1`, throttleIP.key(env.client.IP)); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	})
 	env.svc.now = func() time.Time { return env.clock }
 	return env
 }
@@ -90,7 +99,7 @@ func (e *testEnv) newUser(t *testing.T) User {
 				[]any{u.ID, u.Username, unknownUsername(u)}},
 			{`DELETE FROM identity.throttle WHERE key = ANY($1)`, []any{[]string{
 				throttleUser.key(u.Username), throttleUser.key(u.ID.String()), throttleUser.key(unknownUsername(u)),
-				throttleTOTP.key(u.ID.String()), throttleIP.key(e.client.IP),
+				throttleTOTP.key(u.ID.String()),
 			}}},
 			{`DELETE FROM identity.users WHERE id = $1`, []any{u.ID}},
 		} {
@@ -178,7 +187,7 @@ func TestActivationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(link, "http://127.0.0.1:8080/activate#") {
+	if !strings.HasPrefix(link, "http://localhost:8080/activate#") {
 		t.Fatalf("link = %s", link)
 	}
 	token := tokenFromLink(t, link)

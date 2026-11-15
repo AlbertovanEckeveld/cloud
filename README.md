@@ -4,8 +4,9 @@ Een zelfgebouwd private-cloudplatform: één Go-binary met een ingebedde SvelteK
 PostgreSQL voor metadata en S3 voor bestanden. Achtergrond, roadmap en werkafspraken staan in
 [CLAUDE.md](CLAUDE.md); architectuurbeslissingen in [docs/adr/](docs/adr/).
 
-**Status:** fase 1.1 — accounts en inloggen. Inloggen met wachtwoord plus verplichte
-authenticator-app (TOTP), sessies, audit-log en een statuspagina voor beheerders.
+**Status:** fase 1.2 — accounts en inloggen. Inloggen met passkey, of met wachtwoord plus
+authenticator-app (TOTP) of herstelcode; sessiebeheer, audit-log en een statuspagina voor
+beheerders.
 
 ## Vereisten
 
@@ -29,7 +30,11 @@ make build && (set -a; . ./.env; ./bin/platform user create -username jouwnaam -
 ```
 
 Dit drukt een eenmalige activatielink af (72 uur geldig). Open die in de browser, kies een
-wachtwoord en koppel een authenticator-app (Aegis, 2FAS, Google Authenticator, …).
+wachtwoord, koppel een authenticator-app (Aegis, 2FAS, Google Authenticator, …) en bewaar de
+herstelcodes. Een passkey voeg je daarna toe op de accountpagina.
+
+`PUBLIC_URL` moet een hostnaam zijn (geen IP-adres), anders werken passkeys niet: lokaal
+`http://localhost:8080`.
 Kwijtgeraakt? `platform user reset -username jouwnaam` maakt het account leeg en geeft een
 nieuwe link. Draait het platform in Docker, gebruik dan `docker exec <container> /platform user …`.
 
@@ -67,8 +72,8 @@ problemen tegelijk.
 |---|---|
 | `/healthz` | Liveness: draait het proces? Controleert bewust geen afhankelijkheden. |
 | `/readyz` | Readiness: zijn Postgres en S3 bereikbaar? `503` tijdens afsluiten. |
-| `/api/v1/auth/*` | Inloggen, activeren, TOTP, uitloggen, sessie opvragen. |
-| `/api/v1/account/*` | Eigen account: wachtwoord wijzigen, recente activiteit. Vereist login. |
+| `/api/v1/auth/*` | Inloggen (passkey, wachtwoord + TOTP of herstelcode), activeren, uitloggen. |
+| `/api/v1/account/*` | Eigen account: wachtwoord, passkeys, herstelcodes, sessies, activiteit. Vereist login. |
 | `/api/v1/status` | Status van deze instantie en de afhankelijkheden. Alleen beheerders. |
 | `/api/v1/sites` | Alle sites met versie en laatste heartbeat. Alleen beheerders. |
 | overige paden | De frontend (single-page app). |
@@ -89,7 +94,8 @@ health check (`/platform healthcheck`, die `/readyz` aanroept).
 cmd/platform/        main: configuratie, opstarten, routes, CLI (user create/reset)
 internal/core/       gedeelde basis: config, logging, database, storage, health, httpserver,
                      sealer (versleuteling at rest), site
-internal/identity/   accounts, wachtwoorden, TOTP, sessies, throttling, audit-log
+internal/identity/   accounts, wachtwoorden, TOTP, passkeys, herstelcodes, sessies,
+                     throttling, audit-log
 migrations/<module>/ SQL-migraties per module; de mapnaam is ook het Postgres-schema
 web/                 SvelteKit-frontend; web/embed.go bedt web/build in de binary in
 docker/dev-setup/    Postgres, pgAdmin en RustFS (S3) voor de ontwikkelserver

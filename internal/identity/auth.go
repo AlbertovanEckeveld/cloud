@@ -132,7 +132,8 @@ func (s *Service) VerifyTOTP(ctx context.Context, c Client, sess Session, code s
 		if token, err = s.rotateSession(ctx, tx, sess.ID, StateAuthenticated, sessionMaxTTL); err != nil {
 			return err
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventLoginSucceeded, actor: &sess.UserID})
+		return s.audit(ctx, tx, c, auditEntry{event: EventLoginSucceeded, actor: &sess.UserID,
+			details: map[string]any{"method": "password+totp"}})
 	})
 	if errors.Is(err, ErrInvalidCode) {
 		s.totpFailed(ctx, c, sess, key)
@@ -300,7 +301,8 @@ func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, c Client, sess Sess
 		if err := s.audit(ctx, tx, c, auditEntry{event: EventTOTPEnrolled, actor: &sess.UserID}); err != nil {
 			return err
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventLoginSucceeded, actor: &sess.UserID})
+		return s.audit(ctx, tx, c, auditEntry{event: EventLoginSucceeded, actor: &sess.UserID,
+			details: map[string]any{"method": "activation"}})
 	})
 	if errors.Is(err, ErrInvalidCode) {
 		s.totpFailed(ctx, c, sess, key)
@@ -380,8 +382,8 @@ func (s *Service) createSession(ctx context.Context, q dbtx, userID uuid.UUID, s
 	now := s.now()
 	_, err := q.Exec(ctx, `
 		INSERT INTO identity.sessions
-			(id, token_hash, user_id, state, activation_token_hash, site_id, ip, user_agent, created_at, last_seen_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)`,
+			(id, token_hash, user_id, state, activation_token_hash, site_id, ip, user_agent, created_at, last_seen_at, expires_at, authenticated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, CASE WHEN $4 = 'authenticated' THEN $9::timestamptz END)`,
 		newID(), hash, userID, state, activationHash, s.opts.SiteID, c.IP, c.UserAgent, now, now.Add(ttl))
 	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)
@@ -397,7 +399,8 @@ func (s *Service) rotateSession(ctx context.Context, q dbtx, id uuid.UUID, state
 	now := s.now()
 	tag, err := q.Exec(ctx, `
 		UPDATE identity.sessions
-		SET token_hash = $2, state = $3, activation_token_hash = NULL, last_seen_at = $4, expires_at = $5
+		SET token_hash = $2, state = $3, activation_token_hash = NULL, last_seen_at = $4, expires_at = $5,
+		    authenticated_at = CASE WHEN $3 = 'authenticated' THEN $4::timestamptz END
 		WHERE id = $1`, id, hash, state, now, now.Add(ttl))
 	if err != nil {
 		return "", fmt.Errorf("rotate session: %w", err)
@@ -417,13 +420,17 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Session, User
 	var sess Session
 	var u User
 	var lastSeen time.Time
+	var authenticatedAt *time.Time
 	err := s.db.QueryRow(ctx, `
-		SELECT s.id, s.user_id, s.state, s.expires_at, s.last_seen_at, s.activation_token_hash,
+		SELECT s.id, s.user_id, s.state, s.expires_at, s.last_seen_at, s.activation_token_hash, s.authenticated_at,
 		       u.username, u.display_name, u.is_admin
 		FROM identity.sessions s JOIN identity.users u ON u.id = s.user_id
 		WHERE s.token_hash = $1`, hashToken(token)).Scan(
-		&sess.ID, &sess.UserID, &sess.State, &sess.ExpiresAt, &lastSeen, &sess.activationTokenHash,
+		&sess.ID, &sess.UserID, &sess.State, &sess.ExpiresAt, &lastSeen, &sess.activationTokenHash, &authenticatedAt,
 		&u.Username, &u.DisplayName, &u.IsAdmin)
+	if authenticatedAt != nil {
+		sess.AuthenticatedAt = *authenticatedAt
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, User{}, ErrNoSession
 	}
