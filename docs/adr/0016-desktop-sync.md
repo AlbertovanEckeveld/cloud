@@ -62,7 +62,14 @@ Dit ADR beschrijft de serverkant (2.6a), de sync-engine (2.6b) en de app (2.6c).
    `._*`), lock-bestanden van Office/LibreOffice en de eigen tijdelijke bestanden.
 7. macOS-namen (NFD) worden als NFC vergeleken, zoals de server ze opslaat.
 8. De status-database is alleen leesbaar voor de eigenaar (0600). Tokens zitten niet in de engine.
-9. Hernoemen wordt (nog) als verwijderen + nieuw gesynchroniseerd: veilig, maar kost bandbreedte
+9. **Mappen die verdwijnen of terugkomen:** de server meldt bij prullenbak, verplaatsen of
+   terugzetten alleen de map zelf. De client haalt bij "weg" de hele inhoud uit zijn spiegel, en
+   leest bij een map die nieuw verschijnt de inhoud apart in (`/sync/tree` op die map).
+10. **Opnieuw koppelen begint schoon:** een bron toevoegen of stoppen wist de cursor, spiegel en
+   base van die bron. Anders zou een nieuwe, lege map lijken op "alles lokaal verwijderd". De
+   eerste ronde voegt alleen samen. Elke bron krijgt een eigen submap met zijn naam
+   (bijvoorbeeld `~/Cloud/Mijn bestanden`).
+11. Hernoemen wordt (nog) als verwijderen + nieuw gesynchroniseerd: veilig, maar kost bandbreedte
    en de versiegeschiedenis staat dan bij het oude item in de prullenbak.
 
 ### De app (Wails v2)

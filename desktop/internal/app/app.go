@@ -324,8 +324,10 @@ func (a *App) Roots(ctx context.Context) ([]syncer.Root, error) {
 	return client.Roots(ctx)
 }
 
-// AddFolder links a server root to a local folder.
-func (a *App) AddFolder(root, name, dir string) error {
+// AddFolder links a server root to a folder named after it inside parent,
+// e.g. ~/Cloud/Mijn bestanden. An existing folder of that name is merged
+// with the server; nothing in it is deleted.
+func (a *App) AddFolder(root, name, parent string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for _, f := range a.cfg.Folders {
@@ -333,8 +335,20 @@ func (a *App) AddFolder(root, name, dir string) error {
 			return errors.New("deze map wordt al gesynchroniseerd")
 		}
 	}
+	if !filepath.IsAbs(parent) {
+		return errors.New("kies een volledige map")
+	}
+	dir := filepath.Join(filepath.Clean(parent), folderName(name))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("map aanmaken: %w", err)
+	}
 	clean, err := checkFolder(dir, a.cfg.Folders)
 	if err != nil {
+		return err
+	}
+	// Start from nothing: a previous link of this root (perhaps to another
+	// folder) must not make the new folder look like everything was deleted.
+	if err := a.state.Forget(context.Background(), root); err != nil {
 		return err
 	}
 	f := Folder{Root: root, Name: name, Dir: clean, Sidebar: sidebarSupported}
@@ -368,6 +382,9 @@ func (a *App) RemoveFolder(root string) error {
 	}
 	a.cfg.Folders = kept
 	delete(a.status, root)
+	if err := a.state.Forget(context.Background(), root); err != nil {
+		return err
+	}
 	return saveConfig(a.cfg)
 }
 

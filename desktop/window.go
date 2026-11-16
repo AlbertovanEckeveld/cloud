@@ -91,7 +91,8 @@ func (b *Bridge) Roots() ([]syncer.Root, error) {
 	return roots, err
 }
 
-// ChooseAndAdd asks for a local folder and links it to root.
+// ChooseAndAdd asks where to put the folder and links root to a folder
+// named after it there (e.g. ~/Cloud/Mijn bestanden).
 func (b *Bridge) ChooseAndAdd(root, name string) error {
 	// Suggest ~/Cloud as the home for synced folders.
 	suggest := ""
@@ -102,7 +103,7 @@ func (b *Bridge) ChooseAndAdd(root, name string) error {
 		}
 	}
 	dir, err := runtime.OpenDirectoryDialog(b.ctx, runtime.OpenDialogOptions{
-		Title:                "Kies een map voor " + name,
+		Title:                "Waar moet de map \"" + name + "\" komen?",
 		DefaultDirectory:     suggest,
 		CanCreateDirectories: true,
 	})

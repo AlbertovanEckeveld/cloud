@@ -149,8 +149,19 @@ func (e *Engine) pull(ctx context.Context, rootID string) error {
 		if err != nil {
 			return fmt.Errorf("read server changes: %w", err)
 		}
-		if err := e.state.applyRemote(ctx, rootID, p, full); err != nil {
+		arrived, err := e.state.applyRemote(ctx, rootID, p, full)
+		if err != nil {
 			return fmt.Errorf("store server changes: %w", err)
+		}
+		// A folder that appears (restored, moved in) comes without its contents.
+		for _, folder := range arrived {
+			sub, err := e.api.Tree(ctx, folder)
+			if err != nil {
+				return fmt.Errorf("read restored folder: %w", err)
+			}
+			if err := e.state.graft(ctx, rootID, folder, sub.Items); err != nil {
+				return fmt.Errorf("store restored folder: %w", err)
+			}
 		}
 		cursor = p.Cursor
 		if full || !p.More {
@@ -164,6 +175,12 @@ func (e *Engine) pull(ctx context.Context, rootID string) error {
 // never be able to make the client write outside the folder.
 func (e *Engine) remotePaths(mirror map[string]remoteEntry) map[string]*remotePath {
 	out := map[string]*remotePath{}
+	skipped := 0
+	defer func() {
+		if skipped > 0 {
+			e.log.Warn("ignoring server items with an unsafe or unknown path", "count", skipped)
+		}
+	}()
 	var resolve func(id string, depth int) (string, bool)
 	memo := map[string]string{}
 	resolve = func(id string, depth int) (string, bool) {
@@ -190,7 +207,7 @@ func (e *Engine) remotePaths(mirror map[string]remoteEntry) map[string]*remotePa
 	for id, n := range mirror {
 		rel, ok := resolve(id, 0)
 		if !ok {
-			e.log.Warn("ignoring server item with an unsafe or unknown path", "id", id)
+			skipped++
 			continue
 		}
 		if ignored(n.name) {

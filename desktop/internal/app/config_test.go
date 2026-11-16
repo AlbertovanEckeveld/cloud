@@ -29,3 +29,13 @@ func TestCheckFolder(t *testing.T) {
 		}
 	}
 }
+
+func TestFolderName(t *testing.T) {
+	for in, want := range map[string]string{
+		"Mijn bestanden": "Mijn bestanden", "a/b": "a-b", "..": "Cloud", " ": "Cloud", "x\nY": "x-Y",
+	} {
+		if got := folderName(in); got != want {
+			t.Errorf("folderName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

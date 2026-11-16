@@ -32,10 +32,13 @@ type fakeServer struct {
 	log     []string // node IDs, in order of change
 	// badSum makes downloads of this node carry the wrong content.
 	badSum map[string]bool
+	// trashed hides a folder with everything in it, like the server's trash:
+	// only the folder itself shows up in the change log.
+	trashed map[string]bool
 }
 
 func newFakeServer(t *testing.T) (*fakeServer, *Client) {
-	f := &fakeServer{nodes: map[string]*RemoteItem{}, content: map[string][]byte{}, badSum: map[string]bool{}}
+	f := &fakeServer{nodes: map[string]*RemoteItem{}, content: map[string][]byte{}, badSum: map[string]bool{}, trashed: map[string]bool{}}
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
 	c, err := NewClient(srv.URL, true, staticToken("tok"))
@@ -93,6 +96,38 @@ func (f *fakeServer) remove(id string) {
 	drop(id)
 }
 
+// trash and restore behave like the server: one change, for the folder.
+func (f *fakeServer) trash(id string, on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.trashed[id] = on
+	f.log = append(f.log, id)
+}
+
+// visible reports a node that is not (inside something) in the trash.
+func (f *fakeServer) visible(n *RemoteItem) bool {
+	for {
+		if f.trashed[n.ID] {
+			return false
+		}
+		if n.ParentID == nil {
+			return true
+		}
+		n = f.nodes[*n.ParentID]
+	}
+}
+
+// under reports whether n lies below folder.
+func (f *fakeServer) under(n *RemoteItem, folder string) bool {
+	for n.ParentID != nil {
+		if *n.ParentID == folder {
+			return true
+		}
+		n = f.nodes[*n.ParentID]
+	}
+	return false
+}
+
 func (f *fakeServer) find(path string) *RemoteItem {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -125,16 +160,24 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 	switch {
 	case p == "/api/v1/drive/sync/tree":
+		root := r.URL.Query().Get("root")
 		page := Page{Cursor: strconv.Itoa(len(f.log)), Items: []RemoteItem{}}
 		for _, n := range f.nodes {
-			page.Items = append(page.Items, *n)
+			if !f.visible(n) || (root != "mine" && !f.under(n, root)) {
+				continue
+			}
+			it := *n
+			if root != "mine" && it.ParentID != nil && *it.ParentID == root {
+				it.ParentID = nil
+			}
+			page.Items = append(page.Items, it)
 		}
 		_ = json.NewEncoder(w).Encode(page)
 	case p == "/api/v1/drive/sync/changes":
 		from, _ := strconv.Atoi(r.URL.Query().Get("cursor"))
 		page := Page{Cursor: strconv.Itoa(len(f.log)), Items: []RemoteItem{}}
 		for _, id := range f.log[from:] {
-			if n, ok := f.nodes[id]; ok {
+			if n, ok := f.nodes[id]; ok && f.visible(n) {
 				page.Items = append(page.Items, *n)
 			} else {
 				page.Items = append(page.Items, RemoteItem{ID: id, Gone: true})
@@ -460,5 +503,54 @@ func TestClientRequiresHTTPS(t *testing.T) {
 	}
 	if _, err := NewClient("https://user:pw@cloud.example", false, staticToken("x")); err == nil {
 		t.Error("credentials in URL accepted")
+	}
+}
+
+func TestServerTrashAndRestoreOfAFolder(t *testing.T) {
+	e := newEnv(t)
+	docs := e.srv.put(nil, "folder", "Projecten", nil)
+	sub := e.srv.put(&docs, "folder", "Oud", nil)
+	e.srv.put(&docs, "file", "a.txt", []byte("a"))
+	e.srv.put(&sub, "file", "b.txt", []byte("b"))
+	e.sync()
+
+	// Only the folder appears in the change log; its contents go with it.
+	e.srv.trash(docs, true)
+	e.sync()
+	if _, err := os.Stat(filepath.Join(e.dir, "Projecten")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("trashed folder still here")
+	}
+	var orphans int
+	_ = e.engine.state.db.QueryRow(`SELECT count(*) FROM remote r WHERE parent IS NOT NULL AND parent NOT IN (SELECT id FROM remote)`).Scan(&orphans)
+	if orphans != 0 {
+		t.Errorf("%d items without a parent left in the mirror", orphans)
+	}
+
+	// Restored: again only the folder is reported, but its contents come back.
+	e.srv.trash(docs, false)
+	e.sync()
+	if got, _ := e.read("Projecten/Oud/b.txt"); got != "b" {
+		t.Errorf("contents of the restored folder not synced: %q", got)
+	}
+	if !idle(e.sync()) {
+		t.Error("restore keeps syncing")
+	}
+}
+
+func TestRelinkingToAnotherFolderOnlyMerges(t *testing.T) {
+	e := newEnv(t)
+	for i := range 30 {
+		e.srv.put(nil, "file", fmt.Sprintf("f%02d.txt", i), []byte("x"))
+	}
+	e.sync()
+	// The user links the root to a new, empty folder: the app forgets the old
+	// state first. Nothing may be taken for deleted.
+	if err := e.engine.state.Forget(context.Background(), "mine"); err != nil {
+		t.Fatal(err)
+	}
+	e.dir = t.TempDir()
+	rep := e.sync()
+	if rep.TrashedRemote != 0 || rep.Downloaded != 30 || e.srv.find("f00.txt") == nil {
+		t.Errorf("relinking: %+v", rep)
 	}
 }

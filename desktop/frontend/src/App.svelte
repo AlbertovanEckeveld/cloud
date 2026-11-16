@@ -91,7 +91,7 @@
 		<section class="panel">
 			<h2>Gesynchroniseerde mappen</h2>
 			{#if status.folders.length === 0}
-				<p class="muted">Nog geen mappen. Kies hieronder wat je op deze computer wilt hebben.</p>
+				<p class="muted">Nog geen mappen. Kies hieronder wat je op deze computer wilt hebben; de app maakt er een map met dezelfde naam voor aan (bijvoorbeeld ~/Cloud/Mijn bestanden).</p>
 			{/if}
 			<ul class="list">
 				{#each status.folders as f (f.root)}
@@ -131,7 +131,7 @@
 					{#each roots.filter((r) => !synced(r.id)) as r (r.id)}
 						<li>
 							<span>{r.name} <span class="muted small">{r.kind === 'team' ? 'teammap' : r.kind === 'shared' ? 'gedeeld met mij' : ''}</span></span>
-							<button class="button" disabled={busy} onclick={() => act(() => bridge().ChooseAndAdd(r.id, r.name))}>Kies een map…</button>
+							<button class="button" disabled={busy} onclick={() => act(() => bridge().ChooseAndAdd(r.id, r.name))}>Kies waar…</button>
 						</li>
 					{/each}
 				</ul>

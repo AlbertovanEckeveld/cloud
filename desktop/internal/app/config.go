@@ -115,6 +115,20 @@ func checkFolder(dir string, others []Folder) (string, error) {
 	return clean, nil
 }
 
+// folderName turns a server root's name into a safe local folder name.
+func folderName(name string) string {
+	clean := strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r < 0x20 || r == 0x7f {
+			return '-'
+		}
+		return r
+	}, strings.TrimSpace(name))
+	if clean == "" || clean == "." || clean == ".." {
+		return "Cloud"
+	}
+	return clean
+}
+
 // within reports whether a is b or inside b.
 func within(a, b string) bool {
 	rel, err := filepath.Rel(b, a)
