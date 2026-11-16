@@ -104,6 +104,12 @@
 									laatst {new Date(f.last_run).toLocaleTimeString('nl-NL')}{total(f) ? ` · ${total(f)} wijziging(en)` : ''}{f.report.Conflicts ? ` · ${f.report.Conflicts} conflict(en): beide versies bewaard` : ''}
 								{:else}nog niet gesynchroniseerd{/if}
 							</span>
+							{#if status.sidebar_supported}
+								<label class="check small">
+									<input type="checkbox" checked={f.sidebar} onchange={(e) => act(() => bridge().SetSidebar(f.root, e.currentTarget.checked))} />
+									<span>In de zijbalk van je bestandsbeheerder</span>
+								</label>
+							{/if}
 							{#if f.error}<span class="small block error">{f.error}</span>{/if}
 							{#if f.mass_delete}
 								<div class="flash flash--error">

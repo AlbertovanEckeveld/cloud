@@ -4,7 +4,7 @@
 	import { api, type SharedNode } from '#lib/api.ts';
 	import { dateTime, formatBytes, permissionLabel, timeAgo } from '#lib/format.ts';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
-	import { drive } from '#lib/drive-state.svelte.ts';
+	import { drive, editable } from '#lib/drive-state.svelte.ts';
 
 	drive.section = 'shared';
 
@@ -53,7 +53,11 @@
 							{#if n.kind === 'folder'}
 								<a class="with-icon" href="/files/{n.id}"><Icon name="folder" />{n.name}</a>
 							{:else}
-								<a class="with-icon" href={api.drive.downloadURL(n.id)} download><Icon name="file" />{n.name}</a>
+								{#if editable(n.name)}
+									<a class="with-icon" href="/edit/{n.id}"><Icon name="file" />{n.name}</a>
+								{:else}
+									<a class="with-icon" href={api.drive.downloadURL(n.id)} download><Icon name="file" />{n.name}</a>
+								{/if}
 								<span class="muted small">{formatBytes(n.size)}</span>
 							{/if}
 						</td>

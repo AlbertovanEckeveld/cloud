@@ -5,6 +5,7 @@ package drive
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -122,5 +123,53 @@ func TestWOPI(t *testing.T) {
 	_ = e.status(t, owner, "DELETE", "/nodes/"+doc.ID.String()+"/shares/user/"+viewer.String(), "")
 	if resp, _ := e.wopiCall(t, "GET", base, ro.AccessToken, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("after unsharing: %d", resp.StatusCode)
+	}
+}
+
+func TestWOPIThroughPublicLink(t *testing.T) {
+	e := newTestEnv(t)
+	col := fakeCollabora(t)
+	colURL, _ := url.Parse(col.URL)
+	pubURL, _ := url.Parse(e.srv.URL)
+	e.svc.office = &office{cfg: Office{URL: colURL, PublicURL: pubURL, Key: [32]byte{7}}}
+	owner := e.person(t, "Eigenaar")
+	ctx := context.Background()
+	folder, _ := e.svc.CreateFolder(ctx, owner, nil, "Gedeeld")
+	_, doc := e.upload(t, owner, folder.ID.String(), "verslag.docx", []byte("inhoud"), false)
+	_, private := e.upload(t, owner, "root", "geheim.docx", []byte("geheim"), false)
+	link, err := e.svc.CreateLink(ctx, owner, folder.ID, nil, "wachtwoord1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := e.svc.OpenLinkInOffice(ctx, link.Token, "fout", doc.ID); !errors.Is(err, ErrWrongPassword) {
+		t.Errorf("wrong password: %v", err)
+	}
+	if _, err := e.svc.OpenLinkInOffice(ctx, link.Token, "wachtwoord1", private.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("file outside the link: %v", err)
+	}
+	sess, err := e.svc.OpenLinkInOffice(ctx, link.Token, "wachtwoord1", doc.ID)
+	if err != nil || sess.Edit {
+		t.Fatalf("open through link: %+v %v", sess, err)
+	}
+	base := "/files/" + doc.ID.String()
+	_, body := e.wopiCall(t, "GET", base, sess.AccessToken, nil)
+	var info map[string]any
+	_ = json.Unmarshal([]byte(body), &info)
+	if info["UserCanWrite"] != false || info["UserFriendlyName"] != "Gast" {
+		t.Errorf("CheckFileInfo for a link: %s", body)
+	}
+	if _, body := e.wopiCall(t, "GET", base+"/contents", sess.AccessToken, nil); body != "inhoud" {
+		t.Errorf("GetFile: %q", body)
+	}
+	if resp, _ := e.wopiCall(t, "POST", base+"/contents", sess.AccessToken, strings.NewReader("vandalisme"), "X-WOPI-Override", "PUT"); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("save through a link: %d", resp.StatusCode)
+	}
+	// Revoking the link ends the open session.
+	if err := e.svc.DeleteLink(ctx, owner, link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if resp, _ := e.wopiCall(t, "GET", base, sess.AccessToken, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("after revoking the link: %d", resp.StatusCode)
 	}
 }

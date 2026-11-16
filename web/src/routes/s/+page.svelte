@@ -5,7 +5,8 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import { onMount, tick } from 'svelte';
 	import { replaceState } from '$app/navigation';
-	import { api, ApiError, type DriveNode, type PublicView } from '#lib/api.ts';
+	import { api, ApiError, type DriveNode, type OfficeInfo, type OfficeSession, type PublicView } from '#lib/api.ts';
+	import OfficeFrame from '#lib/components/drive/OfficeFrame.svelte';
 	import { dateTime, formatBytes, timeAgo } from '#lib/format.ts';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
 
@@ -17,6 +18,21 @@
 	let missing = $state(false);
 	let download: HTMLFormElement;
 	let fileId = $state('');
+	let office = $state<OfficeInfo | null>(null);
+	let reading = $state<{ name: string; session: OfficeSession } | null>(null);
+
+	// Documents Collabora can show; through a link always read-only.
+	const readable = (n: DriveNode) =>
+		!!office?.enabled && office.extensions.includes(n.name.split('.').pop()?.toLowerCase() ?? '');
+
+	async function read(n: DriveNode) {
+		error = null;
+		try {
+			reading = { name: n.name, session: await api.drive.openLinkInOffice(token, password, n.id) };
+		} catch (e) {
+			error = e;
+		}
+	}
 
 	async function open(folderId: string | null) {
 		error = null;
@@ -38,6 +54,7 @@
 			return;
 		}
 		open(null);
+		api.drive.office().then((o) => (office = o), () => (office = null));
 	});
 
 	function unlock(e: SubmitEvent) {
@@ -80,6 +97,15 @@
 			</label>
 			<div><button class="button button--primary">Openen</button></div>
 		</form>
+	{:else if reading && office}
+		<div class="reader">
+			<div class="reader__bar">
+				<button class="icon-button" aria-label="Terug" title="Terug" onclick={() => (reading = null)}><Icon name="back" /></button>
+				<span>{reading.name}</span>
+				<span class="badge">Alleen lezen</span>
+			</div>
+			<OfficeFrame session={reading.session} origin={office.origin} onClose={() => (reading = null)} />
+		</div>
 	{:else if view}
 		<ErrorNotice {error} />
 		{#if view.folder}
@@ -99,6 +125,9 @@
 							{#each view.children as n (n.id)}
 								<tr>
 									<td>
+										{#if n.kind === 'file' && readable(n)}
+											<button class="icon-button" aria-label="Openen" title="Openen" onclick={() => read(n)}><Icon name="edit" /></button>
+										{/if}
 										{#if n.kind === 'folder'}
 											<button class="link-button" onclick={() => open(n.id)}><span class="with-icon"><Icon name="folder" />{n.name}</span></button>
 										{:else}
@@ -117,6 +146,9 @@
 			<section class="panel file">
 				<h1><Icon name="file" size={28} /> {view.node.name}</h1>
 				<p class="muted">{formatBytes(view.node.size)} · gewijzigd {timeAgo(view.node.updated_at)}</p>
+				{#if readable(view.node)}
+					<button class="button with-icon" onclick={() => view && read(view.node)}><Icon name="edit" />Openen</button>
+				{/if}
 				<button class="button button--primary with-icon" onclick={() => view && get(view.node)}><Icon name="download" />Downloaden</button>
 			</section>
 		{/if}
@@ -125,7 +157,7 @@
 
 <style>
 	.link-page {
-		max-width: 760px;
+		max-width: 1100px;
 		margin: 2rem auto;
 	}
 	.crumbs {
@@ -140,6 +172,17 @@
 	}
 	.file {
 		text-align: center;
+	}
+	.reader {
+		display: flex;
+		flex-direction: column;
+		height: calc(100vh - 8rem);
+	}
+	.reader__bar {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		margin-bottom: 0.5rem;
 	}
 	.file h1 {
 		overflow-wrap: anywhere;

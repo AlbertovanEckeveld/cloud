@@ -1,17 +1,15 @@
 <script lang="ts">
-	// Edits a document in Collabora Online. The access token goes to the
-	// editor in a form post (never in a URL), as the WOPI spec prescribes;
-	// the editor then talks to this platform's WOPI endpoints itself.
-	import { onMount, tick } from 'svelte';
+	// Edits (or, without edit permission, reads) a document in Collabora Online.
+	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { api, type OfficeInfo, type OfficeSession } from '#lib/api.ts';
 	import Icon from '#lib/components/Icon.svelte';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
+	import OfficeFrame from '#lib/components/drive/OfficeFrame.svelte';
 
 	let session = $state<OfficeSession | null>(null);
 	let office = $state<OfficeInfo | null>(null);
 	let error = $state<unknown>(null);
-	let form = $state<HTMLFormElement>();
 
 	const id = page.params.id ?? '';
 
@@ -20,29 +18,12 @@
 		else location.assign('/files');
 	}
 
-	// Collabora reports through postMessage; only its own origin is trusted.
-	function message(e: MessageEvent) {
-		if (!office || e.origin !== office.origin || typeof e.data !== 'string') return;
+	onMount(async () => {
 		try {
-			const msg = JSON.parse(e.data) as { MessageId?: string };
-			if (msg.MessageId === 'UI_Close') back();
-		} catch {
-			// Not a Collabora message.
+			[office, session] = await Promise.all([api.drive.office(), api.drive.openInOffice(id)]);
+		} catch (e) {
+			error = e;
 		}
-	}
-
-	onMount(() => {
-		(async () => {
-			try {
-				[office, session] = await Promise.all([api.drive.office(), api.drive.openInOffice(id)]);
-				await tick(); // the form exists once the session is rendered
-				form?.submit();
-			} catch (e) {
-				error = e;
-			}
-		})();
-		window.addEventListener('message', message);
-		return () => window.removeEventListener('message', message);
 	});
 </script>
 
@@ -57,12 +38,8 @@
 		<a class="icon-button" href={api.drive.downloadURL(id)} download aria-label="Downloaden" title="Downloaden"><Icon name="download" /></a>
 	</div>
 	<ErrorNotice {error} />
-	{#if session}
-		<form bind:this={form} method="POST" action={session.url} target="office" hidden>
-			<input name="access_token" value={session.access_token} />
-			<input name="access_token_ttl" value={session.access_token_ttl} />
-		</form>
-		<iframe name="office" title="Documenteditor" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen></iframe>
+	{#if session && office}
+		<OfficeFrame {session} origin={office.origin} onClose={back} />
 	{/if}
 </div>
 
@@ -80,12 +57,5 @@
 	}
 	.editor__bar a:last-child {
 		margin-left: auto;
-	}
-	iframe {
-		flex: 1;
-		width: 100%;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: #fff;
 	}
 </style>

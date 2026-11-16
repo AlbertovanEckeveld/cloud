@@ -5,6 +5,8 @@ import (
 	"embed"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/wailsapp/wails/v2"
@@ -91,8 +93,17 @@ func (b *Bridge) Roots() ([]syncer.Root, error) {
 
 // ChooseAndAdd asks for a local folder and links it to root.
 func (b *Bridge) ChooseAndAdd(root, name string) error {
+	// Suggest ~/Cloud as the home for synced folders.
+	suggest := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		suggest = filepath.Join(home, "Cloud")
+		if err := os.MkdirAll(suggest, 0o700); err != nil {
+			suggest = ""
+		}
+	}
 	dir, err := runtime.OpenDirectoryDialog(b.ctx, runtime.OpenDialogOptions{
 		Title:                "Kies een map voor " + name,
+		DefaultDirectory:     suggest,
 		CanCreateDirectories: true,
 	})
 	if err != nil || dir == "" {
@@ -113,6 +124,10 @@ func (b *Bridge) SetPaused(on bool) error {
 
 func (b *Bridge) ConfirmMassDelete(root string) error {
 	return b.call(5*time.Second, "ConfirmMassDelete", map[string]string{"root": root}, nil)
+}
+
+func (b *Bridge) SetSidebar(root string, on bool) error {
+	return b.call(10*time.Second, "SetSidebar", map[string]any{"root": root, "on": on}, nil)
 }
 
 func (b *Bridge) SetAutostart(on bool) error {

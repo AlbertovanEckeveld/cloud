@@ -4,6 +4,7 @@
 	import { api, errorMessage, type SearchResult } from '#lib/api.ts';
 	import { dateTime, formatBytes, previewKind, snippetParts, timeAgo } from '#lib/format.ts';
 	import PreviewDialog from './PreviewDialog.svelte';
+	import { editable } from '#lib/drive-state.svelte.ts';
 
 	let { query }: { query: string } = $props();
 
@@ -46,6 +47,8 @@
 						<td class="name">
 							{#if r.kind === 'folder'}
 								<a class="with-icon" href="/files/{r.id}"><Icon name="folder" />{r.name}</a>
+							{:else if editable(r.name) && !previewKind(r.content_type, r.name)}
+								<a class="with-icon" href="/edit/{r.id}"><Icon name="file" />{r.name}</a>
 							{:else if previewKind(r.content_type, r.name)}
 								<button class="link-button with-icon" onclick={() => (previewing = previewable.indexOf(r))}><Icon name="file" />{r.name}</button>
 							{:else}

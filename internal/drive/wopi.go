@@ -181,7 +181,10 @@ func (o *office) extensions(ctx context.Context) ([]string, error) {
 
 // wopiToken is what an access token grants: one user, one file, until exp.
 type wopiToken struct {
-	User  uuid.UUID `json:"u"`
+	User uuid.UUID `json:"u"`
+	// Link is set instead of User for someone opening a public link:
+	// read-only, and the link is checked again on every call.
+	Link  uuid.UUID `json:"l,omitempty"`
 	File  uuid.UUID `json:"f"`
 	Write bool      `json:"w"`
 	Exp   int64     `json:"e"` // Unix milliseconds
@@ -286,8 +289,13 @@ func (s *Service) OpenInOffice(ctx context.Context, userID, fileID uuid.UUID) (O
 	}
 	exp := s.now().Add(wopiTokenTTL).UnixMilli()
 	tok := s.office.sign(wopiToken{User: userID, File: fileID, Write: edit, Exp: exp})
+	return OfficeSession{URL: s.office.editorURL(src, fileID), AccessToken: tok, TTL: exp, Edit: edit}, nil
+}
+
+// editorURL adds the WOPI source and language to an editor URL.
+func (o *office) editorURL(src string, fileID uuid.UUID) string {
 	q := url.Values{
-		"WOPISrc": {s.office.cfg.PublicURL.String() + "/wopi/files/" + fileID.String()},
+		"WOPISrc": {o.cfg.PublicURL.String() + "/wopi/files/" + fileID.String()},
 		"lang":    {"nl"},
 	}
 	sep := "?"
@@ -297,7 +305,7 @@ func (s *Service) OpenInOffice(ctx context.Context, userID, fileID uuid.UUID) (O
 			sep = ""
 		}
 	}
-	return OfficeSession{URL: src + sep + q.Encode(), AccessToken: tok, TTL: exp, Edit: edit}, nil
+	return src + sep + q.Encode()
 }
 
 // ErrNoOffice means documents cannot be opened in the editor (not
@@ -341,22 +349,36 @@ func (s *Service) wopi(h wopiHandler) http.HandlerFunc {
 
 func wopiTime(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000000Z") }
 
+// wopiFile loads the file a token is for, checking access again: the
+// user's permission, or for a link that it is still valid and still covers
+// the file. It also says who is editing and whether they may save.
+func (s *Service) wopiFile(ctx context.Context, t wopiToken) (n Node, who, name string, canWrite bool, err error) {
+	if t.Link != uuid.Nil {
+		n, err = s.linkFile(ctx, t.Link, t.File)
+		return n, "link-" + t.Link.String(), "Gast", false, err
+	}
+	if n, err = s.file(ctx, s.db, t.User, t.File, authz.View); err != nil {
+		return Node{}, "", "", false, err
+	}
+	names, _ := s.sharing.DisplayNames(ctx, []uuid.UUID{t.User})
+	return n, t.User.String(), names[t.User], t.Write && n.Permission.Allows(authz.Edit), nil
+}
+
 func (s *Service) wopiCheckFileInfo(w http.ResponseWriter, r *http.Request, t wopiToken) {
-	n, err := s.file(r.Context(), s.db, t.User, t.File, authz.View)
+	n, who, name, canWrite, err := s.wopiFile(r.Context(), t)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	names, _ := s.sharing.DisplayNames(r.Context(), []uuid.UUID{t.User})
 	httpserver.WriteJSON(w, http.StatusOK, map[string]any{
 		"BaseFileName":            n.Name,
 		"OwnerId":                 n.ownerID.String(),
-		"UserId":                  t.User.String(),
-		"UserFriendlyName":        names[t.User],
+		"UserId":                  who,
+		"UserFriendlyName":        name,
 		"Size":                    n.Size,
 		"Version":                 n.currentVersionID.String(),
 		"LastModifiedTime":        wopiTime(n.UpdatedAt),
-		"UserCanWrite":            t.Write && n.Permission.Allows(authz.Edit),
+		"UserCanWrite":            canWrite,
 		"SupportsUpdate":          true,
 		"SupportsLocks":           false,
 		"SupportsRename":          false,
@@ -369,7 +391,12 @@ func (s *Service) wopiCheckFileInfo(w http.ResponseWriter, r *http.Request, t wo
 
 func (s *Service) wopiGetFile(w http.ResponseWriter, r *http.Request, t wopiToken) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(transferDeadline))
-	n, obj, err := s.Open(r.Context(), t.User, t.File)
+	n, _, _, _, err := s.wopiFile(r.Context(), t)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	obj, err := s.openVersion(r.Context(), *n.currentVersionID)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -415,6 +442,36 @@ func (s *Service) wopiPutFile(w http.ResponseWriter, r *http.Request, t wopiToke
 	}
 	w.Header().Set("X-WOPI-ItemVersion", saved.currentVersionID.String())
 	httpserver.WriteJSON(w, http.StatusOK, map[string]string{"LastModifiedTime": wopiTime(saved.UpdatedAt)})
+}
+
+// OpenLinkInOffice opens a document from a public link in the editor,
+// read-only. The link (and its password) is checked now and on every call
+// the editor makes.
+func (s *Service) OpenLinkInOffice(ctx context.Context, token, password string, fileID uuid.UUID) (OfficeSession, error) {
+	if s.office == nil {
+		return OfficeSession{}, ErrNoOffice
+	}
+	link, linkID, err := s.openLink(ctx, token, password)
+	if err != nil {
+		return OfficeSession{}, err
+	}
+	n, err := s.within(ctx, link, fileID)
+	if err != nil {
+		return OfficeSession{}, err
+	}
+	if n.Kind != "file" || n.currentVersionID == nil {
+		return OfficeSession{}, ErrNotFound
+	}
+	src, _, err := s.office.action(ctx, n.Name, false)
+	if err != nil {
+		return OfficeSession{}, err
+	}
+	if src == "" {
+		return OfficeSession{}, ErrNoOffice
+	}
+	exp := s.now().Add(wopiTokenTTL).UnixMilli()
+	tok := s.office.sign(wopiToken{Link: linkID, File: fileID, Exp: exp})
+	return OfficeSession{URL: s.office.editorURL(src, fileID), AccessToken: tok, TTL: exp}, nil
 }
 
 func (s *Service) handleOpenInOffice(w http.ResponseWriter, r *http.Request) {

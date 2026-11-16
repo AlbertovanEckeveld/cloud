@@ -933,6 +933,14 @@ export const api = {
 		openLink: (token: string, password: string, folderId: string | null, f: typeof fetch = fetch) =>
 			post('/api/v1/drive/public/links/open', parsePublicView, { token, password, folder_id: folderId ?? '' }, f),
 		linkDownloadURL: '/api/v1/drive/public/links/download',
+		/** Opens a document of a public link in the editor, read-only. */
+		openLinkInOffice: (token: string, password: string, fileId: string, f: typeof fetch = fetch) =>
+			post('/api/v1/drive/public/links/office', (v) => {
+				const r = record(v, 'office');
+				const url = str(r, 'url');
+				if (!/^https?:\/\//.test(url)) fail('url');
+				return { url, access_token: str(r, 'access_token'), access_token_ttl: num(r, 'access_token_ttl'), edit: false } as OfficeSession;
+			}, { token, password, file_id: fileId }, f),
 		office: (f: typeof fetch = fetch) =>
 			get('/api/v1/drive/office', (v) => {
 				const r = record(v, 'office');

@@ -29,6 +29,11 @@ het WOPI-protocol.
 6. **Niet aangeboden:** locks, hernoemen en "opslaan als" vanuit de editor (CheckFileInfo
    meldt dat); die lopen via drive zelf.
 7. Berichten van de editor (`postMessage`) worden alleen van Collabora's origin geaccepteerd.
+8. **Openbare links:** wie een deellink heeft, kan documenten **alleen lezen** in de editor. Het
+   token is dan aan de link gebonden (niet aan een gebruiker) en wordt pas uitgegeven na het
+   wachtwoord van de link. Elke WOPI-aanroep controleert opnieuw dat de link bestaat, niet
+   verlopen is en het bestand (buiten de prullenbak) nog omvat: intrekken beëindigt ook een
+   geopende sessie. Opslaan kan via een link nooit.
 
 ## Gevolgen
 

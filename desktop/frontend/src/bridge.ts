@@ -15,6 +15,7 @@ export interface FolderStatus {
 	root: string;
 	name: string;
 	dir: string;
+	sidebar: boolean;
 	last_run: string;
 	report: Report;
 	error: string;
@@ -27,6 +28,7 @@ export interface Status {
 	syncing: boolean;
 	paused: boolean;
 	autostart: boolean;
+	sidebar_supported: boolean;
 	folders: FolderStatus[];
 	error: string;
 }
@@ -48,6 +50,7 @@ interface BridgeAPI {
 	SyncNow(): Promise<void>;
 	SetPaused(on: boolean): Promise<void>;
 	ConfirmMassDelete(root: string): Promise<void>;
+	SetSidebar(root: string, on: boolean): Promise<void>;
 	SetAutostart(on: boolean): Promise<void>;
 	OpenFolder(dir: string): Promise<void>;
 }

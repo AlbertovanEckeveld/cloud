@@ -94,7 +94,12 @@ Dit ADR beschrijft de serverkant (2.6a), de sync-engine (2.6b) en de app (2.6c).
    alleen de dienst.
 7. De dienst opent de browser en de bestandsbeheerder alleen met `xdg-open`/`open`, één
    argument, geen shell, alleen http(s)- en file-adressen.
-8. Bestandsbewaking (fsnotify) start een ronde 2 s na de laatste lokale wijziging; wijzigingen
+8. **Als schijf tonen:** de gesynchroniseerde map blijft een echte map (werkt offline), maar
+   staat standaard in de zijbalk van de bestandsbeheerder (GTK-bladwijzers op Linux; alleen de
+   eigen regel wordt aangepast, atomair). macOS biedt apps geen ondersteunde manier om de
+   Finder-zijbalk aan te passen. Een echte netwerkschijf (bestanden op aanvraag, FUSE of File
+   Provider) is overwogen en voorlopig niet gekozen.
+9. Bestandsbewaking (fsnotify) start een ronde 2 s na de laatste lokale wijziging; wijzigingen
    op de server worden elke 30 s opgehaald.
 
 ### Gevonden en opgelost tijdens het testen

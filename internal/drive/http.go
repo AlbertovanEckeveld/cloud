@@ -38,6 +38,9 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 	// never in the URL, so it does not end up in logs or browser history.
 	r.Post("/public/links/open", s.handleOpenLink)
 	r.Post("/public/links/download", s.handleLinkDownload)
+	r.Post("/public/links/office", s.handleLinkOffice)
+	// Which documents the editor opens; not sensitive, also for link visitors.
+	r.Get("/office", s.handleOfficeInfo)
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireUser)
 		r.Get("/folders/{id}", s.handleList)
@@ -53,7 +56,6 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 		r.Delete("/nodes/{id}/shares/{type}/{subject}", s.handleUnshare)
 		r.Get("/shared", s.handleSharedWithMe)
 		r.Get("/search", s.handleSearch)
-		r.Get("/office", s.handleOfficeInfo)
 		r.Get("/sync/roots", s.handleSyncRoots)
 		r.Get("/sync/tree", s.handleSyncTree)
 		r.Get("/sync/changes", s.handleSyncChanges)
@@ -844,4 +846,32 @@ func (s *Service) handleSearch(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, struct {
 		Results []SearchResult `json:"results"`
 	}{results})
+}
+
+// handleLinkOffice opens a document of a public link in the editor:
+// {"token", "password", "file_id"} -> OfficeSession (read-only).
+func (s *Service) handleLinkOffice(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+		FileID   string `json:"file_id"`
+	}
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	file, err := uuid.Parse(in.FileID)
+	if err != nil {
+		s.writeError(w, r, ErrNotFound)
+		return
+	}
+	sess, err := s.OpenLinkInOffice(r.Context(), in.Token, in.Password, file)
+	if errors.Is(err, ErrNoOffice) {
+		httpserver.WriteError(w, http.StatusUnsupportedMediaType, "no_office", "Dit bestand kan niet in de editor worden geopend.")
+		return
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, sess)
 }

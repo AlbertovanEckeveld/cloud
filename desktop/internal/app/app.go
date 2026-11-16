@@ -42,13 +42,16 @@ type MassDeleteAsk struct {
 
 // Status is the app's state for the window.
 type Status struct {
-	Server    string         `json:"server"`
-	SignedIn  bool           `json:"signed_in"`
-	Syncing   bool           `json:"syncing"`
-	Paused    bool           `json:"paused"`
-	Autostart bool           `json:"autostart"`
-	Folders   []FolderStatus `json:"folders"`
-	Error     string         `json:"error"`
+	Server    string `json:"server"`
+	SignedIn  bool   `json:"signed_in"`
+	Syncing   bool   `json:"syncing"`
+	Paused    bool   `json:"paused"`
+	Autostart bool   `json:"autostart"`
+	// SidebarSupported is false where the app cannot change the file
+	// manager's sidebar (macOS).
+	SidebarSupported bool           `json:"sidebar_supported"`
+	Folders          []FolderStatus `json:"folders"`
+	Error            string         `json:"error"`
 }
 
 // App is the running desktop app.
@@ -259,7 +262,7 @@ func (a *App) publish() {
 func (a *App) Status() Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	s := Status{Server: a.cfg.Server, SignedIn: a.sess != nil, Syncing: a.syncing, Paused: a.paused, Autostart: a.cfg.Autostart, Error: a.lastErr, Folders: []FolderStatus{}}
+	s := Status{Server: a.cfg.Server, SignedIn: a.sess != nil, Syncing: a.syncing, Paused: a.paused, Autostart: a.cfg.Autostart, SidebarSupported: sidebarSupported, Error: a.lastErr, Folders: []FolderStatus{}}
 	for _, f := range a.cfg.Folders {
 		if st, ok := a.status[f.Root]; ok {
 			s.Folders = append(s.Folders, *st)
@@ -334,7 +337,14 @@ func (a *App) AddFolder(root, name, dir string) error {
 	if err != nil {
 		return err
 	}
-	a.cfg.Folders = append(a.cfg.Folders, Folder{Root: root, Name: name, Dir: clean})
+	f := Folder{Root: root, Name: name, Dir: clean, Sidebar: sidebarSupported}
+	if f.Sidebar {
+		if err := setSidebar(clean, "Cloud – "+name, true); err != nil {
+			a.log.Warn("cannot add the folder to the sidebar", "error", err)
+			f.Sidebar = false
+		}
+	}
+	a.cfg.Folders = append(a.cfg.Folders, f)
 	if err := saveConfig(a.cfg); err != nil {
 		return err
 	}
@@ -350,11 +360,31 @@ func (a *App) RemoveFolder(root string) error {
 	for _, f := range a.cfg.Folders {
 		if f.Root != root {
 			kept = append(kept, f)
+		} else if f.Sidebar {
+			if err := setSidebar(f.Dir, "", false); err != nil {
+				a.log.Warn("cannot remove the folder from the sidebar", "error", err)
+			}
 		}
 	}
 	a.cfg.Folders = kept
 	delete(a.status, root)
 	return saveConfig(a.cfg)
+}
+
+// SetSidebar shows or hides a synced folder in the file manager's sidebar.
+func (a *App) SetSidebar(root string, on bool) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i, f := range a.cfg.Folders {
+		if f.Root == root {
+			if err := setSidebar(f.Dir, "Cloud – "+f.Name, on); err != nil {
+				return err
+			}
+			a.cfg.Folders[i].Sidebar = on
+			return saveConfig(a.cfg)
+		}
+	}
+	return errors.New("deze map wordt niet gesynchroniseerd")
 }
 
 // SetPaused stops or resumes syncing (until the app restarts).

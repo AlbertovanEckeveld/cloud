@@ -300,6 +300,37 @@ func (s *Service) OpenLink(ctx context.Context, token, password string, folderID
 	return view, nil
 }
 
+// linkFile checks, for a running editor session, that a link still exists
+// and has not expired, and that the file is still inside it and not in the
+// trash. Revoking a link therefore ends sessions opened through it.
+func (s *Service) linkFile(ctx context.Context, linkID, fileID uuid.UUID) (Node, error) {
+	var nodeID uuid.UUID
+	var expires *time.Time
+	err := s.db.QueryRow(ctx, `SELECT node_id, expires_at FROM drive.links WHERE id = $1`, linkID).Scan(&nodeID, &expires)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && expires != nil && !expires.After(s.now())) {
+		return Node{}, ErrNotFound
+	}
+	if err != nil {
+		return Node{}, fmt.Errorf("load link: %w", err)
+	}
+	rows, err := s.db.Query(ctx, `SELECT `+nodeColumns+` FROM drive.nodes WHERE id = $1`, nodeID)
+	if err != nil {
+		return Node{}, fmt.Errorf("load node: %w", err)
+	}
+	link, err := pgx.CollectExactlyOneRow(rows, scanNode)
+	if err != nil {
+		return Node{}, ErrNotFound
+	}
+	if trashed, err := s.inTrash(ctx, s.db, nodeID); err != nil || trashed {
+		return Node{}, ErrNotFound
+	}
+	n, err := s.within(ctx, link, fileID)
+	if err != nil || n.Kind != "file" || n.currentVersionID == nil {
+		return Node{}, ErrNotFound
+	}
+	return n, nil
+}
+
 // OpenLinkFile returns the content of the linked file, or of a file inside a
 // linked folder, and counts the download.
 func (s *Service) OpenLinkFile(ctx context.Context, token, password string, fileID uuid.UUID) (Node, storage.Object, error) {

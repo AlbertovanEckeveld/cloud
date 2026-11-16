@@ -44,6 +44,8 @@ func (a *App) Handle(ctx context.Context, method string, raw json.RawMessage) (a
 	case "ConfirmMassDelete":
 		a.ConfirmMassDelete(args.Root)
 		return nil, nil
+	case "SetSidebar":
+		return nil, a.SetSidebar(args.Root, args.On)
 	case "SetAutostart":
 		return nil, a.SetAutostart(args.On)
 	case "OpenFolder":

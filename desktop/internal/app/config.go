@@ -16,6 +16,8 @@ type Folder struct {
 	Root string `json:"root"` // "mine", or a team folder's or share's ID
 	Name string `json:"name"`
 	Dir  string `json:"dir"`
+	// Sidebar shows the folder in the file manager's sidebar (Linux).
+	Sidebar bool `json:"sidebar"`
 }
 
 // Config is the app's settings. It holds no secrets: the sign-in is in the
