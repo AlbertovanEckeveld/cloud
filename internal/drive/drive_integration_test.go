@@ -99,7 +99,9 @@ func (e *testEnv) newUser(t *testing.T) uuid.UUID {
 				t.Errorf("cleanup object: %v", err)
 			}
 		}
-		for _, q := range []string{`DELETE FROM drive.nodes WHERE owner_id = $1`, `DELETE FROM drive.quotas WHERE user_id = $1`} {
+		// The change log last: deleting nodes records changes too.
+		for _, q := range []string{`DELETE FROM drive.nodes WHERE owner_id = $1`, `DELETE FROM drive.quotas WHERE user_id = $1`,
+			`DELETE FROM drive.changes WHERE owner_id = $1`} {
 			if _, err := e.pool.Exec(ctx, q, id); err != nil {
 				t.Errorf("cleanup: %v", err)
 			}

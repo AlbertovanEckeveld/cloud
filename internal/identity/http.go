@@ -21,6 +21,9 @@ import (
 type Principal struct {
 	User    User
 	Session Session
+	// Device is set for the desktop app (an access token, not a browser
+	// session): it may use files, never administration.
+	Device bool
 }
 
 type principalKey struct{}
@@ -133,7 +136,7 @@ func (s *Service) AuditRequest(r *http.Request, event string, details map[string
 // RequireAdmin must run after RequireUser.
 func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p, ok := PrincipalFrom(r.Context()); !ok || !p.User.IsAdmin {
+		if p, ok := PrincipalFrom(r.Context()); !ok || !p.User.IsAdmin || p.Device {
 			httpserver.WriteError(w, http.StatusForbidden, "forbidden", "Je hebt geen toegang tot deze pagina.")
 			return
 		}

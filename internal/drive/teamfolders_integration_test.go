@@ -33,9 +33,21 @@ func (e *testEnv) cleanupTeamFolders(t *testing.T, admin uuid.UUID) {
 		for _, k := range keys {
 			_ = e.objects.Delete(ctx, k)
 		}
-		if _, err := e.pool.Exec(ctx, `
-			DELETE FROM drive.nodes WHERE owner_id IN (SELECT id FROM drive.team_folders WHERE created_by = $1) AND parent_id IS NULL`, admin); err != nil {
-			t.Errorf("cleanup team folders: %v", err)
+		var teams []uuid.UUID
+		rows, _ = e.pool.Query(ctx, `SELECT id FROM drive.team_folders WHERE created_by = $1`, admin)
+		for rows.Next() {
+			var id uuid.UUID
+			_ = rows.Scan(&id)
+			teams = append(teams, id)
+		}
+		rows.Close()
+		for _, q := range []string{
+			`DELETE FROM drive.nodes WHERE owner_id = ANY($1) AND parent_id IS NULL`,
+			`DELETE FROM drive.changes WHERE owner_id = ANY($1)`,
+		} {
+			if _, err := e.pool.Exec(ctx, q, teams); err != nil {
+				t.Errorf("cleanup team folders: %v", err)
+			}
 		}
 	})
 }
@@ -76,6 +88,11 @@ func TestTeamFolders(t *testing.T) {
 	if code := e.status(t, admin, "POST", "/admin/team-folders", `{"name":"`+strings.ToUpper(name)+`"}`); code != http.StatusConflict {
 		t.Errorf("duplicate name: %d", code)
 	}
+	// The test purges the team folder itself, so the cleanup above can no
+	// longer find it: remove its change log here.
+	t.Cleanup(func() {
+		_, _ = e.pool.Exec(context.Background(), `DELETE FROM drive.changes WHERE owner_id = $1`, team.ID)
+	})
 	root := team.RootID.String()
 	if len(e.teamFolders(t, editor)) != 0 {
 		t.Error("team folder visible before any group was added")

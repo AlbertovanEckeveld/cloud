@@ -518,6 +518,9 @@ func (s *Service) Run(ctx context.Context) {
 			if err := s.purgeExpiredTrash(ctx); err != nil && ctx.Err() == nil {
 				s.log.Warn("purge expired trash", "error", err)
 			}
+			if err := s.pruneChanges(ctx); err != nil && ctx.Err() == nil {
+				s.log.Warn("prune sync changes", "error", err)
+			}
 			lastPurge = s.now()
 		}
 		if err := s.deleteObjects(ctx); err != nil && ctx.Err() == nil {

@@ -210,6 +210,10 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   2.4 app-wachtwoorden + WebDAV; 2.5 WOPI/Collabora; 2.6 desktop-synchronisatieclient
   (technologie nog te kiezen); zoeken op inhoud groeit mee (2.3c, uitgebreid zodra er
   tekstextractie is).
+- Fase 2.6 desktop-sync: Go + Wails v2, eerst Linux en macOS, volledige kopie van gekozen mappen,
+  inloggen via browser (OIDC + PKCE, loopback). 2.6a server (ADR 0016) gebouwd en getest; daarna
+  2.6b sync-engine (module `desktop/`) en 2.6c app. Desktop-deps: wails v2.17.1, fsnotify,
+  modernc.org/sqlite.
 - Klaar als (fase 2): uploaden/downloaden in browser en via WebDAV-client, delen met
   gebruiker/groep/link, versies terugzetten, prullenbak, document bewerken in Collabora,
   **een desktop-applicatie die foutloos uploadt en synchroniseert** (twee richtingen, met

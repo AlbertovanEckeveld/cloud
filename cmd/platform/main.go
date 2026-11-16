@@ -245,7 +245,7 @@ func serve(ctx context.Context) error {
 		avatars:   a.identity.AvatarHandler,
 		drive: func(r chi.Router) {
 			files.Routes(r, drive.Auth{
-				RequireUser:       a.identity.RequireUser,
+				RequireUser:       a.identity.RequireUserOrDevice,
 				RequireAdmin:      identity.RequireAdmin,
 				RequireRecentAuth: a.identity.RequireRecentAuth,
 				Audit:             a.identity.AuditRequest,
