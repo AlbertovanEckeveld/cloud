@@ -200,8 +200,8 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   Het deelmodel is ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`.
 - Bezig met: **fase 2 – drive**. 2.1 af (ADR 0009). 2.2 delen + versies (ADR 0010),
   2.2b teammappen (ADR 0011) en 2.3a deellinks (ADR 0012) en 2.3b voorbeeldweergave (incl. markdown en PDF) en 2.3c zoeken op
-  naam (ADR 0013) en 2.4 app-wachtwoorden + WebDAV (ADR 0014) en 2.5 Collabora/WOPI (ADR 0015) gebouwd en
-  getest; wachten op
+  naam (ADR 0013) en 2.4 app-wachtwoorden + WebDAV (ADR 0014) en 2.5 Collabora/WOPI (ADR 0015, door mij werkend
+  bevestigd) gebouwd en getest; wachten op
   mijn eigen test. Zoeken op inhoud volgt met
   tekstextractie.
   Stappen: 2.1 drive-basis (mappen, streaming upload/download,
