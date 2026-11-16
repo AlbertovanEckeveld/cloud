@@ -180,3 +180,21 @@ const rank = { view: 1, edit: 2, manage: 3 } as const;
 export function allows(p: keyof typeof rank, need: keyof typeof rank): boolean {
 	return rank[p] >= rank[need];
 }
+
+export type PreviewKind = 'image' | 'video' | 'audio' | 'text';
+
+const previewMedia: Record<string, PreviewKind> = {
+	'image/jpeg': 'image', 'image/png': 'image', 'image/gif': 'image', 'image/webp': 'image', 'image/avif': 'image',
+	'video/mp4': 'video', 'video/webm': 'video', 'video/ogg': 'video',
+	'audio/mpeg': 'audio', 'audio/ogg': 'audio', 'audio/wav': 'audio', 'audio/x-wav': 'audio', 'audio/mp4': 'audio',
+	'audio/webm': 'audio', 'audio/flac': 'audio'
+};
+const textLike = ['application/json', 'application/xml', 'application/javascript', 'application/x-yaml', 'application/yaml', 'application/toml'];
+
+/** How a file can be previewed; mirrors the server's whitelist (drive/preview.go). */
+export function previewKind(contentType: string): PreviewKind | null {
+	const type = contentType.split(';')[0].trim().toLowerCase();
+	if (previewMedia[type]) return previewMedia[type];
+	if (type.startsWith('text/') || textLike.includes(type)) return 'text';
+	return null;
+}

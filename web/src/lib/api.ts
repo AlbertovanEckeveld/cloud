@@ -852,6 +852,7 @@ export const api = {
 		emptyTrash: (f: typeof fetch = fetch) => request('DELETE', '/api/v1/drive/trash', noContent, undefined, f),
 		usage: (f: typeof fetch = fetch) => get('/api/v1/drive/usage', parseUsage, f),
 		downloadURL: (id: string) => `/api/v1/drive/files/${enc(id)}/content`,
+		previewURL: (id: string) => `/api/v1/drive/files/${enc(id)}/content?inline=1`,
 		teamFolders: (f: typeof fetch = fetch) =>
 			get('/api/v1/drive/team-folders', (v) => list(record(v, 'team_folders'), 'nodes', parseNode), f),
 		teamTrash: (teamId: string, f: typeof fetch = fetch) =>

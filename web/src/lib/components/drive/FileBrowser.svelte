@@ -7,11 +7,12 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { drive, refreshDrive } from '#lib/drive-state.svelte.ts';
 	import { api, ApiError, errorMessage, type DriveNode, type FolderView } from '#lib/api.ts';
-	import { allows, dateTime, formatBytes, permissionLabel, timeAgo, uniqueName } from '#lib/format.ts';
+	import { allows, dateTime, formatBytes, permissionLabel, previewKind, timeAgo, uniqueName } from '#lib/format.ts';
 	import ErrorNotice from '../ErrorNotice.svelte';
 	import MoveDialog from './MoveDialog.svelte';
 	import ShareDialog from './ShareDialog.svelte';
 	import VersionsDialog from './VersionsDialog.svelte';
+	import PreviewDialog from './PreviewDialog.svelte';
 
 	let { folderId }: { folderId: string | null } = $props();
 
@@ -26,6 +27,8 @@
 	let moving = $state<DriveNode | null>(null);
 	let sharing = $state<DriveNode | null>(null);
 	let history = $state<DriveNode | null>(null);
+	let previewing = $state<number | null>(null);
+	const previewable = $derived(view?.children.filter((c) => c.kind === 'file' && previewKind(c.content_type)) ?? []);
 	let dragging = $state(false);
 	let uploadKey = 0;
 
@@ -210,7 +213,13 @@
 							{:else if n.kind === 'folder'}
 								<a class="with-icon" href="/files/{n.id}"><Icon name="folder" />{n.name}</a>
 							{:else}
-								<a class="with-icon" href={api.drive.downloadURL(n.id)} download><Icon name="file" />{n.name}</a>
+								{#if previewKind(n.content_type)}
+									<button class="link-button with-icon name-button" onclick={() => (previewing = previewable.indexOf(n))}>
+										<Icon name="file" />{n.name}
+									</button>
+								{:else}
+									<a class="with-icon" href={api.drive.downloadURL(n.id)} download><Icon name="file" />{n.name}</a>
+								{/if}
 							{/if}
 							{#if n.shared}<span class="badge" title="Gedeeld met anderen"><Icon name="users" size={14} />Gedeeld</span>{/if}
 						</td>
@@ -247,6 +256,9 @@
 {/if}
 {#if sharing}
 	<ShareDialog node={sharing} onClose={() => ((sharing = null), load())} />
+{/if}
+{#if previewing !== null && previewing >= 0}
+	<PreviewDialog files={previewable} start={previewing} onClose={() => (previewing = null)} />
 {/if}
 {#if history}
 	<VersionsDialog node={history} onChanged={load} onClose={() => (history = null)} />
@@ -289,6 +301,11 @@
 	.empty {
 		text-align: center;
 		padding: 3rem 1rem;
+	}
+	.name-button {
+		color: var(--text-strong);
+		text-align: left;
+		overflow-wrap: anywhere;
 	}
 	.name a {
 		color: var(--text-strong);

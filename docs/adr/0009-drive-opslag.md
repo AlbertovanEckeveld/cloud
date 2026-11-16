@@ -22,8 +22,12 @@ zijn. Het platform moet multi-site blijven (ADR 0001).
    eigen deadline van 12 uur; de algemene servertimeouts (30 s) blijven voor de rest gelden.
 3. **Geen XSS via geüploade bestanden.** Downloads zijn altijd `application/octet-stream` met
    `Content-Disposition: attachment` en `Content-Security-Policy: default-src 'none'; sandbox`.
-   De bestandsnaam in de header wordt gecodeerd (RFC 6266/2231). Voorbeeldweergave van veilige
-   typen volgt in 2.3, met dezelfde voorzichtigheid.
+   De bestandsnaam in de header wordt gecodeerd (RFC 6266/2231). Voorbeeldweergave (2.3b,
+   `?inline=1`) kan alleen voor een witte lijst: afbeeldingen (geen SVG: die kan script
+   bevatten), video, audio, en tekst, die altijd als `text/plain` gaat, ook HTML, zodat je de
+   bron ziet en er niets wordt uitgevoerd. Met `nosniff` blijft een als `.png` vermomde
+   HTML-pagina een (kapotte) afbeelding. PDF valt voorlopig af: de PDF-viewer van de browser
+   werkt niet onder de sandbox-CSP, en pdf.js zou een nieuwe dependency zijn.
 4. **Namen** worden genormaliseerd naar Unicode NFC (macOS gebruikt NFD), mogen geen `/`, `\`
    of besturingstekens bevatten, en zijn per map uniek ongeacht hoofdletters (Windows en macOS
    zijn hoofdletterongevoelig).

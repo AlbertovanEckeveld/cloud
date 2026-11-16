@@ -250,6 +250,31 @@ func TestUploadLimits(t *testing.T) {
 	}
 }
 
+func TestPreview(t *testing.T) {
+	e := newTestEnv(t)
+	u := e.newUser(t)
+	_, png := e.upload(t, u, "root", "foto.png", []byte("\x89PNG\r\n\x1a\nrest"), false)
+	_, page := e.upload(t, u, "root", "aanval.html", []byte("<script>alert(1)</script>"), false)
+	_, svg := e.upload(t, u, "root", "logo.svg", []byte("<svg onload=alert(1)/>"), false)
+	_, fake := e.upload(t, u, "root", "nep.png", []byte("<html><script>alert(1)</script>"), false)
+
+	check := func(n Node, wantStatus int, wantType string) {
+		t.Helper()
+		resp, _ := e.request(t, u, "GET", "/files/"+n.ID.String()+"/content?inline=1", nil)
+		if resp.StatusCode != wantStatus || (wantType != "" && resp.Header.Get("Content-Type") != wantType) {
+			t.Errorf("%s: %d %q", n.Name, resp.StatusCode, resp.Header.Get("Content-Type"))
+		}
+		if wantStatus == http.StatusOK && (!strings.HasPrefix(resp.Header.Get("Content-Disposition"), "inline") ||
+			!strings.Contains(resp.Header.Get("Content-Security-Policy"), "sandbox")) {
+			t.Errorf("%s: headers %v", n.Name, resp.Header)
+		}
+	}
+	check(png, http.StatusOK, "image/png")
+	check(page, http.StatusOK, "text/plain; charset=utf-8") // shown as source, never run
+	check(svg, http.StatusUnsupportedMediaType, "")
+	check(fake, http.StatusOK, "image/png") // nosniff keeps it an (invalid) image
+}
+
 func TestOtherUsersSeeNothing(t *testing.T) {
 	e := newTestEnv(t)
 	owner, other := e.newUser(t), e.newUser(t)

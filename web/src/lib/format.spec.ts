@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allows, checkLabel, describeUserAgent, eventLabel, formatBytes, groupSecret, permissionLabel, safeNext, timeAgo, uniqueName } from './format.ts';
+import { allows, checkLabel, describeUserAgent, eventLabel, formatBytes, groupSecret, permissionLabel, previewKind, safeNext, timeAgo, uniqueName } from './format.ts';
 
 const now = new Date('2026-11-15T12:00:00Z');
 
@@ -94,5 +94,15 @@ describe('permissions', () => {
 		expect(allows('edit', 'edit')).toBe(true);
 		expect(allows('view', 'edit')).toBe(false);
 		expect(permissionLabel('edit')).toBe('Kan bewerken');
+	});
+});
+
+describe('previewKind', () => {
+	it('follows the server whitelist', () => {
+		expect(previewKind('image/png')).toBe('image');
+		expect(previewKind('image/svg+xml')).toBeNull();
+		expect(previewKind('text/html; charset=utf-8')).toBe('text');
+		expect(previewKind('application/pdf')).toBeNull();
+		expect(previewKind('video/mp4')).toBe('video');
 	});
 });

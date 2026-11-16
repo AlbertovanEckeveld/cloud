@@ -217,13 +217,22 @@ func (s *Service) handleDownload(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
+	// ?inline=1 shows a previewable file in the page instead of downloading it.
+	inline := r.URL.Query().Get("inline") == "1"
 	n, obj, err := s.Open(r.Context(), s.userID(r), id)
 	if err != nil {
 		s.writeError(w, r, err)
 		return
 	}
 	defer obj.Close()
-	serveFile(w, r, n.Name, *n.currentVersionID, n.UpdatedAt, obj)
+	var show string
+	if inline {
+		if show = previewType(n.ContentType); show == "" {
+			httpserver.WriteError(w, http.StatusUnsupportedMediaType, "no_preview", "Van dit bestand is geen voorbeeld beschikbaar.")
+			return
+		}
+	}
+	serveFile(w, r, n.Name, *n.currentVersionID, n.UpdatedAt, obj, show)
 }
 
 func (s *Service) handleDownloadVersion(w http.ResponseWriter, r *http.Request) {
@@ -243,20 +252,26 @@ func (s *Service) handleDownloadVersion(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer obj.Close()
-	serveFile(w, r, n.Name, v.ID, v.CreatedAt, obj)
+	serveFile(w, r, n.Name, v.ID, v.CreatedAt, obj, "")
 }
 
-// serveFile sends content as an attachment. Files are never rendered by the
-// browser: an uploaded HTML or SVG page must not run script on this origin
-// (stored XSS), so the type is generic and the CSP sandboxes it too.
-func serveFile(w http.ResponseWriter, r *http.Request, name string, version uuid.UUID, modified time.Time, content io.ReadSeeker) {
+// serveFile sends content as an attachment, or, with inlineType (a type
+// from previewType), inline for a preview. An uploaded HTML or SVG page must
+// never run script on this origin (stored XSS): downloads get a generic
+// type, previews only whitelisted ones, and the CSP sandboxes both.
+func serveFile(w http.ResponseWriter, r *http.Request, name string, version uuid.UUID, modified time.Time, content io.ReadSeeker, inlineType string) {
 	h := w.Header()
+	kind := "attachment"
 	h.Set("Content-Type", "application/octet-stream")
+	if inlineType != "" {
+		kind = "inline"
+		h.Set("Content-Type", inlineType)
+	}
 	// FormatMediaType quotes or RFC 2231-encodes the name, so quotes, line
 	// breaks or non-ASCII characters cannot break out of the header.
-	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name})
+	disposition := mime.FormatMediaType(kind, map[string]string{"filename": name})
 	if disposition == "" {
-		disposition = "attachment" // never let a failed encoding drop the header
+		disposition = kind // never let a failed encoding drop the header
 	}
 	h.Set("Content-Disposition", disposition)
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
@@ -807,5 +822,5 @@ func (s *Service) handleLinkDownload(w http.ResponseWriter, r *http.Request) {
 	defer obj.Close()
 	h := w.Header()
 	h.Set("Referrer-Policy", "no-referrer")
-	serveFile(w, r, n.Name, *n.currentVersionID, n.UpdatedAt, obj)
+	serveFile(w, r, n.Name, *n.currentVersionID, n.UpdatedAt, obj, "")
 }
