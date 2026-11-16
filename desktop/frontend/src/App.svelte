@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The desktop app's only window: sign in, choose folders, see what syncs.
 	import { onMount } from 'svelte';
-	import { bridge, message, onStatus, type Root, type Status } from './bridge.ts';
+	import { bridge, message, summary, type Root, type Status } from './bridge.ts';
 
 	let status = $state<Status | null>(null);
 	let roots = $state<Root[]>([]);
@@ -10,13 +10,22 @@
 	let server = $state('https://');
 	let insecure = $state(false);
 
-	onMount(() => {
-		bridge().Status().then((s) => {
+	// The service owns the state; the window asks for it every second.
+	async function refresh() {
+		try {
+			const s = await bridge().Status();
+			if (!status?.signed_in && s.signed_in) loadRoots();
+			if (!status && s.server) server = s.server;
 			status = s;
-			if (s.server) server = s.server;
-			if (s.signed_in) loadRoots();
-		});
-		return onStatus((s) => (status = s));
+		} catch (e) {
+			error = message(e);
+		}
+	}
+
+	onMount(() => {
+		refresh();
+		const timer = setInterval(refresh, 1000);
+		return () => clearInterval(timer);
 	});
 
 	async function act(fn: () => Promise<unknown>) {
@@ -56,7 +65,7 @@
 <main class="container">
 	<header class="head">
 		<h1>Cloud</h1>
-		{#if status?.signed_in}<span class="badge" class:badge--ok={!status.syncing}>{status.syncing ? 'Bezig…' : 'Bijgewerkt'}</span>{/if}
+		{#if status}<span class="badge" class:badge--ok={summary(status) === 'Alles bijgewerkt'}>{summary(status)}</span>{/if}
 	</header>
 
 	{#if error}<p class="flash flash--error" role="alert">{error}</p>{/if}
@@ -130,12 +139,14 @@
 			</label>
 			<div class="actions">
 				<button class="button" disabled={busy} onclick={() => act(() => bridge().SyncNow())}>Nu synchroniseren</button>
+				<button class="button" disabled={busy} onclick={() => act(() => bridge().SetPaused(!status?.paused))}>
+					{status.paused ? 'Hervatten' : 'Pauzeren'}
+				</button>
 				<button class="button" disabled={busy} onclick={() => act(() => bridge().SignOut())}>Ontkoppelen</button>
-				<button class="button" onclick={() => bridge().Quit()}>Afsluiten</button>
 			</div>
 			<p class="muted small">
-				Gekoppeld aan {status.server}. Het venster sluiten laat de app op de achtergrond doorsynchroniseren; start de app
-				opnieuw om dit venster terug te zien.
+				Gekoppeld aan {status.server}. Cloud draait op de achtergrond, ook als dit venster dicht is; het icoon in de
+				systeembalk toont de status. Afsluiten kan via dat icoon.
 			</p>
 		</section>
 	{/if}

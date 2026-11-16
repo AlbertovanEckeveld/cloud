@@ -80,10 +80,21 @@ Dit ADR beschrijft de serverkant (2.6a), de sync-engine (2.6b) en de app (2.6c).
    instellingen (zonder geheimen) staan met rechten 0600 in de gebruikersconfiguratie.
 4. **Venster:** de frontend (Svelte) praat alleen via een smalle `Bridge` met Go; "map openen"
    opent alleen een map die al gesynchroniseerd wordt. Strikte CSP in het venster.
-5. Wails v2 kent geen systeembalk-icoon: het venster sluiten laat de app op de achtergrond
-   doorwerken, opnieuw starten haalt het venster terug (één exemplaar), "Afsluiten" stopt hem.
-   Autostart via XDG (Linux) of een LaunchAgent (macOS).
-6. Bestandsbewaking (fsnotify) start een ronde 2 s na de laatste lokale wijziging; wijzigingen
+5. **Dienst en venster zijn twee processen.** De achtergronddienst synchroniseert en toont het
+   systeembalk-icoon (fyne.io/systray: D-Bus StatusNotifierItem op Linux, NSStatusBar op macOS);
+   de kleur toont de status (bijgewerkt, bezig, gepauzeerd/aandacht, fout, niet gekoppeld), het
+   menu de stand per map plus synchroniseren, pauzeren, instellingen en afsluiten. Het
+   instellingenvenster (Wails) is een apart proces: icoon en venster willen allebei de
+   hoofd-event-loop, en zo stopt het sluiten van het venster nooit het synchroniseren.
+6. **Lokale verbinding:** een Unix-socket in `$XDG_RUNTIME_DIR` (privé tmpfs) of anders de
+   privé-configuratiemap, rechten 0600; elke verbinding wordt bij de kernel gecontroleerd op
+   dezelfde gebruiker (SO_PEERCRED / LOCAL_PEERCRED). Alleen een vaste lijst opdrachten met
+   vaste argumenttypes; berichten zijn begrensd. Eén dienst tegelijk; opnieuw starten opent het
+   venster. SIGTERM (uitloggen) stopt de dienst netjes. Autostart (XDG of LaunchAgent) start
+   alleen de dienst.
+7. De dienst opent de browser en de bestandsbeheerder alleen met `xdg-open`/`open`, één
+   argument, geen shell, alleen http(s)- en file-adressen.
+8. Bestandsbewaking (fsnotify) start een ronde 2 s na de laatste lokale wijziging; wijzigingen
    op de server worden elke 30 s opgehaald.
 
 ### Gevonden en opgelost tijdens het testen

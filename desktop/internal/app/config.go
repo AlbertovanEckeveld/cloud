@@ -39,6 +39,23 @@ func configDir() (string, error) {
 	return dir, os.Chmod(dir, 0o700)
 }
 
+// SocketPath is where the service listens for the settings window: in
+// $XDG_RUNTIME_DIR when the desktop provides it (a private 0700 tmpfs per
+// user, the standard place for sockets on Linux), else in the private
+// config folder.
+func SocketPath() (string, error) {
+	if run := os.Getenv("XDG_RUNTIME_DIR"); run != "" {
+		if info, err := os.Stat(run); err == nil && info.IsDir() && info.Mode().Perm()&0o077 == 0 {
+			return filepath.Join(run, "cloud-desktop.sock"), nil
+		}
+	}
+	dir, err := configDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "service.sock"), nil
+}
+
 func loadConfig() (Config, error) {
 	dir, err := configDir()
 	if err != nil {

@@ -25,6 +25,7 @@ export interface Status {
 	server: string;
 	signed_in: boolean;
 	syncing: boolean;
+	paused: boolean;
 	autostart: boolean;
 	folders: FolderStatus[];
 	error: string;
@@ -45,23 +46,30 @@ interface BridgeAPI {
 	ChooseAndAdd(root: string, name: string): Promise<void>;
 	RemoveFolder(root: string): Promise<void>;
 	SyncNow(): Promise<void>;
+	SetPaused(on: boolean): Promise<void>;
 	ConfirmMassDelete(root: string): Promise<void>;
 	SetAutostart(on: boolean): Promise<void>;
 	OpenFolder(dir: string): Promise<void>;
-	Quit(): Promise<void>;
 }
 
 declare global {
 	interface Window {
 		go: { main: { Bridge: BridgeAPI } };
-		runtime: { EventsOn(name: string, cb: (data: unknown) => void): () => void };
 	}
 }
 
 export const bridge = (): BridgeAPI => window.go.main.Bridge;
 
-export function onStatus(cb: (s: Status) => void): () => void {
-	return window.runtime.EventsOn('status', (data) => cb(data as Status));
+/** The status in words, the same as in the tray menu. */
+export function summary(s: Status): string {
+	if (!s.signed_in) return 'Niet gekoppeld';
+	if (s.error) return s.error;
+	if (s.folders.some((f) => f.mass_delete)) return 'Wacht op je bevestiging (veel verwijderingen)';
+	if (s.paused) return 'Gepauzeerd';
+	if (s.syncing) return 'Bezig met synchroniseren…';
+	if (s.folders.some((f) => f.error)) return 'Problemen bij synchroniseren';
+	if (s.folders.length === 0) return 'Nog geen mappen gekozen';
+	return 'Alles bijgewerkt';
 }
 
 export function message(e: unknown): string {

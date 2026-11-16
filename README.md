@@ -130,7 +130,9 @@ make desktop        # Linux: bin/cloud-desktop (WebKitGTK 4.1 en libsecret nodig
 ```
 
 Op macOS (Xcode Command Line Tools nodig): `make desktop DESKTOP_TAGS=desktop,production`.
-De app koppelt via de browser (passkey); kies daarna welke mappen je wilt synchroniseren.
+De app draait als achtergronddienst met een icoon in de systeembalk (de kleur toont de
+sync-status); het instellingenvenster opent vanuit dat icoon of door de app opnieuw te starten.
+Koppelen gaat via de browser (passkey); kies daarna welke mappen je wilt synchroniseren.
 
 ## Container
 

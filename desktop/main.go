@@ -1,67 +1,48 @@
-// Command cloud-desktop is the Cloud desktop app: it keeps chosen folders
-// in sync with Cloud (ADR 0016).
+// Command cloud-desktop is the Cloud desktop app (ADR 0016). It runs as a
+// background service with a tray icon that keeps folders in sync, and opens
+// its settings window as a separate process on request: the tray and the
+// window each need the main event loop, so they never share a process.
 package main
 
 import (
-	"context"
-	"embed"
 	"flag"
 	"log/slog"
 	"os"
-
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
-	"github.com/AlbertovanEckeveld/cloud/desktop/internal/app"
+	"os/exec"
+	"runtime"
 )
 
-//go:embed all:frontend/dist
-var assets embed.FS
+// The tray (macOS) and the window must run on the main thread.
+func init() { runtime.LockOSThread() }
 
 func main() {
-	hidden := flag.Bool("hidden", false, "start without showing the window (autostart)")
+	settings := flag.Bool("settings", false, "open the settings window")
+	background := flag.Bool("background", false, "start the service without opening the window (autostart)")
 	flag.Parse()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	b := &Bridge{}
-	a, err := app.New(log, func(s app.Status) {
-		if b.ctx != nil {
-			runtime.EventsEmit(b.ctx, "status", s)
-		}
-	})
+	var err error
+	if *settings {
+		err = runWindow(log)
+	} else {
+		err = runService(log, *background)
+	}
 	if err != nil {
-		log.Error("cannot start", "error", err)
+		log.Error("cloud-desktop stopped", "error", err)
 		os.Exit(1)
 	}
-	b.app = a
+}
 
-	err = wails.Run(&options.App{
-		Title:             "Cloud",
-		Width:             760,
-		Height:            620,
-		AssetServer:       &assetserver.Options{Assets: assets},
-		StartHidden:       *hidden,
-		HideWindowOnClose: true, // keep syncing in the background
-		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId: "nl.albertove.cloud-desktop",
-			// Starting the app again brings the window back.
-			OnSecondInstanceLaunch: func(options.SecondInstanceData) {
-				if b.ctx != nil {
-					runtime.WindowShow(b.ctx)
-				}
-			},
-		},
-		OnStartup: func(ctx context.Context) {
-			b.ctx = ctx
-			a.Start(ctx)
-		},
-		OnShutdown: func(context.Context) { a.Close() },
-		Bind:       []any{b},
-	})
+// spawn starts this program again with args, detached from this one.
+func spawn(args ...string) error {
+	exe, err := os.Executable()
 	if err != nil {
-		log.Error("window failed", "error", err)
-		os.Exit(1)
+		return err
 	}
+	cmd := exec.Command(exe, args...)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }

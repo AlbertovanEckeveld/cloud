@@ -212,7 +212,7 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   tekstextractie is).
 - Fase 2.6 desktop-sync: Go + Wails v2, eerst Linux en macOS, volledige kopie van gekozen mappen,
   inloggen via browser (OIDC + PKCE, loopback). 2.6a server, 2.6b sync-engine en 2.6c app
-  (module `desktop/`, ADR 0016) gebouwd en getest, ook tegen de echte server; wacht op mijn test. Desktop-deps: wails v2.17.1, fsnotify, go-keyring,
+  (module `desktop/`, ADR 0016) gebouwd en getest, ook tegen de echte server; wacht op mijn test. Desktop-deps: wails v2.17.1, fsnotify, go-keyring, fyne.io/systray,
   modernc.org/sqlite.
 - Klaar als (fase 2): uploaden/downloaden in browser en via WebDAV-client, delen met
   gebruiker/groep/link, versies terugzetten, prullenbak, document bewerken in Collabora,

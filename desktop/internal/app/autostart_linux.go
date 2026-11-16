@@ -25,6 +25,6 @@ func setAutostart(on bool, exe string) error {
 	}
 	// Exec quoting per the Desktop Entry spec: the path is one argument.
 	quoted := `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "`", "\\`", "$", `\$`).Replace(exe) + `"`
-	entry := "[Desktop Entry]\nType=Application\nName=Cloud\nExec=" + quoted + " --hidden\nX-GNOME-Autostart-enabled=true\n"
+	entry := "[Desktop Entry]\nType=Application\nName=Cloud\nExec=" + quoted + " --background\nX-GNOME-Autostart-enabled=true\n"
 	return os.WriteFile(p, []byte(entry), 0o644)
 }

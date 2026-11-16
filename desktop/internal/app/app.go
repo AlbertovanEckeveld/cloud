@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,7 @@ type Status struct {
 	Server    string         `json:"server"`
 	SignedIn  bool           `json:"signed_in"`
 	Syncing   bool           `json:"syncing"`
+	Paused    bool           `json:"paused"`
 	Autostart bool           `json:"autostart"`
 	Folders   []FolderStatus `json:"folders"`
 	Error     string         `json:"error"`
@@ -62,6 +64,7 @@ type App struct {
 	status    map[string]*FolderStatus
 	confirmed map[string]bool
 	syncing   bool
+	paused    bool
 	lastErr   string
 	trigger   chan struct{}
 	stop      context.CancelFunc
@@ -135,7 +138,7 @@ func (a *App) loop(ctx context.Context) {
 func (a *App) runAll(ctx context.Context) {
 	a.mu.Lock()
 	sess, cfg := a.sess, a.cfg
-	if sess == nil || len(cfg.Folders) == 0 {
+	if sess == nil || len(cfg.Folders) == 0 || a.paused {
 		a.mu.Unlock()
 		return
 	}
@@ -256,7 +259,7 @@ func (a *App) publish() {
 func (a *App) Status() Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	s := Status{Server: a.cfg.Server, SignedIn: a.sess != nil, Syncing: a.syncing, Autostart: a.cfg.Autostart, Error: a.lastErr, Folders: []FolderStatus{}}
+	s := Status{Server: a.cfg.Server, SignedIn: a.sess != nil, Syncing: a.syncing, Paused: a.paused, Autostart: a.cfg.Autostart, Error: a.lastErr, Folders: []FolderStatus{}}
 	for _, f := range a.cfg.Folders {
 		if st, ok := a.status[f.Root]; ok {
 			s.Folders = append(s.Folders, *st)
@@ -352,6 +355,28 @@ func (a *App) RemoveFolder(root string) error {
 	a.cfg.Folders = kept
 	delete(a.status, root)
 	return saveConfig(a.cfg)
+}
+
+// SetPaused stops or resumes syncing (until the app restarts).
+func (a *App) SetPaused(on bool) {
+	a.mu.Lock()
+	a.paused = on
+	a.mu.Unlock()
+	a.publish()
+	if !on {
+		a.Kick()
+	}
+}
+
+// OpenFolder shows a synced folder in the file manager. Only folders the
+// app syncs are opened, never an arbitrary path.
+func (a *App) OpenFolder(dir string) error {
+	for _, f := range a.Status().Folders {
+		if f.Dir == dir {
+			return openURL((&url.URL{Scheme: "file", Path: dir}).String())
+		}
+	}
+	return errors.New("deze map wordt niet gesynchroniseerd")
 }
 
 // ConfirmMassDelete lets the next run of a folder delete what the brake held back.

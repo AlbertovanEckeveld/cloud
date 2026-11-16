@@ -29,7 +29,7 @@ func setAutostart(on bool, exe string) error {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>nl.albertove.cloud-desktop</string>
-  <key>ProgramArguments</key><array><string>` + escaped.String() + `</string><string>--hidden</string></array>
+  <key>ProgramArguments</key><array><string>` + escaped.String() + `</string><string>--background</string></array>
   <key>RunAtLoad</key><true/>
 </dict></plist>
 `
