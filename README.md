@@ -147,6 +147,7 @@ internal/drive/      bestanden en mappen: boom in Postgres, inhoud in S3, prulle
                      delen, versies, teammappen
 migrations/<module>/ SQL-migraties per module; de mapnaam is ook het Postgres-schema
 web/                 SvelteKit-frontend; web/embed.go bedt web/build in de binary in
+desktop/             desktop-app (aparte Go-module): sync-engine, later de Wails-app
 docker/dev-setup/    Postgres, pgAdmin en RustFS (S3) voor de ontwikkelserver
 docs/adr/            architectuurbeslissingen
 ```

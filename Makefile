@@ -26,11 +26,13 @@ build: web ## Build the platform binary into bin/
 check: web ## Static checks: gofmt, go vet, svelte-check
 	@test -z "$$(gofmt -l .)" || (echo "gofmt needed:"; gofmt -l .; exit 1)
 	go vet ./...
+	cd desktop && go vet ./...
 	cd web && npm run check
 
 .PHONY: test
 test: web ## Unit tests (Go with race detector, frontend)
 	go test -race -count=1 ./...
+	cd desktop && go test -race -count=1 ./...
 	cd web && npm test
 
 .PHONY: test-integration
