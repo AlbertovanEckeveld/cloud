@@ -6,6 +6,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -61,6 +63,27 @@ func TestDesktopSignIn(t *testing.T) {
 	_, otherTk := o.token(t, other.ID, "", codeExchange(loc.Query().Get("code"), g))
 	if code := call(files, otherTk.AccessToken); code != http.StatusUnauthorized {
 		t.Errorf("another app's token on the drive API: %d", code)
+	}
+
+	// Revoking the refresh token (RFC 7009, what "sign out" in the app does)
+	// ends it and every access token issued with it.
+	f2 := newFlow(DesktopClientID)
+	f2.extra.Set("redirect_uri", loopback)
+	loc, _, _ = o.approve(t, requestID(t, o.authorize(t, f2)))
+	form2 := codeExchange(loc.Query().Get("code"), f2)
+	form2.Set("redirect_uri", loopback)
+	_, tk2 := o.token(t, DesktopClientID, "", form2)
+	req, _ := http.NewRequest("POST", o.base+"/oidc/revoke", strings.NewReader(url.Values{
+		"token": {tk2.RefreshToken}, "token_type_hint": {"refresh_token"}, "client_id": {DesktopClientID}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if resp, err := o.plain.Do(req); err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("revoke: %v %v", resp, err)
+	}
+	if code := call(files, tk2.AccessToken); code != http.StatusUnauthorized {
+		t.Errorf("access token after revoking its refresh token: %d", code)
+	}
+	if st, _ := o.token(t, DesktopClientID, "", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {tk2.RefreshToken}}); st == http.StatusOK {
+		t.Error("revoked refresh token still works")
 	}
 
 	// Revoking the app on the account page ends the device's access.
