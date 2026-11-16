@@ -214,7 +214,8 @@
 							{:else if n.kind === 'folder'}
 								<a class="with-icon" href="/files/{n.id}"><Icon name="folder" />{n.name}</a>
 							{:else}
-								{#if editable(n.name)}
+								<!-- Our own preview first (text, markdown, PDF, media); the editor for documents. -->
+								{#if editable(n.name) && !previewKind(n.content_type, n.name)}
 									<a class="with-icon" href="/edit/{n.id}"><Icon name="file" />{n.name}</a>
 								{:else if previewKind(n.content_type, n.name)}
 									<button class="link-button with-icon name-button" onclick={() => (previewing = previewable.indexOf(n))}>
