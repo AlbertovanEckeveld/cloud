@@ -52,6 +52,7 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 		r.Put("/nodes/{id}/shares", s.handleShare)
 		r.Delete("/nodes/{id}/shares/{type}/{subject}", s.handleUnshare)
 		r.Get("/shared", s.handleSharedWithMe)
+		r.Get("/search", s.handleSearch)
 		r.Get("/nodes/{id}/links", s.handleLinks)
 		r.Post("/nodes/{id}/links", s.handleCreateLink)
 		r.Delete("/links/{id}", s.handleDeleteLink)
@@ -823,4 +824,19 @@ func (s *Service) handleLinkDownload(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Referrer-Policy", "no-referrer")
 	serveFile(w, r, n.Name, *n.currentVersionID, n.UpdatedAt, obj, "")
+}
+
+func (s *Service) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	if len(q) > 200 {
+		q = q[:200]
+	}
+	results, err := s.Search(r.Context(), s.userID(r), q)
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Results []SearchResult `json:"results"`
+	}{results})
 }

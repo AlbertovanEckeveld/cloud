@@ -5,9 +5,16 @@
 	import { onMount } from 'svelte';
 	import { drive, refreshDrive, type Section } from '#lib/drive-state.svelte.ts';
 	import { formatBytes } from '#lib/format.ts';
+	import SearchResults from '#lib/components/drive/SearchResults.svelte';
+	import { afterNavigate } from '$app/navigation';
 
 	let { children } = $props();
 	let menu: HTMLDetailsElement;
+	let query = $state('');
+	const searching = $derived(query.trim().length >= 2);
+
+	// Opening a result (or any other page) ends the search.
+	afterNavigate(() => (query = ''));
 
 	onMount(refreshDrive);
 
@@ -65,7 +72,25 @@
 		{#if drive.error}<p class="small muted">{drive.error}</p>{/if}
 	</aside>
 
-	<div class="content">{@render children()}</div>
+	<div class="content">
+		<form class="search" role="search" onsubmit={(e) => e.preventDefault()}>
+			<Icon name="search" />
+			<input
+				type="search"
+				bind:value={query}
+				placeholder="Zoeken in bestanden"
+				aria-label="Zoeken in bestanden"
+				autocomplete="off"
+				maxlength="200"
+				onkeydown={(e) => e.key === 'Escape' && (query = '')}
+			/>
+		</form>
+		{#if searching}
+			<SearchResults {query} />
+		{:else}
+			{@render children()}
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -74,6 +99,29 @@
 		grid-template-columns: 220px minmax(0, 1fr);
 		gap: 2rem;
 		align-items: start;
+	}
+	.search {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 0 1.1rem;
+		margin-bottom: 1.25rem;
+		background: var(--surface-2);
+		border: 1px solid transparent;
+		border-radius: 999px;
+		color: var(--muted);
+	}
+	.search:focus-within {
+		border-color: var(--accent);
+		background: var(--surface);
+	}
+	.search input {
+		flex: 1;
+		border: 0;
+		background: none;
+		padding: 0.75rem 0;
+		color: var(--text);
+		outline: none;
 	}
 	.sidebar {
 		position: sticky;
@@ -172,7 +220,30 @@
 			grid-template-columns: 1fr;
 			gap: 1rem;
 		}
-		.sidebar {
+		.search {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 0 1.1rem;
+		margin-bottom: 1.25rem;
+		background: var(--surface-2);
+		border: 1px solid transparent;
+		border-radius: 999px;
+		color: var(--muted);
+	}
+	.search:focus-within {
+		border-color: var(--accent);
+		background: var(--surface);
+	}
+	.search input {
+		flex: 1;
+		border: 0;
+		background: none;
+		padding: 0.75rem 0;
+		color: var(--text);
+		outline: none;
+	}
+	.sidebar {
 			position: static;
 		}
 		.nav {

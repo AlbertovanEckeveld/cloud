@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -130,9 +131,7 @@ func (e *testEnv) upload(t *testing.T, user uuid.UUID, parent, name string, cont
 	return resp.StatusCode, n
 }
 
-func urlEscape(s string) string {
-	return strings.NewReplacer(" ", "%20", "#", "%23", "&", "%26", "?", "%3F").Replace(s)
-}
+func urlEscape(s string) string { return url.QueryEscape(s) }
 
 func TestFoldersAndNames(t *testing.T) {
 	e := newTestEnv(t)

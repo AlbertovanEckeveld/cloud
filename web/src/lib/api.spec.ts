@@ -271,3 +271,12 @@ describe('share links', () => {
 		});
 	});
 });
+
+describe('search', () => {
+	it('validates results with their location', async () => {
+		const r = { id: 'n1', parent_id: null, kind: 'file', name: 'rapport.pdf', size: 1, content_type: 'application/pdf',
+			created_at: '2026-11-16T10:00:00Z', updated_at: '2026-11-16T10:00:00Z', permission: 'view', location: 'Werk', location_id: 'f1' };
+		expect((await api.drive.search('rapp', respond({ results: [r] })))[0]).toMatchObject({ location: 'Werk', location_id: 'f1' });
+		await expect(api.drive.search('rapp', respond({ results: [{ ...r, location: 3 }] }))).rejects.toMatchObject({ code: 'invalid_response' });
+	});
+});

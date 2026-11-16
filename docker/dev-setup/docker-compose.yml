@@ -96,7 +96,7 @@ services:
       extra_params: >-
         --o:ssl.enable=false
         --o:ssl.termination=true
-        --o:server_name=albertove-msi.albertove.cloud
+        --o:server_name=ave-dev-cloud.albertove.cloud
 
     expose:
       - "9980"

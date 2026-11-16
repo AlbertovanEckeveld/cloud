@@ -203,6 +203,12 @@ export interface PublicView {
 	children: DriveNode[];
 }
 
+export interface SearchResult extends DriveNode {
+	/** The folder it is in, or "Mijn bestanden", "Teammappen", "Gedeeld met mij". */
+	location: string;
+	location_id: string | null;
+}
+
 export interface SharedNode extends DriveNode {
 	owner_name: string;
 }
@@ -611,6 +617,11 @@ const parsePublicView: Validator<PublicView> = (v) => {
 	};
 };
 
+const parseSearchResult: Validator<SearchResult> = (v) => {
+	const r = record(v, 'result');
+	return { ...parseNode(r), location: str(r, 'location'), location_id: nullableStr(r, 'location_id') };
+};
+
 const parseSharedNode: Validator<SharedNode> = (v) => ({
 	...parseNode(v),
 	owner_name: str(record(v, 'node'), 'owner_name')
@@ -877,6 +888,8 @@ export const api = {
 		openLink: (token: string, password: string, folderId: string | null, f: typeof fetch = fetch) =>
 			post('/api/v1/drive/public/links/open', parsePublicView, { token, password, folder_id: folderId ?? '' }, f),
 		linkDownloadURL: '/api/v1/drive/public/links/download',
+		search: (query: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/search?q=${enc(query)}`, (v) => list(record(v, 'search'), 'results', parseSearchResult), f),
 		sharedWithMe: (f: typeof fetch = fetch) =>
 			get('/api/v1/drive/shared', (v) => list(record(v, 'shared'), 'nodes', parseSharedNode), f),
 		shares: (id: string, f: typeof fetch = fetch) => get(`/api/v1/drive/nodes/${enc(id)}/shares`, parseShares, f),

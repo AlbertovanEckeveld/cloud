@@ -199,8 +199,9 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   (ADR 0007), OIDC-provider met amr/acr, profielclaims en back-channel logout (ADR 0008).
   Het deelmodel is ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`.
 - Bezig met: **fase 2 – drive**. 2.1 af (ADR 0009). 2.2 delen + versies (ADR 0010),
-  2.2b teammappen (ADR 0011) en 2.3a deellinks (ADR 0012) en 2.3b voorbeeldweergave (incl. markdown en PDF) gebouwd en
-  getest; wachten op mijn eigen test. Daarna 2.3c zoeken.
+  2.2b teammappen (ADR 0011) en 2.3a deellinks (ADR 0012) en 2.3b voorbeeldweergave (incl. markdown en PDF) en 2.3c zoeken op
+  naam (ADR 0013) gebouwd en getest; wachten op mijn eigen test. Zoeken op inhoud volgt met
+  tekstextractie.
   Stappen: 2.1 drive-basis (mappen, streaming upload/download,
   hernoemen, verplaatsen, prullenbak, quota, bestandsbrowser); 2.2 versies + delen met
   gebruikers/groepen (deelmodel ADR 0006); 2.2b teammappen die beheerders aanmaken voor groepen; 2.3 deellinks, voorbeeldweergave, zoeken;

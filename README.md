@@ -5,7 +5,7 @@ PostgreSQL voor metadata en S3 voor bestanden. Achtergrond, roadmap en werkafspr
 [CLAUDE.md](CLAUDE.md); architectuurbeslissingen in [docs/adr/](docs/adr/).
 
 **Status:** fase 2.2 — `drive`: mappen en bestanden (uploaden, downloaden, verplaatsen,
-prullenbak, quota), delen met gebruikers en groepen, versies, teammappen en openbare deellinks. Fase 1 — `identity` (vervangt Authentik) is af. Inloggen met passkey, of met wachtwoord
+prullenbak, quota), delen met gebruikers en groepen, versies, teammappen, openbare deellinks, voorbeeldweergave (ook markdown en PDF) en zoeken. Fase 1 — `identity` (vervangt Authentik) is af. Inloggen met passkey, of met wachtwoord
 plus authenticator-app (TOTP) of herstelcode; sessiebeheer; een beheeromgeving voor
 gebruikers, groepen, apps, audit-log en systeemstatus; een OpenID Connect-provider zodat
 andere apps met je Cloud-account inloggen; optioneel mail voor activatielinks en
