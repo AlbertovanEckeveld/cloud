@@ -5,6 +5,7 @@
 	// permission; the server checks it again for every request.
 	import Icon from '#lib/components/Icon.svelte';
 	import { onDestroy, onMount } from 'svelte';
+	import { page } from '$app/state';
 	import { drive, refreshDrive } from '#lib/drive-state.svelte.ts';
 	import { api, ApiError, errorMessage, type DriveNode, type FolderView } from '#lib/api.ts';
 	import { allows, dateTime, formatBytes, permissionLabel, previewKind, timeAgo, uniqueName } from '#lib/format.ts';
@@ -224,7 +225,12 @@
 							{#if n.shared}<span class="badge" title="Gedeeld met anderen"><Icon name="users" size={14} />Gedeeld</span>{/if}
 						</td>
 						<td class="num muted">{n.kind === 'file' ? formatBytes(n.size) : ''}</td>
-						<td class="muted"><time datetime={n.updated_at} title={dateTime(n.updated_at)}>{timeAgo(n.updated_at)}</time></td>
+						<td class="muted">
+							<time datetime={n.updated_at} title={dateTime(n.updated_at)}>{timeAgo(n.updated_at)}</time>
+							{#if n.updated_by_name}
+								<span class="editor">· {n.updated_by === page.data.user?.id ? 'jij' : n.updated_by_name}</span>
+							{/if}
+						</td>
 						<td class="row-actions">
 							{#if allows(n.permission, 'manage')}
 								<button class="icon-button" aria-label="Delen" title="Delen" onclick={() => (sharing = n)}><Icon name="share" /></button>
@@ -311,6 +317,9 @@
 		color: var(--text-strong);
 		overflow-wrap: anywhere;
 		margin-right: 0.5rem;
+	}
+	.editor {
+		white-space: nowrap;
 	}
 	.num {
 		text-align: right;

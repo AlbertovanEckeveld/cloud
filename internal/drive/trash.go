@@ -81,8 +81,9 @@ func (s *Service) Restore(ctx context.Context, userID, nodeID uuid.UUID) (Node, 
 			}
 			n.Name = withSuffix(base, i)
 		}
-		if _, err := tx.Exec(ctx, `UPDATE drive.nodes SET trashed_at = NULL, parent_id = $2, name = $3 WHERE id = $1`,
-			nodeID, n.ParentID, n.Name); err != nil {
+		n.UpdatedAt, n.UpdatedBy = s.now().UTC(), &userID
+		if _, err := tx.Exec(ctx, `UPDATE drive.nodes SET trashed_at = NULL, parent_id = $2, name = $3, updated_at = $4, updated_by = $5 WHERE id = $1`,
+			nodeID, n.ParentID, n.Name, n.UpdatedAt, userID); err != nil {
 			return fmt.Errorf("restore: %w", err)
 		}
 		n.TrashedAt = nil

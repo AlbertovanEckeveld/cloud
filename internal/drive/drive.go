@@ -100,7 +100,11 @@ type Node struct {
 	ContentType string     `json:"content_type"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
-	TrashedAt   *time.Time `json:"trashed_at,omitempty"`
+	// UpdatedBy is who last changed the node; UpdatedByName is filled in
+	// for listings.
+	UpdatedBy     *uuid.UUID `json:"updated_by"`
+	UpdatedByName string     `json:"updated_by_name,omitempty"`
+	TrashedAt     *time.Time `json:"trashed_at,omitempty"`
 	// Permission is what the requesting user may do with the node.
 	Permission authz.Permission `json:"permission"`
 	// Shared is set when the node itself is shared (shown to managers only).
@@ -113,7 +117,7 @@ type Node struct {
 	accessRoot *uuid.UUID
 }
 
-const nodeColumns = `id, parent_id, kind, name, size, content_type, created_at, updated_at, trashed_at, owner_id, current_version_id`
+const nodeColumns = `id, parent_id, kind, name, size, content_type, created_at, updated_at, trashed_at, owner_id, current_version_id, updated_by`
 
 // prefixed returns nodeColumns qualified with a table alias, for joins.
 func prefixed(alias string) string {
@@ -127,7 +131,7 @@ func prefixed(alias string) string {
 func scanNode(row pgx.CollectableRow) (Node, error) {
 	var n Node
 	err := row.Scan(&n.ID, &n.ParentID, &n.Kind, &n.Name, &n.Size, &n.ContentType, &n.CreatedAt, &n.UpdatedAt,
-		&n.TrashedAt, &n.ownerID, &n.currentVersionID)
+		&n.TrashedAt, &n.ownerID, &n.currentVersionID, &n.UpdatedBy)
 	n.CreatedAt, n.UpdatedAt = n.CreatedAt.UTC(), n.UpdatedAt.UTC()
 	if n.TrashedAt != nil {
 		*n.TrashedAt = n.TrashedAt.UTC()
@@ -324,6 +328,9 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, folderID *uuid.UUI
 	if err := s.annotate(ctx, userID, inherited, view.Children); err != nil {
 		return FolderView{}, err
 	}
+	if err := s.nameEditors(ctx, view.Children); err != nil {
+		return FolderView{}, err
+	}
 	return view, nil
 }
 
@@ -376,6 +383,29 @@ func (s *Service) annotate(ctx context.Context, userID uuid.UUID, inherited auth
 	return nil
 }
 
+// nameEditors fills in who last changed each node.
+func (s *Service) nameEditors(ctx context.Context, nodes []Node) error {
+	var ids []uuid.UUID
+	for _, n := range nodes {
+		if n.UpdatedBy != nil {
+			ids = append(ids, *n.UpdatedBy)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	names, err := s.sharing.DisplayNames(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("load editor names: %w", err)
+	}
+	for i := range nodes {
+		if nodes[i].UpdatedBy != nil {
+			nodes[i].UpdatedByName = names[*nodes[i].UpdatedBy]
+		}
+	}
+	return nil
+}
+
 // CreateFolder makes a folder in parentID (nil: the top level).
 func (s *Service) CreateFolder(ctx context.Context, userID uuid.UUID, parentID *uuid.UUID, name string) (Node, error) {
 	name, err := normalizeName(name)
@@ -388,10 +418,10 @@ func (s *Service) CreateFolder(ctx context.Context, userID uuid.UUID, parentID *
 	}
 	now := s.now().UTC()
 	n := Node{ID: newID(), ParentID: parentID, Kind: "folder", Name: name, CreatedAt: now, UpdatedAt: now,
-		Permission: perm, ownerID: owner}
+		UpdatedBy: &userID, Permission: perm, ownerID: owner}
 	_, err = s.db.Exec(ctx, `
-		INSERT INTO drive.nodes (id, owner_id, parent_id, kind, name, created_at, updated_at)
-		VALUES ($1, $2, $3, 'folder', $4, $5, $5)`, n.ID, owner, parentID, name, now)
+		INSERT INTO drive.nodes (id, owner_id, parent_id, kind, name, created_at, updated_at, updated_by)
+		VALUES ($1, $2, $3, 'folder', $4, $5, $5, $6)`, n.ID, owner, parentID, name, now, userID)
 	if uniqueViolation(err) {
 		return Node{}, ErrNameTaken
 	}
@@ -455,9 +485,9 @@ func (s *Service) Update(ctx context.Context, userID, nodeID uuid.UUID, ch Chang
 			}
 			parentID, n.ParentID = ch.Parent, ch.Parent
 		}
-		n.UpdatedAt = s.now().UTC()
-		_, err = tx.Exec(ctx, `UPDATE drive.nodes SET name = $2, parent_id = $3, updated_at = $4 WHERE id = $1`,
-			nodeID, n.Name, parentID, n.UpdatedAt)
+		n.UpdatedAt, n.UpdatedBy = s.now().UTC(), &userID
+		_, err = tx.Exec(ctx, `UPDATE drive.nodes SET name = $2, parent_id = $3, updated_at = $4, updated_by = $5 WHERE id = $1`,
+			nodeID, n.Name, parentID, n.UpdatedAt, userID)
 		if uniqueViolation(err) {
 			return ErrNameTaken
 		}

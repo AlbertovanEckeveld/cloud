@@ -244,8 +244,8 @@ func (s *Service) CreateTeamFolder(ctx context.Context, actor uuid.UUID, name st
 			return ErrNameTaken
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO drive.nodes (id, owner_id, parent_id, kind, name, created_at, updated_at)
-			VALUES ($1, $2, NULL, 'folder', $3, $4, $4)`, t.RootID, t.ID, name, t.CreatedAt); err != nil {
+			INSERT INTO drive.nodes (id, owner_id, parent_id, kind, name, created_at, updated_at, updated_by)
+			VALUES ($1, $2, NULL, 'folder', $3, $4, $4, $5)`, t.RootID, t.ID, name, t.CreatedAt, actor); err != nil {
 			return fmt.Errorf("create team folder root: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `

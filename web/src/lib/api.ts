@@ -149,6 +149,9 @@ export interface DriveNode {
 	permission: Permission;
 	/** Shared with others (only reported to users who may manage it). */
 	shared: boolean;
+	/** Who last changed it (in folder listings). */
+	updated_by: string | null;
+	updated_by_name: string;
 }
 
 /** Sharing levels; each includes the ones before it. */
@@ -575,7 +578,9 @@ const parseNode: Validator<DriveNode> = (v) => {
 		updated_at: str(r, 'updated_at'),
 		trashed_at: r.trashed_at === undefined || r.trashed_at === null ? null : str(r, 'trashed_at'),
 		permission: permission(r, 'permission'),
-		shared: r.shared === true
+		shared: r.shared === true,
+		updated_by: r.updated_by === null || r.updated_by === undefined ? null : str(r, 'updated_by'),
+		updated_by_name: typeof r.updated_by_name === 'string' ? r.updated_by_name : ''
 	};
 };
 

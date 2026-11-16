@@ -256,6 +256,10 @@ func TestShareEdit(t *testing.T) {
 	if u, _ := e.svc.Usage(ctx, editor); u.UsedBytes != 0 {
 		t.Errorf("editor usage = %d", u.UsedBytes)
 	}
+	// The owner sees who changed it.
+	if view, _ := e.svc.List(ctx, owner, &shared.ID); len(view.Children) != 1 || view.Children[0].UpdatedByName != "Bewerker" {
+		t.Errorf("last changed by: %+v", view.Children)
+	}
 	versions, _ := e.svc.Versions(ctx, owner, file.ID)
 	if len(versions) != 1 || versions[0].CreatedByName != "Bewerker" {
 		t.Errorf("versions = %+v", versions)
@@ -274,6 +278,9 @@ func TestShareEdit(t *testing.T) {
 	}
 	if code := e.status(t, editor, "PATCH", "/nodes/"+file.ID.String(), `{"name":"verslag.txt"}`); code != http.StatusOK {
 		t.Errorf("editor renames: %d", code)
+	}
+	if view, _ := e.svc.List(ctx, owner, &shared.ID); view.Children[len(view.Children)-1].UpdatedBy == nil || *view.Children[len(view.Children)-1].UpdatedBy != editor {
+		t.Errorf("rename did not record the editor: %+v", view.Children)
 	}
 	// Files never change owner: no moving into the editor's own folders.
 	for _, target := range []string{"root", mine.ID.String()} {
