@@ -203,6 +203,15 @@ export interface PublicView {
 	children: DriveNode[];
 }
 
+export interface AppPassword {
+	id: string;
+	name: string;
+	/** Only present right after creating it. */
+	password: string;
+	created_at: string;
+	last_used_at: string | null;
+}
+
 export interface SearchResult extends DriveNode {
 	/** The folder it is in, or "Mijn bestanden", "Teammappen", "Gedeeld met mij". */
 	location: string;
@@ -617,6 +626,19 @@ const parsePublicView: Validator<PublicView> = (v) => {
 	};
 };
 
+const parseAppPassword: Validator<AppPassword> = (v) => {
+	const r = record(v, 'app_password');
+	const password = typeof r.password === 'string' ? r.password : '';
+	if (password && !/^[a-z2-7]{5}(-[a-z2-7]{1,5}){5}$/.test(password)) fail('password');
+	return {
+		id: str(r, 'id'),
+		name: str(r, 'name'),
+		password,
+		created_at: str(r, 'created_at'),
+		last_used_at: nullableStr(r, 'last_used_at')
+	};
+};
+
 const parseSearchResult: Validator<SearchResult> = (v) => {
 	const r = record(v, 'result');
 	return { ...parseNode(r), location: str(r, 'location'), location_id: nullableStr(r, 'location_id') };
@@ -949,6 +971,12 @@ export const api = {
 				xhr.send(file);
 			})
 	},
+	appPasswords: (f: typeof fetch = fetch) =>
+		get('/api/v1/account/app-passwords', (v) => list(record(v, 'app_passwords'), 'app_passwords', parseAppPassword), f),
+	createAppPassword: (name: string, f: typeof fetch = fetch) =>
+		post('/api/v1/account/app-passwords', parseAppPassword, { name }, f),
+	revokeAppPassword: (id: string, f: typeof fetch = fetch) =>
+		request('DELETE', `/api/v1/account/app-passwords/${enc(id)}`, noContent, undefined, f),
 	/** Users and groups to share with. */
 	directory: (query: string, f: typeof fetch = fetch) =>
 		get(`/api/v1/directory?q=${enc(query)}`, (v) => list(record(v, 'directory'), 'entries', parseDirectoryEntry), f),

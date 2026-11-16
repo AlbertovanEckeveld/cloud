@@ -96,12 +96,21 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 // PutStream stores size bytes read from r under key, without holding the
 // whole object in memory (large objects are sent as multipart uploads).
 func (c *Client) PutStream(ctx context.Context, key string, r io.Reader, size int64, contentType string) error {
-	_, err := c.s3.PutObject(ctx, c.bucket, key, r, size, minio.PutObjectOptions{ContentType: contentType})
+	opts := minio.PutObjectOptions{ContentType: contentType}
+	if size < 0 {
+		// Unknown length (chunked uploads, e.g. from WebDAV clients): fixed
+		// 16 MiB parts. The library default for unknown sizes buffers parts
+		// of about 512 MiB in memory; 16 MiB parts still allow 160 GB.
+		opts.PartSize = unknownSizePart
+	}
+	_, err := c.s3.PutObject(ctx, c.bucket, key, r, size, opts)
 	if err != nil {
 		return fmt.Errorf("put %s: %w", key, err)
 	}
 	return nil
 }
+
+const unknownSizePart = 16 << 20
 
 // Object is an open object: readable, seekable (for HTTP range requests)
 // and closable.

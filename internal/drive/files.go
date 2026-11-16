@@ -24,7 +24,7 @@ import (
 type Upload struct {
 	ParentID *uuid.UUID // nil: the top level
 	Name     string
-	Size     int64     // exact number of bytes the body will contain
+	Size     int64     // exact number of bytes the body will contain; -1 if unknown
 	Body     io.Reader // the content; read exactly once
 	// Replace stores the upload as a new version of an existing file with
 	// the same name. Without it, an existing name is an error.
@@ -76,7 +76,7 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 	if err != nil {
 		return Node{}, err
 	}
-	if up.Size < 0 || up.Size > s.maxFile {
+	if up.Size < -1 || up.Size > s.maxFile {
 		return Node{}, ErrTooLarge
 	}
 	owner, perm, err := s.target(ctx, s.db, userID, up.ParentID)
@@ -92,7 +92,7 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 	}
 	// Checked again inside the transaction; this early check avoids
 	// streaming gigabytes only to reject them.
-	if err := s.checkQuota(ctx, s.db, owner, up.Size); err != nil {
+	if err := s.checkQuota(ctx, s.db, owner, max(up.Size, 0)); err != nil {
 		return Node{}, err
 	}
 
@@ -101,19 +101,28 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 	ctype := contentType(name, head)
 	versionID := newID()
 	key := "drive/" + versionID.String()
-	counter := &countingReader{r: io.LimitReader(buffered, up.Size), h: sha256.New()}
+	limit := up.Size
+	if limit < 0 {
+		limit = s.maxFile + 1 // unknown length: read one byte too many to notice
+	}
+	counter := &countingReader{r: io.LimitReader(buffered, limit), h: sha256.New()}
 	if err := s.objects.PutStream(ctx, key, counter, up.Size, ctype); err != nil {
 		s.forget(ctx, key) // a multipart upload may have left parts behind
-		if counter.n < up.Size {
+		if up.Size >= 0 && counter.n < up.Size {
 			// The client sent less than it announced (e.g. it disconnected).
 			return Node{}, ErrIncomplete
 		}
 		return Node{}, err
 	}
-	if counter.n != up.Size {
+	switch {
+	case up.Size < 0 && counter.n > s.maxFile:
+		s.forget(ctx, key)
+		return Node{}, ErrTooLarge
+	case up.Size >= 0 && counter.n != up.Size:
 		s.forget(ctx, key)
 		return Node{}, ErrIncomplete
 	}
+	up.Size = counter.n
 	sum := counter.h.Sum(nil)
 
 	var out Node

@@ -240,6 +240,12 @@ func serve(ctx context.Context) error {
 				},
 			})
 		},
+		dav: func(r chi.Router) {
+			files.DAVRoutes(r, a.identity.RequireAppPassword("Cloud"), func(r *http.Request) uuid.UUID {
+				p, _ := identity.PrincipalFrom(r.Context())
+				return p.User.ID
+			})
+		},
 		identity:     a.identity.Routes,
 		requireUser:  a.identity.RequireUser,
 		requireAdmin: identity.RequireAdmin,

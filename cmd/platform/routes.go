@@ -30,6 +30,8 @@ type routerDeps struct {
 	avatars http.HandlerFunc
 	// drive mounts the drive module's routes under /api/v1/drive.
 	drive func(chi.Router)
+	// dav mounts WebDAV for desktop and mobile clients under /dav.
+	dav func(chi.Router)
 
 	// identity mounts the identity module's routes under /api/v1.
 	identity     func(chi.Router)
@@ -88,6 +90,10 @@ func newRouter(d routerDeps) http.Handler {
 		})
 	})
 
+	// WebDAV clients are not browsers: they send no Origin headers, so the
+	// cross-origin check lets them through; they authenticate with app
+	// passwords (HTTP Basic), never with the session cookie.
+	r.Route("/dav", d.dav)
 	r.Mount("/oidc", d.oidc)
 	r.Get("/avatars/{file}", d.avatars)
 	r.Handle("/*", d.frontend)

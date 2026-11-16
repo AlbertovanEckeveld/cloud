@@ -72,6 +72,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		e.svc.Routes(r, Auth{RequireUser: pass, RequireAdmin: pass, RequireRecentAuth: pass, UserID: userFrom,
 			Audit: func(_ *http.Request, event string, _ map[string]any) { e.audited = append(e.audited, event) }})
 	})
+	r.Route("/dav", func(r chi.Router) { e.svc.DAVRoutes(r, pass, userFrom) })
 	e.srv = httptest.NewServer(r)
 	t.Cleanup(e.srv.Close)
 	return e

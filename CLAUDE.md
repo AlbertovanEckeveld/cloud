@@ -200,7 +200,8 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   Het deelmodel is ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`.
 - Bezig met: **fase 2 – drive**. 2.1 af (ADR 0009). 2.2 delen + versies (ADR 0010),
   2.2b teammappen (ADR 0011) en 2.3a deellinks (ADR 0012) en 2.3b voorbeeldweergave (incl. markdown en PDF) en 2.3c zoeken op
-  naam (ADR 0013) gebouwd en getest; wachten op mijn eigen test. Zoeken op inhoud volgt met
+  naam (ADR 0013) en 2.4 app-wachtwoorden + WebDAV (ADR 0014) gebouwd en getest; wachten op
+  mijn eigen test. Zoeken op inhoud volgt met
   tekstextractie.
   Stappen: 2.1 drive-basis (mappen, streaming upload/download,
   hernoemen, verplaatsen, prullenbak, quota, bestandsbrowser); 2.2 versies + delen met
@@ -231,6 +232,7 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - Eerste admin via CLI (`platform user create --admin`), die een eenmalige activatielink geeft.
 - OIDC-provider op basis van `zitadel/oidc` (OpenID-gecertificeerd).
 - Go-dependencies fase 1: golang.org/x/crypto (argon2id), go-webauthn/webauthn, zitadel/oidc.
+- Go-dependency fase 2: golang.org/x/net/webdav (WebDAV klasse 1+2, ook LOCK).
 - Frontend-dependencies fase 2: pdfjs-dist (Apache-2.0, PDF-lezer), marked (MIT, alleen als
   markdown-parser; renderen gebeurt in Svelte zonder ruwe HTML).
 - Geen Caddy/WireGuard; het platform verzorgt zelf HTTPS zodra het buiten het thuisnetwerk komt.

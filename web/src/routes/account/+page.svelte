@@ -3,6 +3,7 @@
 	import { api, errorMessage, type AuditEvent, type GroupRef } from '#lib/api.ts';
 	import ActivityList from '#lib/components/ActivityList.svelte';
 	import AppsPanel from '#lib/components/account/AppsPanel.svelte';
+	import AppPasswordsPanel from '#lib/components/account/AppPasswordsPanel.svelte';
 	import ProfileForm from '#lib/components/account/ProfileForm.svelte';
 	import PasskeysPanel from '#lib/components/account/PasskeysPanel.svelte';
 	import RecoveryPanel from '#lib/components/account/RecoveryPanel.svelte';
@@ -134,6 +135,7 @@
 	<div class="stack">
 		<SessionsPanel />
 		<AppsPanel />
+		<AppPasswordsPanel />
 
 		<section class="panel" aria-labelledby="activity-title">
 			<h2 id="activity-title">Recente activiteit</h2>

@@ -115,6 +115,7 @@ problemen tegelijk.
 | `/api/v1/admin/*` | Gebruikers, groepen, apps en audit-log beheren. Alleen beheerders. |
 | `/api/v1/drive/*` | Bestanden en mappen: lijst, upload, download, hernoemen, verplaatsen, prullenbak, verbruik, delen, versies, teammappen (beheer onder `/admin/team-folders`), deellinks (publiek: `/public/links/*`). |
 | `/api/v1/directory` | Gebruikers en groepen zoeken om mee te delen. Vereist login. |
+| `/dav/{files,teams,shared}/` | WebDAV voor desktop- en mobiele clients; inloggen met gebruikersnaam + app-wachtwoord. |
 | `/api/v1/oidc/*` | Inlogverzoeken van apps afhandelen (voor de pagina `/connect`). |
 | `/oidc/*` | De OpenID Connect-provider: discovery, authorize, token, userinfo, keys. |
 | `/api/v1/status` | Status van deze instantie en de afhankelijkheden. Alleen beheerders. |

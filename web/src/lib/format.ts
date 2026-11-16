@@ -79,7 +79,10 @@ const eventLabels: Record<string, string> = {
 	'teamfolder.restored': 'Teammap teruggezet',
 	'teamfolder.purged': 'Teammap definitief verwijderd',
 	'link.created': 'Openbare link gemaakt',
-	'link.deleted': 'Openbare link ingetrokken'
+	'link.deleted': 'Openbare link ingetrokken',
+	'app_password.created': 'App-wachtwoord aangemaakt',
+	'app_password.revoked': 'App-wachtwoord ingetrokken',
+	'app_password.failed': 'Fout app-wachtwoord gebruikt'
 };
 
 /** Returns the Dutch description of an audit event. */

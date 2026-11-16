@@ -75,6 +75,7 @@ type Service struct {
 	log     *slog.Logger
 	maxFile int64
 	now     func() time.Time
+	locks   davLocks
 	// userID identifies the signed-in user and audit records administrative
 	// actions; both set by Routes.
 	userID func(*http.Request) uuid.UUID
