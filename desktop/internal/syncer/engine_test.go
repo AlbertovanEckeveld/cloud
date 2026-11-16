@@ -554,3 +554,32 @@ func TestRelinkingToAnotherFolderOnlyMerges(t *testing.T) {
 		t.Errorf("relinking: %+v", rep)
 	}
 }
+
+func TestProgressAndEvents(t *testing.T) {
+	e := newEnv(t)
+	var events []Event
+	var last, peak Progress
+	e.engine.OnEvent = func(ev Event) { events = append(events, ev) }
+	e.engine.OnProgress = func(p Progress) {
+		last = p
+		if p.Total > 0 {
+			peak = p
+		}
+	}
+	e.srv.put(nil, "file", "groot.bin", []byte(strings.Repeat("x", 200_000)))
+	e.write("lokaal.txt", "hallo")
+	e.sync()
+	got := map[string]string{}
+	for _, ev := range events {
+		got[ev.Path] = ev.Op
+	}
+	if got["groot.bin"] != "downloaded" || got["lokaal.txt"] != "uploaded" {
+		t.Errorf("events: %+v", events)
+	}
+	if peak.Steps != 2 || peak.Done != peak.Total || peak.Op == "" {
+		t.Errorf("progress: %+v", peak)
+	}
+	if last != (Progress{}) {
+		t.Errorf("progress not cleared after the run: %+v", last)
+	}
+}

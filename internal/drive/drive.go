@@ -431,8 +431,8 @@ func (s *Service) CreateFolder(ctx context.Context, userID uuid.UUID, parentID *
 	n := Node{ID: newID(), ParentID: parentID, Kind: "folder", Name: name, CreatedAt: now, UpdatedAt: now,
 		UpdatedBy: &userID, Permission: perm, ownerID: owner}
 	_, err = s.db.Exec(ctx, `
-		INSERT INTO drive.nodes (id, owner_id, parent_id, kind, name, created_at, updated_at, updated_by)
-		VALUES ($1, $2, $3, 'folder', $4, $5, $5, $6)`, n.ID, owner, parentID, name, now, userID)
+		INSERT INTO drive.nodes (id, owner_id, parent_id, kind, name, created_at, updated_at, updated_by, updated_via)
+		VALUES ($1, $2, $3, 'folder', $4, $5, $5, $6, $7)`, n.ID, owner, parentID, name, now, userID, viaFrom(ctx))
 	if uniqueViolation(err) {
 		return Node{}, ErrNameTaken
 	}
@@ -497,8 +497,8 @@ func (s *Service) Update(ctx context.Context, userID, nodeID uuid.UUID, ch Chang
 			parentID, n.ParentID = ch.Parent, ch.Parent
 		}
 		n.UpdatedAt, n.UpdatedBy = s.now().UTC(), &userID
-		_, err = tx.Exec(ctx, `UPDATE drive.nodes SET name = $2, parent_id = $3, updated_at = $4, updated_by = $5 WHERE id = $1`,
-			nodeID, n.Name, parentID, n.UpdatedAt, userID)
+		_, err = tx.Exec(ctx, `UPDATE drive.nodes SET name = $2, parent_id = $3, updated_at = $4, updated_by = $5, updated_via = $6 WHERE id = $1`,
+			nodeID, n.Name, parentID, n.UpdatedAt, userID, viaFrom(ctx))
 		if uniqueViolation(err) {
 			return ErrNameTaken
 		}

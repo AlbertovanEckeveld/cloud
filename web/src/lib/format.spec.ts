@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allows, checkLabel, describeUserAgent, eventLabel, formatBytes, groupSecret, permissionLabel, previewKind, snippetParts, safeNext, timeAgo, uniqueName } from './format.ts';
+import { allows, checkLabel, describeUserAgent, eventLabel, formatBytes, groupSecret, permissionLabel, previewKind, remaining, snippetParts, safeNext, timeAgo, uniqueName } from './format.ts';
 
 const now = new Date('2026-11-15T12:00:00Z');
 
@@ -116,5 +116,15 @@ describe('snippetParts', () => {
 			{ text: 'begrotingen', hit: true },
 			{ text: ' voor <b>2027</b>', hit: false }
 		]);
+	});
+});
+
+describe('remaining', () => {
+	it('estimates from the speed so far', () => {
+		expect(remaining(50, 100, 0, 30_000)).toBe('nog ~30 s');
+		expect(remaining(10, 100, 0, 60_000)).toBe('nog ~9 min');
+		expect(remaining(1, 100, 0, 60_000)).toBe('nog ~1 u 39 min');
+		expect(remaining(99, 100, 0, 10_000)).toBe('bijna klaar');
+		expect(remaining(10, 100, 0, 500)).toBe('');
 	});
 });

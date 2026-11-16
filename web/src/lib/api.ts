@@ -228,6 +228,17 @@ export interface OfficeSession {
 	edit: boolean;
 }
 
+export interface ActivityItem {
+	at: string;
+	action: 'created' | 'updated' | 'renamed' | 'moved' | 'trashed' | 'restored' | 'deleted';
+	node_id: string;
+	name: string;
+	kind: string;
+	actor_name: string;
+	via: '' | 'web' | 'desktop' | 'webdav' | 'editor';
+	present: boolean;
+}
+
 export interface SearchResult extends DriveNode {
 	/** The folder it is in, or "Mijn bestanden", "Teammappen", "Gedeeld met mij". */
 	location: string;
@@ -955,6 +966,18 @@ export const api = {
 				if (!/^https?:\/\//.test(url)) fail('url');
 				return { url, access_token: str(r, 'access_token'), access_token_ttl: num(r, 'access_token_ttl'), edit: bool(r, 'edit') } as OfficeSession;
 			}, undefined, f),
+		activity: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/activity', (v) => list(record(v, 'activity'), 'items', (i) => {
+				const r = record(i, 'item');
+				const action = str(r, 'action');
+				const via = str(r, 'via');
+				if (!['created', 'updated', 'renamed', 'moved', 'trashed', 'restored', 'deleted'].includes(action)) fail('action');
+				if (!['', 'web', 'desktop', 'webdav', 'editor'].includes(via)) fail('via');
+				return {
+					at: str(r, 'at'), action, node_id: str(r, 'node_id'), name: str(r, 'name'), kind: str(r, 'kind'),
+					actor_name: str(r, 'actor_name'), via, present: bool(r, 'present')
+				} as ActivityItem;
+			}), f),
 		search: (query: string, f: typeof fetch = fetch) =>
 			get(`/api/v1/drive/search?q=${enc(query)}`, (v) => list(record(v, 'search'), 'results', parseSearchResult), f),
 		sharedWithMe: (f: typeof fetch = fetch) =>

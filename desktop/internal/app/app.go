@@ -40,6 +40,21 @@ type MassDeleteAsk struct {
 	Total  int `json:"total"`
 }
 
+// Transfer is the file being uploaded or downloaded now.
+type Transfer struct {
+	syncer.Progress
+	Folder  string    `json:"folder"`
+	Started time.Time `json:"started"`
+}
+
+// RecentItem is a finished step, for the "recent" list.
+type RecentItem struct {
+	syncer.Event
+	Folder string `json:"folder"`
+}
+
+const recentMax = 100
+
 // Status is the app's state for the window.
 type Status struct {
 	Server    string `json:"server"`
@@ -52,6 +67,10 @@ type Status struct {
 	SidebarSupported bool           `json:"sidebar_supported"`
 	Folders          []FolderStatus `json:"folders"`
 	Error            string         `json:"error"`
+	// Current is the transfer running now, if any.
+	Current *Transfer `json:"current"`
+	// Recent lists finished steps, newest first.
+	Recent []RecentItem `json:"recent"`
 }
 
 // App is the running desktop app.
@@ -69,6 +88,8 @@ type App struct {
 	syncing   bool
 	paused    bool
 	lastErr   string
+	current   *Transfer
+	recent    []RecentItem
 	trigger   chan struct{}
 	stop      context.CancelFunc
 }
@@ -153,6 +174,8 @@ func (a *App) runAll(ctx context.Context) {
 	if err == nil {
 		engine := syncer.NewEngine(client, a.state, a.host, a.log)
 		for _, f := range cfg.Folders {
+			engine.OnProgress = func(p syncer.Progress) { a.progress(f.Name, p) }
+			engine.OnEvent = func(ev syncer.Event) { a.recordEvent(f.Name, ev) }
 			a.mu.Lock()
 			confirmed := a.confirmed[f.Root]
 			delete(a.confirmed, f.Root)
@@ -172,6 +195,29 @@ func (a *App) runAll(ctx context.Context) {
 	a.syncing = false
 	a.mu.Unlock()
 	a.publish()
+}
+
+func (a *App) progress(folder string, p syncer.Progress) {
+	a.mu.Lock()
+	switch {
+	case p.Op == "":
+		a.current = nil
+	case a.current == nil || a.current.Path != p.Path || a.current.Op != p.Op:
+		a.current = &Transfer{Progress: p, Folder: folder, Started: time.Now()}
+	default:
+		a.current.Progress = p
+	}
+	a.mu.Unlock()
+	a.publish()
+}
+
+func (a *App) recordEvent(folder string, ev syncer.Event) {
+	a.mu.Lock()
+	a.recent = append([]RecentItem{{Event: ev, Folder: folder}}, a.recent...)
+	if len(a.recent) > recentMax {
+		a.recent = a.recent[:recentMax]
+	}
+	a.mu.Unlock()
 }
 
 func (a *App) record(f Folder, rep syncer.Report, err error) {
@@ -262,7 +308,12 @@ func (a *App) publish() {
 func (a *App) Status() Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	s := Status{Server: a.cfg.Server, SignedIn: a.sess != nil, Syncing: a.syncing, Paused: a.paused, Autostart: a.cfg.Autostart, SidebarSupported: sidebarSupported, Error: a.lastErr, Folders: []FolderStatus{}}
+	s := Status{Server: a.cfg.Server, SignedIn: a.sess != nil, Syncing: a.syncing, Paused: a.paused, Autostart: a.cfg.Autostart, SidebarSupported: sidebarSupported, Error: a.lastErr, Folders: []FolderStatus{},
+		Recent: append([]RecentItem{}, a.recent...)}
+	if a.current != nil {
+		cur := *a.current
+		s.Current = &cur
+	}
 	for _, f := range a.cfg.Folders {
 		if st, ok := a.status[f.Root]; ok {
 			s.Folders = append(s.Folders, *st)

@@ -22,6 +22,24 @@ export interface FolderStatus {
 	mass_delete: { local: number; remote: number; total: number } | null;
 }
 
+export interface Transfer {
+	op: 'upload' | 'download';
+	path: string;
+	done: number;
+	total: number;
+	step: number;
+	steps: number;
+	folder: string;
+	started: string;
+}
+
+export interface RecentItem {
+	at: string;
+	op: 'uploaded' | 'downloaded' | 'folder' | 'deleted_local' | 'trashed_remote' | 'conflict';
+	path: string;
+	folder: string;
+}
+
 export interface Status {
 	server: string;
 	signed_in: boolean;
@@ -31,6 +49,8 @@ export interface Status {
 	sidebar_supported: boolean;
 	folders: FolderStatus[];
 	error: string;
+	current: Transfer | null;
+	recent: RecentItem[] | null;
 }
 
 export interface Root {

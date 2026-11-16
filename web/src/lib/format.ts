@@ -222,3 +222,20 @@ export function snippetParts(snippet: string): { text: string; hit: boolean }[] 
 	}
 	return parts;
 }
+
+/**
+ * Estimates the time left of a transfer from the speed so far, e.g.
+ * "nog ~2 min". Empty while there is too little to go on (the first
+ * seconds) or when it is done.
+ */
+export function remaining(done: number, total: number, startedMs: number, nowMs: number): string {
+	const elapsed = (nowMs - startedMs) / 1000;
+	if (elapsed < 1 || done <= 0 || done >= total) return '';
+	const seconds = ((total - done) / done) * elapsed;
+	if (seconds < 10) return 'bijna klaar';
+	if (seconds < 60) return `nog ~${Math.round(seconds / 5) * 5} s`;
+	if (seconds < 3600) return `nog ~${Math.round(seconds / 60)} min`;
+	const h = Math.floor(seconds / 3600);
+	const m = Math.round((seconds % 3600) / 60);
+	return m ? `nog ~${h} u ${m} min` : `nog ~${h} u`;
+}

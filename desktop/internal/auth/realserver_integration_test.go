@@ -4,10 +4,12 @@ package auth_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,6 +68,22 @@ func TestRealServer(t *testing.T) {
 	tree, _ := client.Tree(ctx, "mine")
 	if !hasItem(tree, "van-desktop.txt") {
 		t.Error("upload not on the server")
+	}
+	// The server's activity shows this upload as made by the desktop app.
+	tok, _ := sess.Token(ctx)
+	req, _ := http.NewRequestWithContext(ctx, "GET", server+"/api/v1/drive/activity", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	if resp, err := http.DefaultClient.Do(req); err != nil {
+		t.Error(err)
+	} else {
+		var act struct {
+			Items []struct{ Action, Name, Via string }
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&act)
+		resp.Body.Close()
+		if len(act.Items) == 0 || act.Items[0].Name != "van-desktop.txt" || act.Items[0].Via != "desktop" {
+			t.Errorf("activity on the server: %+v", act.Items)
+		}
 	}
 	// Server -> local (another device uploads).
 	if _, err := client.Upload(ctx, "root", "van-server.txt", 7, strings.NewReader("server!")); err != nil {

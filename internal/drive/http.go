@@ -27,6 +27,8 @@ type Auth struct {
 	RequireRecentAuth func(http.Handler) http.Handler
 	// UserID returns the signed-in user of a request that passed RequireUser.
 	UserID func(*http.Request) uuid.UUID
+	// Desktop reports whether the request comes from the desktop app.
+	Desktop func(*http.Request) bool
 	// Audit records an administrative action in the central audit log.
 	Audit func(r *http.Request, event string, details map[string]any)
 }
@@ -43,6 +45,16 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 	r.Get("/office", s.handleOfficeInfo)
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireUser)
+		// Record the channel of every change: web app or desktop app.
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				via := ViaWeb
+				if auth.Desktop != nil && auth.Desktop(r) {
+					via = ViaDesktop
+				}
+				next.ServeHTTP(w, r.WithContext(withVia(r.Context(), via)))
+			})
+		})
 		r.Get("/folders/{id}", s.handleList)
 		r.Post("/folders", s.handleCreateFolder)
 		r.Put("/files", s.handleUpload)
@@ -56,6 +68,7 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 		r.Delete("/nodes/{id}/shares/{type}/{subject}", s.handleUnshare)
 		r.Get("/shared", s.handleSharedWithMe)
 		r.Get("/search", s.handleSearch)
+		r.Get("/activity", s.handleActivity)
 		r.Get("/sync/roots", s.handleSyncRoots)
 		r.Get("/sync/tree", s.handleSyncTree)
 		r.Get("/sync/changes", s.handleSyncChanges)

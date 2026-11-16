@@ -1,7 +1,18 @@
 <script lang="ts">
 	// The desktop app's only window: sign in, choose folders, see what syncs.
 	import { onMount } from 'svelte';
-	import { bridge, message, summary, type Root, type Status } from './bridge.ts';
+	import { bridge, message, summary, type RecentItem, type Root, type Status } from './bridge.ts';
+	// The same estimate and sizes as the web app.
+	import { formatBytes, remaining } from '../../../web/src/lib/format.ts';
+
+	const ops: Record<RecentItem['op'], string> = {
+		uploaded: 'Geüpload',
+		downloaded: 'Gedownload',
+		folder: 'Map aangemaakt',
+		deleted_local: 'Hier verwijderd',
+		trashed_remote: 'Naar de prullenbak op de server',
+		conflict: 'Conflict: beide versies bewaard'
+	};
 
 	let status = $state<Status | null>(null);
 	let roots = $state<Root[]>([]);
@@ -138,6 +149,38 @@
 			{/if}
 		</section>
 
+		{#if status.current}
+			{@const c = status.current}
+			<section class="panel now">
+				<h2>Nu bezig</h2>
+				<p>
+					{c.op === 'upload' ? 'Uploaden' : 'Downloaden'} <strong>{c.path}</strong>
+					<span class="muted small">({c.folder}, stap {c.step} van {c.steps})</span>
+				</p>
+				<progress max={c.total || 1} value={c.done}></progress>
+				<p class="muted small">
+					{formatBytes(c.done)} van {formatBytes(c.total)}{remaining(c.done, c.total, Date.parse(c.started), Date.now()) ? ` · ${remaining(c.done, c.total, Date.parse(c.started), Date.now())}` : ''}
+				</p>
+			</section>
+		{/if}
+
+		{#if status.recent && status.recent.length > 0}
+			<section class="panel recent">
+				<h2>Recent gesynchroniseerd</h2>
+				<ul class="list">
+					{#each status.recent.slice(0, 30) as r, i (r.at + r.path + i)}
+						<li>
+							<span>
+								<span class="muted small">{new Date(r.at).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}</span>
+								{ops[r.op]} <strong>{r.path}</strong>
+							</span>
+							<span class="muted small">{r.folder}</span>
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
+
 		<section class="panel settings">
 			<label class="check">
 				<input type="checkbox" checked={status.autostart} onchange={(e) => act(() => bridge().SetAutostart(e.currentTarget.checked))} />
@@ -180,8 +223,17 @@
 	.error {
 		color: var(--error-text);
 	}
-	.settings {
+	.settings,
+	.now,
+	.recent {
 		margin-top: 1rem;
+	}
+	.now progress {
+		width: 100%;
+	}
+	.recent .list {
+		max-height: 260px;
+		overflow-y: auto;
 	}
 	.actions {
 		display: flex;

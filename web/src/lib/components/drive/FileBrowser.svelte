@@ -8,7 +8,7 @@
 	import { page } from '$app/state';
 	import { drive, editable, refreshDrive } from '#lib/drive-state.svelte.ts';
 	import { api, ApiError, errorMessage, type DriveNode, type FolderView } from '#lib/api.ts';
-	import { allows, dateTime, formatBytes, permissionLabel, previewKind, timeAgo, uniqueName } from '#lib/format.ts';
+	import { allows, dateTime, formatBytes, permissionLabel, previewKind, remaining, timeAgo, uniqueName } from '#lib/format.ts';
 	import ErrorNotice from '../ErrorNotice.svelte';
 	import MoveDialog from './MoveDialog.svelte';
 	import ShareDialog from './ShareDialog.svelte';
@@ -17,7 +17,7 @@
 
 	let { folderId }: { folderId: string | null } = $props();
 
-	type UploadState = { key: number; name: string; progress: number; error: string | null };
+	type UploadState = { key: number; name: string; progress: number; size: number; started: number; error: string | null };
 
 	let view = $state<FolderView | null>(null);
 	let fileInput: HTMLInputElement;
@@ -32,6 +32,13 @@
 	const previewable = $derived(view?.children.filter((c) => c.kind === 'file' && previewKind(c.content_type, c.name)) ?? []);
 	let dragging = $state(false);
 	let uploadKey = 0;
+	// Ticks while uploading, so the time estimates stay current.
+	let now = $state(Date.now());
+	$effect(() => {
+		if (uploads.length === 0) return;
+		const timer = setInterval(() => (now = Date.now()), 1000);
+		return () => clearInterval(timer);
+	});
 
 	async function load() {
 		try {
@@ -80,7 +87,7 @@
 	const trash = (node: DriveNode) => act(() => api.drive.trash(node.id));
 
 	async function uploadOne(file: File) {
-		const state: UploadState = { key: uploadKey++, name: file.name, progress: 0, error: null };
+		const state: UploadState = { key: uploadKey++, name: file.name, progress: 0, size: file.size, started: Date.now(), error: null };
 		uploads = [...uploads, state];
 		const item = () => uploads.find((u) => u.key === state.key)!;
 		const progress = (p: number) => (item().progress = p);
@@ -173,6 +180,9 @@
 			<span>{u.error}</span>
 			<button class="link" onclick={() => (uploads = uploads.filter((x) => x.key !== u.key))}>Sluiten</button>
 		{:else}
+			<span class="muted small upload__eta">
+				{Math.round(u.progress * 100)}%{remaining(u.progress * u.size, u.size, u.started, now) ? ` · ${remaining(u.progress * u.size, u.size, u.started, now)}` : ''}
+			</span>
 			<progress max="1" value={u.progress}></progress>
 		{/if}
 	</div>
@@ -364,6 +374,9 @@
 	.upload span:first-child {
 		flex: 1;
 		overflow-wrap: anywhere;
+	}
+	.upload__eta {
+		white-space: nowrap;
 	}
 	.upload--error {
 		background: var(--error-bg);

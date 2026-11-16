@@ -3,7 +3,7 @@
 // in the folder that is shown.
 import { api, errorMessage, type DriveNode, type OfficeInfo, type Usage } from './api.ts';
 
-export type Section = 'mine' | 'shared' | 'trash' | { team: string };
+export type Section = 'mine' | 'shared' | 'trash' | 'activity' | { team: string };
 
 export const drive = $state<{
 	usage: Usage | null;

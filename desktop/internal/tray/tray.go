@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/png"
 	"math"
+	"path"
 	"time"
 
 	"fyne.io/systray"
@@ -154,6 +155,13 @@ func summary(s app.Status) (string, color.RGBA) {
 		return "Wacht op je bevestiging (veel verwijderingen)", orange
 	case s.Paused:
 		return "Gepauzeerd", orange
+	case s.Current != nil && s.Current.Total > 0:
+		verb := "Uploaden"
+		if s.Current.Op == "download" {
+			verb = "Downloaden"
+		}
+		return fmt.Sprintf("%s %s (%d%%, stap %d van %d)", verb, path.Base(s.Current.Path),
+			s.Current.Done*100/s.Current.Total, s.Current.Step, s.Current.Steps), blue
 	case s.Syncing:
 		return "Bezig met synchroniseren…", blue
 	case failed > 0:

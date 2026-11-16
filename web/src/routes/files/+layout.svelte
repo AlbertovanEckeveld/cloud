@@ -55,7 +55,8 @@
 					<a href="/files/{t.id}" aria-current={current({ team: t.id })}><Icon name="users" />{t.name}</a>
 				{/each}
 			{/if}
-			<a class="nav__trash" href="/files/trash" aria-current={current('trash')}><Icon name="trash" />Prullenbak</a>
+			<a class="nav__trash" href="/files/activity" aria-current={current('activity')}><Icon name="history" />Activiteit</a>
+			<a href="/files/trash" aria-current={current('trash')}><Icon name="trash" />Prullenbak</a>
 		</nav>
 
 		{#if drive.usage}

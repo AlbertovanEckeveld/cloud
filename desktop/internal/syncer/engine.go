@@ -39,6 +39,54 @@ type Engine struct {
 	host  string
 	log   *slog.Logger
 	now   func() time.Time
+	// OnProgress reports the running transfer; OnEvent each finished step.
+	// Both may be nil.
+	OnProgress func(Progress)
+	OnEvent    func(Event)
+
+	step, steps int // position in the running plan
+}
+
+// Progress is the transfer running now, and how far the run is.
+type Progress struct {
+	Op    string `json:"op"` // "upload" or "download"
+	Path  string `json:"path"`
+	Done  int64  `json:"done"`
+	Total int64  `json:"total"`
+	Step  int    `json:"step"`  // this many steps of the run started
+	Steps int    `json:"steps"` // steps in this run
+}
+
+// Event is one finished step of a run.
+type Event struct {
+	At   time.Time `json:"at"`
+	Op   string    `json:"op"` // uploaded, downloaded, folder, deleted_local, trashed_remote, conflict
+	Path string    `json:"path"`
+}
+
+func (e *Engine) event(op, path string) {
+	if e.OnEvent != nil {
+		e.OnEvent(Event{At: e.now(), Op: op, Path: path})
+	}
+}
+
+// meter counts transferred bytes and reports them at most a few times a second.
+type meter struct {
+	e       *Engine
+	p       Progress
+	last    time.Time
+	written int64
+}
+
+func (m *meter) Write(b []byte) (int, error) {
+	m.written += int64(len(b))
+	if m.e.OnProgress != nil && (time.Since(m.last) > 250*time.Millisecond || m.written == m.p.Total) {
+		m.last = time.Now()
+		p := m.p
+		p.Done = m.written
+		m.e.OnProgress(p)
+	}
+	return len(b), nil
 }
 
 // NewEngine returns an engine; host names this device in conflict copies.
@@ -125,6 +173,9 @@ func (e *Engine) Sync(ctx context.Context, rootID, dir string, allowMassDelete b
 		}
 	}
 	e.execute(ctx, root, rootID, plan, &rep)
+	if e.OnProgress != nil {
+		e.OnProgress(Progress{}) // nothing running anymore
+	}
 	return rep, nil
 }
 
@@ -341,6 +392,12 @@ func (e *Engine) execute(ctx context.Context, root *os.Root, rootID string, plan
 		e.log.Warn("sync step failed", "path", s.key, "error", err)
 		rep.Failed = append(rep.Failed, s.key)
 	}
+	e.step, e.steps = 0, 0
+	for _, s := range plan {
+		if s.act != actNone && s.act != actRecord && s.act != actForget {
+			e.steps++
+		}
+	}
 	// Server folders known before this run are parents too.
 	for _, s := range plan {
 		if s.rem != nil && s.rem.kind == "folder" {
@@ -351,6 +408,9 @@ func (e *Engine) execute(ctx context.Context, root *os.Root, rootID string, plan
 	for _, s := range plan {
 		if err := ctx.Err(); err != nil {
 			return
+		}
+		if s.act != actNone && s.act != actRecord && s.act != actForget {
+			e.step++
 		}
 		var err error
 		switch s.act {
@@ -365,10 +425,12 @@ func (e *Engine) execute(ctx context.Context, root *os.Root, rootID string, plan
 			if err == nil {
 				err = e.state.setBase(ctx, rootID, s.key, baseEntry{id: s.rem.id, kind: "folder"})
 				rep.FoldersCreated++
+				e.event("folder", s.key)
 			}
 		case actDownload:
 			if err = e.download(ctx, root, rootID, s); err == nil {
 				rep.Downloaded++
+				e.event("downloaded", s.key)
 			}
 		case actMkdirRemote:
 			parent, ok := parentID(s.key)
@@ -382,6 +444,7 @@ func (e *Engine) execute(ctx context.Context, root *os.Root, rootID string, plan
 				_ = e.state.upsertRemote(ctx, rootID, remoteEntry{id: id, kind: "folder", name: path.Base(s.key), parent: parentRef(parent, rootID)})
 				err = e.state.setBase(ctx, rootID, s.key, baseEntry{id: id, kind: "folder"})
 				rep.FoldersCreated++
+				e.event("folder", s.key)
 			}
 		case actUpload:
 			parent, ok := parentID(s.key)
@@ -391,10 +454,12 @@ func (e *Engine) execute(ctx context.Context, root *os.Root, rootID string, plan
 			}
 			if err = e.upload(ctx, root, rootID, parent, s.key, s.local.rel); err == nil {
 				rep.Uploaded++
+				e.event("uploaded", s.key)
 			}
 		case actConflict:
 			if err = e.conflict(ctx, root, rootID, s); err == nil {
 				rep.Conflicts++
+				e.event("conflict", s.key)
 			}
 		}
 		if err != nil {
@@ -412,6 +477,7 @@ func (e *Engine) execute(ctx context.Context, root *os.Root, rootID string, plan
 			if err = e.deleteLocal(root, s); err == nil {
 				err = e.state.dropBase(ctx, rootID, s.key)
 				rep.DeletedLocal++
+				e.event("deleted_local", s.key)
 			}
 		case actTrashRemote:
 			trashed[s.key] = true
@@ -432,6 +498,7 @@ func (e *Engine) execute(ctx context.Context, root *os.Root, rootID string, plan
 		if err == nil {
 			err = e.state.dropBase(ctx, rootID, s.key)
 			rep.TrashedRemote++
+			e.event("trashed_remote", s.key)
 		}
 		if err != nil {
 			fail(s, err)
@@ -477,7 +544,8 @@ func (e *Engine) download(ctx context.Context, root *os.Root, rootID string, s s
 		return err
 	}
 	h := sha256.New()
-	err = e.api.Download(ctx, s.rem.id, io.MultiWriter(f, h), s.rem.size)
+	m := &meter{e: e, p: Progress{Op: "download", Path: s.rem.rel, Total: s.rem.size, Step: e.step, Steps: e.steps}}
+	err = e.api.Download(ctx, s.rem.id, io.MultiWriter(f, h, m), s.rem.size)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -521,7 +589,8 @@ func (e *Engine) upload(ctx context.Context, root *os.Root, rootID, parent, k, r
 		return errors.New("not a regular file")
 	}
 	h := sha256.New()
-	id, err := e.api.Upload(ctx, parent, path.Base(k), info.Size(), io.TeeReader(io.LimitReader(f, info.Size()), h))
+	m := &meter{e: e, p: Progress{Op: "upload", Path: rel, Total: info.Size(), Step: e.step, Steps: e.steps}}
+	id, err := e.api.Upload(ctx, parent, path.Base(k), info.Size(), io.TeeReader(io.LimitReader(f, info.Size()), io.MultiWriter(h, m)))
 	if err != nil {
 		return err
 	}

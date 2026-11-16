@@ -136,8 +136,8 @@ func (s *Service) RestoreVersion(ctx context.Context, userID, nodeID, versionID 
 		}
 		n.Size, n.ContentType, n.UpdatedAt, n.currentVersionID, n.UpdatedBy = v.Size, v.ContentType, s.now().UTC(), &v.ID, &userID
 		if _, err := tx.Exec(ctx, `
-			UPDATE drive.nodes SET current_version_id = $2, size = $3, content_type = $4, updated_at = $5, updated_by = $6 WHERE id = $1`,
-			nodeID, v.ID, v.Size, v.ContentType, n.UpdatedAt, userID); err != nil {
+			UPDATE drive.nodes SET current_version_id = $2, size = $3, content_type = $4, updated_at = $5, updated_by = $6, updated_via = $7
+			WHERE id = $1`, nodeID, v.ID, v.Size, v.ContentType, n.UpdatedAt, userID, viaFrom(ctx)); err != nil {
 			return fmt.Errorf("restore version: %w", err)
 		}
 		out = n

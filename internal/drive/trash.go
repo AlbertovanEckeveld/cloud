@@ -26,7 +26,8 @@ func (s *Service) Trash(ctx context.Context, userID, nodeID uuid.UUID) error {
 		} else if root {
 			return errTeamRoot
 		}
-		if _, err := tx.Exec(ctx, `UPDATE drive.nodes SET trashed_at = $2 WHERE id = $1`, nodeID, s.now()); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE drive.nodes SET trashed_at = $2, updated_by = $3, updated_via = $4 WHERE id = $1`,
+			nodeID, s.now(), userID, viaFrom(ctx)); err != nil {
 			return fmt.Errorf("trash node: %w", err)
 		}
 		return nil
@@ -82,8 +83,8 @@ func (s *Service) Restore(ctx context.Context, userID, nodeID uuid.UUID) (Node, 
 			n.Name = withSuffix(base, i)
 		}
 		n.UpdatedAt, n.UpdatedBy = s.now().UTC(), &userID
-		if _, err := tx.Exec(ctx, `UPDATE drive.nodes SET trashed_at = NULL, parent_id = $2, name = $3, updated_at = $4, updated_by = $5 WHERE id = $1`,
-			nodeID, n.ParentID, n.Name, n.UpdatedAt, userID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE drive.nodes SET trashed_at = NULL, parent_id = $2, name = $3, updated_at = $4, updated_by = $5, updated_via = $6 WHERE id = $1`,
+			nodeID, n.ParentID, n.Name, n.UpdatedAt, userID, viaFrom(ctx)); err != nil {
 			return fmt.Errorf("restore: %w", err)
 		}
 		n.TrashedAt = nil

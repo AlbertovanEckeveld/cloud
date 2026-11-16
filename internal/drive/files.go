@@ -156,8 +156,8 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 		case errors.Is(err, ErrNotFound):
 			node = Node{ID: newID(), ParentID: up.ParentID, Kind: "file", Name: name, CreatedAt: now, ownerID: owner}
 			_, err = tx.Exec(ctx, `
-				INSERT INTO drive.nodes (id, owner_id, parent_id, kind, name, created_at, updated_at, updated_by)
-				VALUES ($1, $2, $3, 'file', $4, $5, $5, $6)`, node.ID, owner, up.ParentID, name, now, userID)
+				INSERT INTO drive.nodes (id, owner_id, parent_id, kind, name, created_at, updated_at, updated_by, updated_via)
+				VALUES ($1, $2, $3, 'file', $4, $5, $5, $6, $7)`, node.ID, owner, up.ParentID, name, now, userID, viaFrom(ctx))
 			if uniqueViolation(err) {
 				return ErrNameTaken
 			}
@@ -173,8 +173,8 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 			return fmt.Errorf("store version: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE drive.nodes SET current_version_id = $2, size = $3, content_type = $4, updated_at = $5, updated_by = $6 WHERE id = $1`,
-			node.ID, versionID, up.Size, ctype, now, userID); err != nil {
+			UPDATE drive.nodes SET current_version_id = $2, size = $3, content_type = $4, updated_at = $5, updated_by = $6, updated_via = $7
+			WHERE id = $1`, node.ID, versionID, up.Size, ctype, now, userID, viaFrom(ctx)); err != nil {
 			return fmt.Errorf("update node: %w", err)
 		}
 		node.Size, node.ContentType, node.UpdatedAt, node.currentVersionID, node.UpdatedBy = up.Size, ctype, now, &versionID, &userID

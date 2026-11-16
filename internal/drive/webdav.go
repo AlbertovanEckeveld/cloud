@@ -94,6 +94,7 @@ func (s *Service) davHandler(mount string, userID func(*http.Request) uuid.UUID)
 		}
 
 		user := userID(r)
+		r = r.WithContext(withVia(r.Context(), ViaWebDAV))
 		fsys := &davFS{s: s, user: user, mount: mount}
 		if r.Method == http.MethodPut {
 			s.davPut(w, r, fsys, strings.TrimPrefix(r.URL.Path, "/dav/"+mount))

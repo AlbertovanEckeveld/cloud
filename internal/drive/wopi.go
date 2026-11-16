@@ -343,7 +343,7 @@ func (s *Service) wopi(h wopiHandler) http.HandlerFunc {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		h(w, r, t)
+		h(w, r.WithContext(withVia(r.Context(), ViaEditor)), t)
 	}
 }
 

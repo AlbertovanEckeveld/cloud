@@ -253,6 +253,10 @@ func serve(ctx context.Context) error {
 					p, _ := identity.PrincipalFrom(r.Context())
 					return p.User.ID
 				},
+				Desktop: func(r *http.Request) bool {
+					p, _ := identity.PrincipalFrom(r.Context())
+					return p.Device
+				},
 			})
 		},
 		wopi: files.WOPIRoutes,
