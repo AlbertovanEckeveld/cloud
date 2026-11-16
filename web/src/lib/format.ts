@@ -181,20 +181,25 @@ export function allows(p: keyof typeof rank, need: keyof typeof rank): boolean {
 	return rank[p] >= rank[need];
 }
 
-export type PreviewKind = 'image' | 'video' | 'audio' | 'text';
+export type PreviewKind = 'image' | 'video' | 'audio' | 'text' | 'markdown' | 'pdf';
 
 const previewMedia: Record<string, PreviewKind> = {
 	'image/jpeg': 'image', 'image/png': 'image', 'image/gif': 'image', 'image/webp': 'image', 'image/avif': 'image',
 	'video/mp4': 'video', 'video/webm': 'video', 'video/ogg': 'video',
 	'audio/mpeg': 'audio', 'audio/ogg': 'audio', 'audio/wav': 'audio', 'audio/x-wav': 'audio', 'audio/mp4': 'audio',
-	'audio/webm': 'audio', 'audio/flac': 'audio'
+	'audio/webm': 'audio', 'audio/flac': 'audio', 'application/pdf': 'pdf'
 };
 const textLike = ['application/json', 'application/xml', 'application/javascript', 'application/x-yaml', 'application/yaml', 'application/toml'];
 
-/** How a file can be previewed; mirrors the server's whitelist (drive/preview.go). */
-export function previewKind(contentType: string): PreviewKind | null {
+/**
+ * How a file can be previewed; mirrors the server's whitelist
+ * (drive/preview.go). Markdown is text that Cloud renders itself.
+ */
+export function previewKind(contentType: string, name = ''): PreviewKind | null {
 	const type = contentType.split(';')[0].trim().toLowerCase();
 	if (previewMedia[type]) return previewMedia[type];
-	if (type.startsWith('text/') || textLike.includes(type)) return 'text';
+	if (type.startsWith('text/') || textLike.includes(type)) {
+		return type === 'text/markdown' || /\.(md|markdown)$/i.test(name) ? 'markdown' : 'text';
+	}
 	return null;
 }

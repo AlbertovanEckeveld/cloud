@@ -26,8 +26,11 @@ zijn. Het platform moet multi-site blijven (ADR 0001).
    `?inline=1`) kan alleen voor een witte lijst: afbeeldingen (geen SVG: die kan script
    bevatten), video, audio, en tekst, die altijd als `text/plain` gaat, ook HTML, zodat je de
    bron ziet en er niets wordt uitgevoerd. Met `nosniff` blijft een als `.png` vermomde
-   HTML-pagina een (kapotte) afbeelding. PDF valt voorlopig af: de PDF-viewer van de browser
-   werkt niet onder de sandbox-CSP, en pdf.js zou een nieuwe dependency zijn.
+   HTML-pagina een (kapotte) afbeelding. PDF's opent Cloud in een eigen lezer op basis van
+   PDF.js (worker van de eigen origin, zonder WebAssembly), niet in de viewer van de browser.
+   Markdown wordt met `marked` alleen geparsed en door Svelte zelf opgebouwd, nooit als ruwe
+   HTML ingevoegd: ingebedde HTML blijft tekst, links alleen naar http(s)/mailto, externe
+   afbeeldingen worden links (laden zou de lezer verraden).
 4. **Namen** worden genormaliseerd naar Unicode NFC (macOS gebruikt NFD), mogen geen `/`, `\`
    of besturingstekens bevatten, en zijn per map uniek ongeacht hoofdletters (Windows en macOS
    zijn hoofdletterongevoelig).

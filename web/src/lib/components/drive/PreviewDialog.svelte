@@ -4,6 +4,8 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import { api, errorMessage, type DriveNode } from '#lib/api.ts';
 	import { formatBytes, previewKind } from '#lib/format.ts';
+	import Markdown from './Markdown.svelte';
+	import PdfView from './PdfView.svelte';
 
 	let { files, start, onClose }: { files: DriveNode[]; start: number; onClose: () => void } = $props();
 
@@ -18,7 +20,7 @@
 	let textError = $state<string | null>(null);
 
 	const file = $derived(files[index]);
-	const kind = $derived(previewKind(file.content_type));
+	const kind = $derived(previewKind(file.content_type, file.name));
 
 	$effect(() => {
 		dialog.showModal();
@@ -26,7 +28,7 @@
 
 	$effect(() => {
 		text = textError = null;
-		if (kind !== 'text') return;
+		if (kind !== 'text' && kind !== 'markdown') return;
 		if (file.size > maxText) {
 			textError = `Dit bestand is te groot voor een voorbeeld (${formatBytes(file.size)}).`;
 			return;
@@ -70,8 +72,12 @@
 				<video src={api.drive.previewURL(file.id)} controls preload="metadata"></video>
 			{:else if kind === 'audio'}
 				<audio src={api.drive.previewURL(file.id)} controls preload="metadata"></audio>
+			{:else if kind === 'pdf'}
+				<PdfView url={api.drive.previewURL(file.id)} />
 			{:else if textError}
 				<p class="muted">{textError}</p>
+			{:else if text !== null && kind === 'markdown'}
+				<Markdown source={text} />
 			{:else if text !== null}
 				<pre>{text}</pre>
 			{:else}

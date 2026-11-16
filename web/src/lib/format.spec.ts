@@ -102,7 +102,9 @@ describe('previewKind', () => {
 		expect(previewKind('image/png')).toBe('image');
 		expect(previewKind('image/svg+xml')).toBeNull();
 		expect(previewKind('text/html; charset=utf-8')).toBe('text');
-		expect(previewKind('application/pdf')).toBeNull();
+		expect(previewKind('application/pdf')).toBe('pdf');
+		expect(previewKind('text/plain; charset=utf-8', 'LEESMIJ.md')).toBe('markdown');
+		expect(previewKind('application/zip', 'x.md')).toBeNull();
 		expect(previewKind('video/mp4')).toBe('video');
 	});
 });

@@ -199,7 +199,7 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   (ADR 0007), OIDC-provider met amr/acr, profielclaims en back-channel logout (ADR 0008).
   Het deelmodel is ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`.
 - Bezig met: **fase 2 – drive**. 2.1 af (ADR 0009). 2.2 delen + versies (ADR 0010),
-  2.2b teammappen (ADR 0011) en 2.3a deellinks (ADR 0012) en 2.3b voorbeeldweergave gebouwd en
+  2.2b teammappen (ADR 0011) en 2.3a deellinks (ADR 0012) en 2.3b voorbeeldweergave (incl. markdown en PDF) gebouwd en
   getest; wachten op mijn eigen test. Daarna 2.3c zoeken.
   Stappen: 2.1 drive-basis (mappen, streaming upload/download,
   hernoemen, verplaatsen, prullenbak, quota, bestandsbrowser); 2.2 versies + delen met
@@ -230,6 +230,8 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - Eerste admin via CLI (`platform user create --admin`), die een eenmalige activatielink geeft.
 - OIDC-provider op basis van `zitadel/oidc` (OpenID-gecertificeerd).
 - Go-dependencies fase 1: golang.org/x/crypto (argon2id), go-webauthn/webauthn, zitadel/oidc.
+- Frontend-dependencies fase 2: pdfjs-dist (Apache-2.0, PDF-lezer), marked (MIT, alleen als
+  markdown-parser; renderen gebeurt in Svelte zonder ruwe HTML).
 - Geen Caddy/WireGuard; het platform verzorgt zelf HTTPS zodra het buiten het thuisnetwerk komt.
 - Dev-adres: `http://albertove-msi.albertove.cloud:8443`, alleen op het NetBird-adres
   (100.80.128.240, versleuteld door WireGuard). Voorlopig http: passkeys werken daar pas met

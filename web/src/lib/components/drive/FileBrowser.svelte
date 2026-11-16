@@ -28,7 +28,7 @@
 	let sharing = $state<DriveNode | null>(null);
 	let history = $state<DriveNode | null>(null);
 	let previewing = $state<number | null>(null);
-	const previewable = $derived(view?.children.filter((c) => c.kind === 'file' && previewKind(c.content_type)) ?? []);
+	const previewable = $derived(view?.children.filter((c) => c.kind === 'file' && previewKind(c.content_type, c.name)) ?? []);
 	let dragging = $state(false);
 	let uploadKey = 0;
 
@@ -213,7 +213,7 @@
 							{:else if n.kind === 'folder'}
 								<a class="with-icon" href="/files/{n.id}"><Icon name="folder" />{n.name}</a>
 							{:else}
-								{#if previewKind(n.content_type)}
+								{#if previewKind(n.content_type, n.name)}
 									<button class="link-button with-icon name-button" onclick={() => (previewing = previewable.indexOf(n))}>
 										<Icon name="file" />{n.name}
 									</button>

@@ -12,6 +12,9 @@ var inlineMedia = map[string]bool{
 	"image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true, "image/avif": true,
 	"video/mp4": true, "video/webm": true, "video/ogg": true,
 	"audio/mpeg": true, "audio/ogg": true, "audio/wav": true, "audio/x-wav": true, "audio/mp4": true, "audio/webm": true, "audio/flac": true,
+	// Read by Cloud's own PDF reader (pdf.js); opened directly, the sandbox
+	// CSP keeps the browser's viewer from running anything on this origin.
+	"application/pdf": true,
 }
 
 var textLike = map[string]bool{

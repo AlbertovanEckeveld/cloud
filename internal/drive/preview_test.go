@@ -10,7 +10,7 @@ func TestPreviewType(t *testing.T) {
 		"text/markdown":            "text/plain; charset=utf-8",
 		"application/json":         "text/plain; charset=utf-8",
 		"video/mp4":                "video/mp4",
-		"application/pdf":          "",
+		"application/pdf":          "application/pdf",
 		"application/octet-stream": "",
 		"application/x-msdownload": "",
 		"not a type":               "",
