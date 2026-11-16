@@ -64,7 +64,7 @@ func TestAppPasswords(t *testing.T) {
 	if w := call("", ""); w.Code != http.StatusUnauthorized || !strings.Contains(w.Header().Get("WWW-Authenticate"), "Basic") {
 		t.Errorf("no credentials: %d %v", w.Code, w.Header())
 	}
-	if w := call("someone-else", ap.Password); w.Code != http.StatusUnauthorized {
+	if w := call(unknownUsername(u), ap.Password); w.Code != http.StatusUnauthorized {
 		t.Errorf("other username: %d", w.Code)
 	}
 	if w := call(u.Username, testPassword); w.Code != http.StatusUnauthorized {
