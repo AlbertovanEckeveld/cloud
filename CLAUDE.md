@@ -200,7 +200,8 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   Het deelmodel is ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`.
 - Bezig met: **fase 2 – drive**. 2.1 af (ADR 0009). 2.2 delen + versies (ADR 0010),
   2.2b teammappen (ADR 0011) en 2.3a deellinks (ADR 0012) en 2.3b voorbeeldweergave (incl. markdown en PDF) en 2.3c zoeken op
-  naam (ADR 0013) en 2.4 app-wachtwoorden + WebDAV (ADR 0014) gebouwd en getest; wachten op
+  naam (ADR 0013) en 2.4 app-wachtwoorden + WebDAV (ADR 0014) en 2.5 Collabora/WOPI (ADR 0015) gebouwd en
+  getest; wachten op
   mijn eigen test. Zoeken op inhoud volgt met
   tekstextractie.
   Stappen: 2.1 drive-basis (mappen, streaming upload/download,
@@ -224,7 +225,8 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 ## 12. Beslissingen
 
 - Geen eigen S3-objectopslag bouwen; bestaande S3-server gebruiken.
-- Home Assistant en Collabora blijven extern en worden gekoppeld.
+- Home Assistant en Collabora blijven extern en worden gekoppeld. Collabora (dev) draait op
+  `ave-dev-cloud.albertove.cloud:9980` (andere NetBird-host); platform-instelling `COLLABORA_URL`.
 - Frontend: SvelteKit met `adapter-static`, ingebed in de Go-binary (één origin, geen Node in productie).
 - Go-dependencies fase 0: chi, pgx/v5, goose, minio-go, google/uuid. Frontend: SvelteKit, Vite, Vitest.
 - CI: GitHub Actions.

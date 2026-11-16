@@ -65,6 +65,8 @@ type Options struct {
 	MaxFileSize int64
 	// Sharing is the central authorization of the identity module.
 	Sharing authz.Authorizer
+	// Office enables editing documents with Collabora Online; nil disables it.
+	Office *Office
 }
 
 // Service implements the drive module.
@@ -76,6 +78,7 @@ type Service struct {
 	maxFile int64
 	now     func() time.Time
 	locks   davLocks
+	office  *office
 	// userID identifies the signed-in user and audit records administrative
 	// actions; both set by Routes.
 	userID func(*http.Request) uuid.UUID
@@ -88,7 +91,11 @@ func New(db *pgxpool.Pool, objects Objects, opts Options) *Service {
 	if maxFile <= 0 {
 		maxFile = DefaultMaxFileSize
 	}
-	return &Service{db: db, objects: objects, sharing: opts.Sharing, log: opts.Logger, maxFile: maxFile, now: time.Now}
+	s := &Service{db: db, objects: objects, sharing: opts.Sharing, log: opts.Logger, maxFile: maxFile, now: time.Now}
+	if opts.Office != nil {
+		s.office = &office{cfg: *opts.Office}
+	}
+	return s
 }
 
 // Node is a file or folder.

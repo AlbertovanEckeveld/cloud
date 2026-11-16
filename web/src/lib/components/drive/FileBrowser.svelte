@@ -6,7 +6,7 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { drive, refreshDrive } from '#lib/drive-state.svelte.ts';
+	import { drive, editable, refreshDrive } from '#lib/drive-state.svelte.ts';
 	import { api, ApiError, errorMessage, type DriveNode, type FolderView } from '#lib/api.ts';
 	import { allows, dateTime, formatBytes, permissionLabel, previewKind, timeAgo, uniqueName } from '#lib/format.ts';
 	import ErrorNotice from '../ErrorNotice.svelte';
@@ -214,7 +214,9 @@
 							{:else if n.kind === 'folder'}
 								<a class="with-icon" href="/files/{n.id}"><Icon name="folder" />{n.name}</a>
 							{:else}
-								{#if previewKind(n.content_type, n.name)}
+								{#if editable(n.name)}
+									<a class="with-icon" href="/edit/{n.id}"><Icon name="file" />{n.name}</a>
+								{:else if previewKind(n.content_type, n.name)}
 									<button class="link-button with-icon name-button" onclick={() => (previewing = previewable.indexOf(n))}>
 										<Icon name="file" />{n.name}
 									</button>
@@ -234,6 +236,9 @@
 						<td class="row-actions">
 							{#if allows(n.permission, 'manage')}
 								<button class="icon-button" aria-label="Delen" title="Delen" onclick={() => (sharing = n)}><Icon name="share" /></button>
+							{/if}
+							{#if n.kind === 'file' && editable(n.name)}
+								<a class="icon-button" href="/edit/{n.id}" aria-label={allows(n.permission, 'edit') ? 'Bewerken' : 'Openen'} title={allows(n.permission, 'edit') ? 'Bewerken' : 'Openen'}><Icon name="edit" /></a>
 							{/if}
 							{#if n.kind === 'file'}
 								<button class="icon-button" aria-label="Versies" title="Versies" onclick={() => (history = n)}><Icon name="history" /></button>

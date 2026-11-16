@@ -41,6 +41,9 @@ type Config struct {
 	Storage       Storage
 	// Mail is nil when no SMTP server is configured; mail is then disabled.
 	Mail *Mail
+	// Collabora is the Collabora Online server for editing documents
+	// (WOPI); nil disables editing in the browser.
+	Collabora *url.URL
 }
 
 // Database configures the PostgreSQL connection.
@@ -132,6 +135,7 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.Mail = l.mail(cfg.Env)
 	cfg.EncryptionKey = l.encryptionKey("ENCRYPTION_KEY", cfg.EncryptionKey)
 	cfg.Storage.Endpoint, cfg.Storage.UseTLS = l.storageEndpoint("S3_ENDPOINT", cfg.Env)
+	cfg.Collabora = l.origin("COLLABORA_URL", cfg.Env)
 
 	if err := errors.Join(l.errs...); err != nil {
 		return Config{}, fmt.Errorf("invalid configuration:\n%w", err)
@@ -231,6 +235,25 @@ func (l *loader) validateDatabaseURL(s Secret, env Env) {
 
 // publicURL requires a bare origin (scheme, host, optional port). In
 // production it must be https, because session cookies are then Secure-only.
+// origin parses an optional URL that may only hold scheme, host and port.
+func (l *loader) origin(name string, env Env) *url.URL {
+	raw := l.str(name, "")
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") ||
+		u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		l.fail("%s must be a URL with only scheme, host and port, like https://office.example.com", name)
+		return nil
+	}
+	if env == EnvProduction && u.Scheme != "https" {
+		l.fail("%s must use https in production", name)
+	}
+	u.Path = ""
+	return u
+}
+
 func (l *loader) publicURL(name string, env Env) *url.URL {
 	raw := l.required(name)
 	if raw == "" {

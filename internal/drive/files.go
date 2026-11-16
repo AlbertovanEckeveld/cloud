@@ -29,6 +29,9 @@ type Upload struct {
 	// Replace stores the upload as a new version of an existing file with
 	// the same name. Without it, an existing name is an error.
 	Replace bool
+	// FileID stores a new version of this file (needs edit on the file
+	// itself); ParentID and Name are then ignored. Used by the editor.
+	FileID *uuid.UUID
 }
 
 // countingReader hashes and counts what passes through it.
@@ -72,6 +75,22 @@ func (s *Service) checkQuota(ctx context.Context, q dbtx, userID uuid.UUID, extr
 // file belongs to (and counts towards the quota of) the folder's owner; the
 // version records who uploaded it.
 func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node, error) {
+	var owner uuid.UUID
+	var perm authz.Permission
+	if up.FileID != nil {
+		f, err := s.authorize(ctx, s.db, userID, *up.FileID, authz.Edit, false)
+		if err != nil {
+			return Node{}, err
+		}
+		if f.Kind != "file" {
+			return Node{}, ErrNotFound
+		}
+		// The real parent (authorize hides it above a share).
+		if err := s.db.QueryRow(ctx, `SELECT parent_id FROM drive.nodes WHERE id = $1`, f.ID).Scan(&up.ParentID); err != nil {
+			return Node{}, fmt.Errorf("load node: %w", err)
+		}
+		up.Name, up.Replace, owner, perm = f.Name, true, f.ownerID, f.Permission
+	}
 	name, err := normalizeName(up.Name)
 	if err != nil {
 		return Node{}, err
@@ -79,9 +98,10 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 	if up.Size < -1 || up.Size > s.maxFile {
 		return Node{}, ErrTooLarge
 	}
-	owner, perm, err := s.target(ctx, s.db, userID, up.ParentID)
-	if err != nil {
-		return Node{}, err
+	if up.FileID == nil {
+		if owner, perm, err = s.target(ctx, s.db, userID, up.ParentID); err != nil {
+			return Node{}, err
+		}
 	}
 	existing, err := s.childByName(ctx, s.db, owner, up.ParentID, name)
 	if err != nil && !errors.Is(err, ErrNotFound) {

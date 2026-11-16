@@ -282,6 +282,19 @@ func TestSPACSPWithoutStyleAttributes(t *testing.T) {
 	}
 }
 
+func TestSPACSPFrames(t *testing.T) {
+	if csp := testSPA(t).csp; !strings.Contains(csp, "frame-src 'none'") || !strings.Contains(csp, "form-action 'self';") {
+		t.Errorf("without frame origins: %s", csp)
+	}
+	spa, err := NewSPA(fstest.MapFS{"index.html": {Data: []byte("<html></html>")}}, "http://office.example:9980")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(spa.csp, "frame-src http://office.example:9980;") || !strings.Contains(spa.csp, "form-action 'self' http://office.example:9980;") {
+		t.Errorf("with the editor: %s", spa.csp)
+	}
+}
+
 func TestDecodeJSON(t *testing.T) {
 	type body struct {
 		Name string `json:"name"`

@@ -32,6 +32,8 @@ type routerDeps struct {
 	drive func(chi.Router)
 	// dav mounts WebDAV for desktop and mobile clients under /dav.
 	dav func(chi.Router)
+	// wopi mounts the WOPI host endpoints Collabora Online calls.
+	wopi func(chi.Router)
 
 	// identity mounts the identity module's routes under /api/v1.
 	identity     func(chi.Router)
@@ -94,6 +96,8 @@ func newRouter(d routerDeps) http.Handler {
 	// cross-origin check lets them through; they authenticate with app
 	// passwords (HTTP Basic), never with the session cookie.
 	r.Route("/dav", d.dav)
+	// Collabora calls these server to server with a signed access token.
+	r.Route("/wopi", d.wopi)
 	r.Mount("/oidc", d.oidc)
 	r.Get("/avatars/{file}", d.avatars)
 	r.Handle("/*", d.frontend)

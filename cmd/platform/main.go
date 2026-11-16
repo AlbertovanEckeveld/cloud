@@ -176,7 +176,18 @@ func serve(ctx context.Context) error {
 	if err := registry.Heartbeat(startupCtx); err != nil {
 		return err
 	}
-	files := drive.New(a.pool, store, drive.Options{Logger: logger, Sharing: a.identity})
+	opts := drive.Options{Logger: logger, Sharing: a.identity}
+	var frameOrigins []string
+	if cfg.Collabora != nil {
+		// A separate key per purpose: a leaked WOPI key cannot forge OIDC tokens.
+		wopiKey, err := hkdf.Key(sha256.New, []byte(cfg.EncryptionKey.Reveal()), nil, "cloud wopi access tokens", 32)
+		if err != nil {
+			return fmt.Errorf("derive wopi key: %w", err)
+		}
+		opts.Office = &drive.Office{URL: cfg.Collabora, PublicURL: cfg.PublicURL, Key: [32]byte(wopiKey)}
+		frameOrigins = append(frameOrigins, cfg.Collabora.String())
+	}
+	files := drive.New(a.pool, store, opts)
 	go registry.Run(ctx)
 	go a.identity.Run(ctx)
 	go files.Run(ctx)
@@ -212,7 +223,7 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("frontend: %w", err)
 	}
-	spa, err := httpserver.NewSPA(dist)
+	spa, err := httpserver.NewSPA(dist, frameOrigins...)
 	if err != nil {
 		return err
 	}
@@ -240,6 +251,7 @@ func serve(ctx context.Context) error {
 				},
 			})
 		},
+		wopi: files.WOPIRoutes,
 		dav: func(r chi.Router) {
 			files.DAVRoutes(r, a.identity.RequireAppPassword("Cloud"), func(r *http.Request) uuid.UUID {
 				p, _ := identity.PrincipalFrom(r.Context())

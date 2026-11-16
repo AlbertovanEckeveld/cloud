@@ -98,8 +98,8 @@ services:
         --o:ssl.termination=true
         --o:server_name=ave-dev-cloud.albertove.cloud
 
-    expose:
-      - "9980"
+    ports:
+      - "9980:9980"
 
     networks:
       - ave-cloud

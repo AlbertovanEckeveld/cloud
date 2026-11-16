@@ -212,6 +212,20 @@ export interface AppPassword {
 	last_used_at: string | null;
 }
 
+export interface OfficeInfo {
+	enabled: boolean;
+	/** Collabora's origin; messages from the editor must come from here. */
+	origin: string;
+	extensions: string[];
+}
+
+export interface OfficeSession {
+	url: string;
+	access_token: string;
+	access_token_ttl: number;
+	edit: boolean;
+}
+
 export interface SearchResult extends DriveNode {
 	/** The folder it is in, or "Mijn bestanden", "Teammappen", "Gedeeld met mij". */
 	location: string;
@@ -910,6 +924,20 @@ export const api = {
 		openLink: (token: string, password: string, folderId: string | null, f: typeof fetch = fetch) =>
 			post('/api/v1/drive/public/links/open', parsePublicView, { token, password, folder_id: folderId ?? '' }, f),
 		linkDownloadURL: '/api/v1/drive/public/links/download',
+		office: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/office', (v) => {
+				const r = record(v, 'office');
+				const origin = str(r, 'origin');
+				if (origin && !/^https?:\/\/[^\s/]+$/.test(origin)) fail('origin');
+				return { enabled: bool(r, 'enabled'), origin, extensions: strList(r, 'extensions') } as OfficeInfo;
+			}, f),
+		openInOffice: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/files/${enc(id)}/office`, (v) => {
+				const r = record(v, 'office');
+				const url = str(r, 'url');
+				if (!/^https?:\/\//.test(url)) fail('url');
+				return { url, access_token: str(r, 'access_token'), access_token_ttl: num(r, 'access_token_ttl'), edit: bool(r, 'edit') } as OfficeSession;
+			}, undefined, f),
 		search: (query: string, f: typeof fetch = fetch) =>
 			get(`/api/v1/drive/search?q=${enc(query)}`, (v) => list(record(v, 'search'), 'results', parseSearchResult), f),
 		sharedWithMe: (f: typeof fetch = fetch) =>

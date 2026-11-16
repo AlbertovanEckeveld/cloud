@@ -53,6 +53,8 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 		r.Delete("/nodes/{id}/shares/{type}/{subject}", s.handleUnshare)
 		r.Get("/shared", s.handleSharedWithMe)
 		r.Get("/search", s.handleSearch)
+		r.Get("/office", s.handleOfficeInfo)
+		r.Post("/files/{id}/office", s.handleOpenInOffice)
 		r.Get("/nodes/{id}/links", s.handleLinks)
 		r.Post("/nodes/{id}/links", s.handleCreateLink)
 		r.Delete("/links/{id}", s.handleDeleteLink)
