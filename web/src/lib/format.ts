@@ -29,7 +29,8 @@ export function dateTime(iso: string): string {
 
 const checkLabels: Record<string, string> = {
 	database: 'Database',
-	storage: 'Objectopslag (S3)'
+	storage: 'Objectopslag (S3)',
+	collabora: 'Documenteditor (Collabora)'
 };
 
 /** Returns the Dutch display label for a health check name. */

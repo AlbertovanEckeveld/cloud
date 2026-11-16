@@ -6,7 +6,7 @@ const status = {
 	version: 'v1',
 	started_at: '2026-11-15T10:00:00Z',
 	ok: true,
-	checks: [{ name: 'database', ok: true, latency_ms: 3 }],
+	checks: [{ name: 'database', ok: true, latency_ms: 3, optional: false }],
 	checked_at: '2026-11-15T10:00:05Z'
 };
 

@@ -252,6 +252,13 @@ func (o *office) verifyProof(r *http.Request, token string) bool {
 	return check(key, "X-WOPI-Proof") || check(key, "X-WOPI-ProofOld") || check(old, "X-WOPI-Proof")
 }
 
+// OfficeCheck reports whether Collabora is reachable and configured to match
+// COLLABORA_URL, for the system status page. The reason for a failure is
+// logged by the health checker.
+func (s *Service) OfficeCheck(ctx context.Context) error {
+	return s.office.load(ctx)
+}
+
 // OfficeSession is what the browser needs to open the editor.
 type OfficeSession struct {
 	URL         string `json:"url"`

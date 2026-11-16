@@ -209,10 +209,14 @@ func serve(ctx context.Context) error {
 		logger.Info("mail disabled: no SMTP_HOST configured")
 	}
 
-	checker := health.NewChecker(logger,
-		health.Check{Name: "database", Run: a.pool.Ping},
-		health.Check{Name: "storage", Run: store.Ping},
-	)
+	checks := []health.Check{
+		{Name: "database", Run: a.pool.Ping},
+		{Name: "storage", Run: store.Ping},
+	}
+	if cfg.Collabora != nil {
+		checks = append(checks, health.Check{Name: "collabora", Run: files.OfficeCheck, Optional: true})
+	}
+	checker := health.NewChecker(logger, checks...)
 
 	oidcProvider, err := a.identity.OIDCHandler(startupCtx)
 	if err != nil {

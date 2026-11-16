@@ -19,6 +19,8 @@ export interface CheckResult {
 	name: string;
 	ok: boolean;
 	latency_ms: number;
+	/** An optional feature: failing does not make the platform unready. */
+	optional: boolean;
 }
 
 export interface Status {
@@ -368,7 +370,7 @@ export const parseStatus: Validator<Status> = (v) => {
 		ok: bool(o, 'ok'),
 		checks: list(o, 'checks', (c) => {
 			const r = record(c, 'check');
-			return { name: str(r, 'name'), ok: bool(r, 'ok'), latency_ms: num(r, 'latency_ms') };
+			return { name: str(r, 'name'), ok: bool(r, 'ok'), latency_ms: num(r, 'latency_ms'), optional: r.optional === true };
 		}),
 		checked_at: str(o, 'checked_at')
 	};

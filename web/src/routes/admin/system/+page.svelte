@@ -86,9 +86,15 @@
 						<span class="checks__name">{checkLabel(check.name)}</span>
 						<span class="muted checks__latency">{check.latency_ms} ms</span>
 						<span class="badge" class:badge--ok={check.ok} class:badge--error={!check.ok}>
-							{check.ok ? 'Bereikbaar' : 'Onbereikbaar'}
+							{check.ok ? 'Bereikbaar' : check.optional ? 'Niet beschikbaar' : 'Onbereikbaar'}
 						</span>
 					</li>
+					{#if check.name === 'collabora' && !check.ok}
+						<li class="muted small">
+							Documenten bewerken staat uit. Collabora is onbereikbaar, of zijn editor-adres (server_name) is niet gelijk
+							aan COLLABORA_URL. De precieze reden staat in het serverlog ("health check failed").
+						</li>
+					{/if}
 				{/each}
 			</ul>
 			<p class="muted small">
