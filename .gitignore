@@ -37,3 +37,7 @@ go.work.sum
 
 # Build output
 /bin/
+
+# Desktop app: dependencies and the built window (made by make desktop-web)
+/desktop/frontend/node_modules/
+/desktop/frontend/dist/

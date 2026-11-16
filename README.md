@@ -123,6 +123,15 @@ problemen tegelijk.
 | `/api/v1/sites` | Alle sites met versie en laatste heartbeat. Alleen beheerders. |
 | overige paden | De frontend (single-page app). |
 
+## Desktop-app
+
+```sh
+make desktop        # Linux: bin/cloud-desktop (WebKitGTK 4.1 en libsecret nodig)
+```
+
+Op macOS (Xcode Command Line Tools nodig): `make desktop DESKTOP_TAGS=desktop,production`.
+De app koppelt via de browser (passkey); kies daarna welke mappen je wilt synchroniseren.
+
 ## Container
 
 ```sh

@@ -7,7 +7,7 @@
 
 `drive` is pas af met een desktop-app die foutloos synchroniseert (CLAUDE.md). Gekozen: Go +
 Wails, eerst Linux en macOS, volledige kopie van gekozen mappen, inloggen via de browser.
-Dit ADR beschrijft de serverkant (2.6a) en de sync-engine (2.6b); de app volgt in 2.6c.
+Dit ADR beschrijft de serverkant (2.6a), de sync-engine (2.6b) en de app (2.6c).
 
 ## Beslissing
 
@@ -64,6 +64,33 @@ Dit ADR beschrijft de serverkant (2.6a) en de sync-engine (2.6b); de app volgt i
 8. De status-database is alleen leesbaar voor de eigenaar (0600). Tokens zitten niet in de engine.
 9. Hernoemen wordt (nog) als verwijderen + nieuw gesynchroniseerd: veilig, maar kost bandbreedte
    en de versiegeschiedenis staat dan bij het oude item in de prullenbak.
+
+### De app (Wails v2)
+
+1. **Inloggen** (RFC 8252/7636): de app opent de systeembrowser; een loopback-listener op
+   `127.0.0.1` met een vrije poort vangt de code op. `state` wordt constant-time vergeleken,
+   PKCE S256, de listener aanvaardt één antwoord. De discovery moet van de server zelf komen en
+   alle endpoints moeten op dezelfde host staan (anders zou een gemanipuleerd document codes of
+   tokens naar elders kunnen sturen); https verplicht, http alleen na expliciete keuze.
+2. **Tokens:** het refresh token staat in de sleutelbos van het OS (Secret Service, macOS
+   Sleutelhanger); het access token alleen in het geheugen. Afmelden trekt het refresh token in
+   (RFC 7009) en daarmee ook de access tokens; mislukt dat, dan meldt de app het.
+3. **Mappen:** alleen volledige, bestaande mappen die geen symlink zijn, niet de thuismap of
+   `/`, en niet overlappend met een andere sync-map (dat zou zichzelf synchroniseren). De
+   instellingen (zonder geheimen) staan met rechten 0600 in de gebruikersconfiguratie.
+4. **Venster:** de frontend (Svelte) praat alleen via een smalle `Bridge` met Go; "map openen"
+   opent alleen een map die al gesynchroniseerd wordt. Strikte CSP in het venster.
+5. Wails v2 kent geen systeembalk-icoon: het venster sluiten laat de app op de achtergrond
+   doorwerken, opnieuw starten haalt het venster terug (één exemplaar), "Afsluiten" stopt hem.
+   Autostart via XDG (Linux) of een LaunchAgent (macOS).
+6. Bestandsbewaking (fsnotify) start een ronde 2 s na de laatste lokale wijziging; wijzigingen
+   op de server worden elke 30 s opgehaald.
+
+### Gevonden en opgelost tijdens het testen
+
+De end-to-end-test tegen de echte server liet zien dat het intrekken van een refresh token
+(RFC 7009) niets deed: de OIDC-library geeft het token-ID door, en de server zocht dat alleen
+tussen de access tokens. Dat gold voor elke OIDC-app. Opgelost en met een test afgedekt.
 
 ## Gevolgen
 
