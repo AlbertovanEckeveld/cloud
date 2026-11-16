@@ -1,6 +1,6 @@
 # ADR 0013: Zoeken in drive (eerste stap: op naam)
 
-- Status: geaccepteerd
+- Status: geaccepteerd (uitgebreid met zoeken op inhoud: ADR 0017)
 - Datum: 2026-11-16
 
 ## Context

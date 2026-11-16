@@ -25,6 +25,10 @@ type SearchResult struct {
 	// or "Mijn bestanden", a team folder, or "Gedeeld met mij".
 	Location   string     `json:"location"`
 	LocationID *uuid.UUID `json:"location_id"`
+	// Snippet shows where the words were found in the file's text, with
+	// \x02 and \x03 around each match (never HTML). Empty for name matches.
+	Snippet string `json:"snippet,omitempty"`
+	rank    float32
 }
 
 // Search finds files and folders by (part of) their name in everything the
@@ -50,12 +54,20 @@ func (s *Service) Search(ctx context.Context, userID uuid.UUID, query string) ([
 
 	// Name matches (using the trigram index), each with its path upwards.
 	rows, err := s.db.Query(ctx, `
-		WITH RECURSIVE cand AS (
-			SELECT id FROM drive.nodes
-			WHERE lower(name) LIKE $1 AND trashed_at IS NULL
-			  AND (owner_id = $2 OR owner_id IN (SELECT owner_id FROM drive.nodes WHERE id = ANY($3)))
-			ORDER BY lower(name) = lower($4) DESC, lower(name) LIKE lower($5) DESC, length(name), updated_at DESC
-			LIMIT $6),
+		WITH RECURSIVE owners AS (
+			SELECT $2::uuid AS id UNION SELECT owner_id FROM drive.nodes WHERE id = ANY($3)),
+		cand AS (
+			(SELECT id FROM drive.nodes
+			 WHERE lower(name) LIKE $1 AND trashed_at IS NULL AND owner_id IN (SELECT id FROM owners)
+			 ORDER BY lower(name) = lower($4) DESC, lower(name) LIKE lower($5) DESC, length(name), updated_at DESC
+			 LIMIT $6)
+			UNION
+			-- Words in the text (Dutch and English stemming), best matches first.
+			(SELECT c.node_id FROM drive.contents c JOIN drive.nodes n ON n.id = c.node_id
+			 WHERE c.tsv @@ (websearch_to_tsquery('dutch', $4) || websearch_to_tsquery('english', $4))
+			   AND n.trashed_at IS NULL AND n.owner_id IN (SELECT id FROM owners)
+			 ORDER BY ts_rank(c.tsv, websearch_to_tsquery('dutch', $4) || websearch_to_tsquery('english', $4)) DESC
+			 LIMIT $6)),
 		chain AS (
 			SELECT c.id AS cand, n.id, n.parent_id, n.name, n.trashed_at, 0 AS depth FROM cand c JOIN drive.nodes n ON n.id = c.id
 			UNION ALL
@@ -142,7 +154,11 @@ func (s *Service) Search(ctx context.Context, userID uuid.UUID, query string) ([
 		}
 		out = append(out, r)
 	}
-	// Keep the database's ranking: exact, then prefix, then shorter names.
+	if err := s.snippets(ctx, query, out); err != nil {
+		return nil, err
+	}
+	// Names first (exact, then prefix, then containing, shorter first);
+	// then matches in the text, most relevant first.
 	q := strings.ToLower(query)
 	slices.SortStableFunc(out, func(a, b SearchResult) int {
 		rank := func(r SearchResult) int {
@@ -152,11 +168,19 @@ func (s *Service) Search(ctx context.Context, userID uuid.UUID, query string) ([
 				return 0
 			case strings.HasPrefix(name, q):
 				return 1
+			case strings.Contains(name, q):
+				return 2
 			}
-			return 2
+			return 3
 		}
 		if d := rank(a) - rank(b); d != 0 {
 			return d
+		}
+		if a.rank != b.rank {
+			if a.rank > b.rank {
+				return -1
+			}
+			return 1
 		}
 		if d := len(a.Name) - len(b.Name); d != 0 {
 			return d
@@ -167,6 +191,44 @@ func (s *Service) Search(ctx context.Context, userID uuid.UUID, query string) ([
 		out = out[:searchLimit]
 	}
 	return out, nil
+}
+
+// snippets adds, for results found in their text, where the words were
+// found. Markers are control characters the extracted text never contains,
+// so the frontend can highlight without ever treating text as HTML.
+func (s *Service) snippets(ctx context.Context, query string, results []SearchResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, len(results))
+	for i, r := range results {
+		ids[i] = r.ID
+	}
+	rows, err := s.db.Query(ctx, `
+		WITH q AS (SELECT websearch_to_tsquery('dutch', $2) || websearch_to_tsquery('english', $2) AS q)
+		SELECT c.node_id, ts_rank(c.tsv, q.q),
+		       ts_headline('dutch', c.body, q.q, 'StartSel=`+""+`, StopSel=`+""+`, MaxWords=24, MinWords=10, MaxFragments=2, FragmentDelimiter=" … "')
+		FROM drive.contents c, q WHERE c.node_id = ANY($1) AND c.tsv @@ q.q`, ids, query)
+	if err != nil {
+		return fmt.Errorf("search snippets: %w", err)
+	}
+	defer rows.Close()
+	found := map[uuid.UUID]int{}
+	for i, r := range results {
+		found[r.ID] = i
+	}
+	for rows.Next() {
+		var id uuid.UUID
+		var rank float32
+		var snippet string
+		if err := rows.Scan(&id, &rank, &snippet); err != nil {
+			return fmt.Errorf("search snippets: %w", err)
+		}
+		if i, ok := found[id]; ok && !strings.Contains(strings.ToLower(results[i].Name), strings.ToLower(query)) {
+			results[i].Snippet, results[i].rank = snippet, rank
+		}
+	}
+	return rows.Err()
 }
 
 // likeEscape makes user input literal inside a LIKE pattern.

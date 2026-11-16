@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -75,4 +77,62 @@ func TestSearch(t *testing.T) {
 	if got := e.search(t, friend, "rapport"); len(got) != 0 {
 		t.Errorf("trashed share still found: %v", names(got))
 	}
+}
+
+func TestContentSearch(t *testing.T) {
+	e := newTestEnv(t)
+	owner, friend := e.person(t, "Eigenaar"), e.person(t, "Vriend")
+	ctx := context.Background()
+	_, notes := e.upload(t, owner, "root", "notities.md", []byte("# Vergadering\nWe bespraken de begrotingen voor volgend jaar."), false)
+	_, pdf := e.upload(t, owner, "root", "scan.pdf", minimalPDF("Huurcontract Lindelaan"), false)
+	e.upload(t, owner, "root", "foto.jpg", []byte{0xff, 0xd8, 0xff}, false)
+	e.indexAll(t)
+
+	// Dutch stemming: "begroting" finds "begrotingen"; the snippet marks it.
+	got := e.search(t, owner, "begroting")
+	if len(got) != 1 || got[0].ID != notes.ID || !strings.Contains(got[0].Snippet, "\x02begrotingen\x03") {
+		t.Fatalf("content match: %+v", got)
+	}
+	if got := e.search(t, owner, "huurcontract"); len(got) != 1 || got[0].ID != pdf.ID {
+		t.Errorf("text in a PDF: %+v", got)
+	}
+	// A name match comes before a match in the text.
+	e.upload(t, owner, "root", "begroting 2027.xlsx", []byte("x"), false)
+	if got := e.search(t, owner, "begroting"); len(got) != 2 || got[0].Name != "begroting 2027.xlsx" || got[0].Snippet != "" {
+		t.Errorf("ranking: %+v", got)
+	}
+	// Others find nothing; a new version replaces the old text.
+	if got := e.search(t, friend, "begroting"); len(got) != 0 {
+		t.Errorf("found without access: %+v", got)
+	}
+	e.upload(t, owner, "root", "notities.md", []byte("Alleen nog over de tuin."), true)
+	e.indexAll(t)
+	if got := e.search(t, owner, "begrotingen"); len(got) != 0 {
+		t.Errorf("old version's text still found: %+v", got)
+	}
+	if got := e.search(t, owner, "tuin"); len(got) != 1 || got[0].ID != notes.ID {
+		t.Errorf("new version's text: %+v", got)
+	}
+	_ = e.svc.Trash(ctx, owner, notes.ID)
+	if got := e.search(t, owner, "tuin"); len(got) != 0 {
+		t.Errorf("trashed file found by its text: %+v", got)
+	}
+}
+
+// indexAll runs the background indexer until the queue is empty. The queue
+// is filled by a trigger with the database clock, so the test clock moves on.
+func (e *testEnv) indexAll(t *testing.T) {
+	t.Helper()
+	e.clock = time.Now().Add(time.Second)
+	for range 100 {
+		var queued int
+		_ = e.pool.QueryRow(context.Background(), `SELECT count(*) FROM drive.index_queue WHERE next_attempt_at <= $1`, e.clock).Scan(&queued)
+		if queued == 0 {
+			return
+		}
+		if err := e.svc.indexDue(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Fatal("index queue does not empty")
 }

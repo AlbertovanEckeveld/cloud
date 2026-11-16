@@ -232,6 +232,8 @@ export interface SearchResult extends DriveNode {
 	/** The folder it is in, or "Mijn bestanden", "Teammappen", "Gedeeld met mij". */
 	location: string;
 	location_id: string | null;
+	/** Where the words were found in the text; \x02 and \x03 mark the matches. */
+	snippet: string;
 }
 
 export interface SharedNode extends DriveNode {
@@ -657,7 +659,12 @@ const parseAppPassword: Validator<AppPassword> = (v) => {
 
 const parseSearchResult: Validator<SearchResult> = (v) => {
 	const r = record(v, 'result');
-	return { ...parseNode(r), location: str(r, 'location'), location_id: nullableStr(r, 'location_id') };
+	return {
+		...parseNode(r),
+		location: str(r, 'location'),
+		location_id: nullableStr(r, 'location_id'),
+		snippet: typeof r.snippet === 'string' ? r.snippet : ''
+	};
 };
 
 const parseSharedNode: Validator<SharedNode> = (v) => ({

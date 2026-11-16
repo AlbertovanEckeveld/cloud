@@ -207,3 +207,18 @@ export function previewKind(contentType: string, name = ''): PreviewKind | null 
 	}
 	return null;
 }
+
+/**
+ * Splits a search snippet into plain and highlighted parts. The server marks
+ * matches with \x02 … \x03; the parts are rendered as text, never as HTML.
+ */
+export function snippetParts(snippet: string): { text: string; hit: boolean }[] {
+	const parts: { text: string; hit: boolean }[] = [];
+	for (const piece of snippet.split('\x02')) {
+		const end = piece.indexOf('\x03');
+		if (end >= 0) parts.push({ text: piece.slice(0, end), hit: true });
+		const rest = piece.slice(end + 1); // the whole piece when there is no end marker
+		if (rest) parts.push({ text: rest, hit: false });
+	}
+	return parts;
+}

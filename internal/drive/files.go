@@ -185,6 +185,7 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 		s.forget(ctx, key)
 		return Node{}, err
 	}
+	s.indexSoon()
 	nodes := []Node{out}
 	if err := s.annotate(ctx, userID, perm, nodes); err != nil {
 		return Node{}, err

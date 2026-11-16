@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allows, checkLabel, describeUserAgent, eventLabel, formatBytes, groupSecret, permissionLabel, previewKind, safeNext, timeAgo, uniqueName } from './format.ts';
+import { allows, checkLabel, describeUserAgent, eventLabel, formatBytes, groupSecret, permissionLabel, previewKind, snippetParts, safeNext, timeAgo, uniqueName } from './format.ts';
 
 const now = new Date('2026-11-15T12:00:00Z');
 
@@ -106,5 +106,15 @@ describe('previewKind', () => {
 		expect(previewKind('text/plain; charset=utf-8', 'LEESMIJ.md')).toBe('markdown');
 		expect(previewKind('application/zip', 'x.md')).toBeNull();
 		expect(previewKind('video/mp4')).toBe('video');
+	});
+});
+
+describe('snippetParts', () => {
+	it('marks hits and keeps HTML as text', () => {
+		expect(snippetParts('de \x02begrotingen\x03 voor <b>2027</b>')).toEqual([
+			{ text: 'de ', hit: false },
+			{ text: 'begrotingen', hit: true },
+			{ text: ' voor <b>2027</b>', hit: false }
+		]);
 	});
 });

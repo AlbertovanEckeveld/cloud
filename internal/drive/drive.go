@@ -79,6 +79,8 @@ type Service struct {
 	now     func() time.Time
 	locks   davLocks
 	office  *office
+	// indexKick wakes the background indexer after an upload.
+	indexKick chan struct{}
 	// userID identifies the signed-in user and audit records administrative
 	// actions; both set by Routes.
 	userID func(*http.Request) uuid.UUID
@@ -91,7 +93,8 @@ func New(db *pgxpool.Pool, objects Objects, opts Options) *Service {
 	if maxFile <= 0 {
 		maxFile = DefaultMaxFileSize
 	}
-	s := &Service{db: db, objects: objects, sharing: opts.Sharing, log: opts.Logger, maxFile: maxFile, now: time.Now}
+	s := &Service{db: db, objects: objects, sharing: opts.Sharing, log: opts.Logger, maxFile: maxFile, now: time.Now,
+		indexKick: make(chan struct{}, 1)}
 	if opts.Office != nil {
 		s.office = &office{cfg: *opts.Office}
 	}
@@ -526,10 +529,14 @@ func (s *Service) Run(ctx context.Context) {
 		if err := s.deleteObjects(ctx); err != nil && ctx.Err() == nil {
 			s.log.Warn("delete unreferenced objects", "error", err)
 		}
+		if err := s.indexDue(ctx); err != nil && ctx.Err() == nil {
+			s.log.Warn("index file contents", "error", err)
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-s.indexKick:
 		}
 	}
 }
