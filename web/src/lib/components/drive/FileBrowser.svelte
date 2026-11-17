@@ -14,6 +14,7 @@
 	import ShareDialog from './ShareDialog.svelte';
 	import VersionsDialog from './VersionsDialog.svelte';
 	import PreviewDialog from './PreviewDialog.svelte';
+	import { dismissible } from '#lib/dismiss.ts';
 
 	let { folderId }: { folderId: string | null } = $props();
 
@@ -147,8 +148,28 @@
 		drive.create = canEdit ? { folder: () => (newFolder = ''), upload: () => fileInput.click() } : null;
 	});
 	onDestroy(() => (drive.create = null));
-
 </script>
+
+<!-- What can be done with one item. Wide rows show these as icons; narrow
+     ones in a menu with labels (see the container queries below). -->
+{#snippet itemActions(n: DriveNode, labelled: boolean)}
+	{#if allows(n.permission, 'manage')}
+		<button class="icon-button" role={labelled ? 'menuitem' : undefined} aria-label="Delen" title="Delen" onclick={() => (sharing = n)}><Icon name="share" />{#if labelled}<span>Delen</span>{/if}</button>
+	{/if}
+	{#if n.kind === 'file' && editable(n.name)}
+		{@const label = allows(n.permission, 'edit') ? 'Bewerken' : 'Openen'}
+		<a class="icon-button" role={labelled ? 'menuitem' : undefined} href="/edit/{n.id}" aria-label={label} title={label}><Icon name="edit" />{#if labelled}<span>{label}</span>{/if}</a>
+	{/if}
+	{#if n.kind === 'file'}
+		<a class="icon-button" role={labelled ? 'menuitem' : undefined} href={api.drive.downloadURL(n.id)} download aria-label="Downloaden" title="Downloaden"><Icon name="download" />{#if labelled}<span>Downloaden</span>{/if}</a>
+		<button class="icon-button" role={labelled ? 'menuitem' : undefined} aria-label="Versies" title="Versies" onclick={() => (history = n)}><Icon name="history" />{#if labelled}<span>Versies</span>{/if}</button>
+	{/if}
+	{#if allows(n.permission, 'edit')}
+		<button class="icon-button" role={labelled ? 'menuitem' : undefined} aria-label="Hernoemen" title="Hernoemen" onclick={() => (renaming = { id: n.id, name: n.name })}><Icon name="rename" />{#if labelled}<span>Hernoemen</span>{/if}</button>
+		<button class="icon-button" role={labelled ? 'menuitem' : undefined} aria-label="Verplaatsen" title="Verplaatsen" onclick={() => (moving = n)}><Icon name="move" />{#if labelled}<span>Verplaatsen</span>{/if}</button>
+		<button class="icon-button" role={labelled ? 'menuitem' : undefined} aria-label="Verwijderen" title="Verwijderen" onclick={() => trash(n)}><Icon name="trash" />{#if labelled}<span>Verwijderen</span>{/if}</button>
+	{/if}
+{/snippet}
 
 <div class="toolbar">
 	<nav class="crumbs" aria-label="Map">
@@ -208,8 +229,8 @@
 	{#if view && view.children.length === 0}
 		<p class="empty muted">Deze map is leeg.{canEdit ? ' Sleep bestanden hierheen of gebruik Nieuw.' : ''}</p>
 	{:else if view}
-		<table class="table">
-			<thead><tr><th>Naam</th><th class="num">Grootte</th><th>Gewijzigd</th><th><span class="visually-hidden">Acties</span></th></tr></thead>
+		<table class="table files-table">
+			<thead><tr><th>Naam</th><th class="num wide-only">Grootte</th><th class="wide-only">Gewijzigd</th><th><span class="visually-hidden">Acties</span></th></tr></thead>
 			<tbody>
 				{#each view.children as n (n.id)}
 					<tr>
@@ -236,29 +257,24 @@
 								{/if}
 							{/if}
 							{#if n.shared}<span class="badge" title="Gedeeld met anderen"><Icon name="users" size={14} />Gedeeld</span>{/if}
+							<!-- Narrow rows: size and date under the name instead of in columns. -->
+							<span class="meta narrow-only muted small">
+								{n.kind === 'file' ? `${formatBytes(n.size)} · ` : ''}<time datetime={n.updated_at}>{timeAgo(n.updated_at)}</time>{n.updated_by_name ? ` · ${n.updated_by === page.data.user?.id ? 'jij' : n.updated_by_name}` : ''}
+							</span>
 						</td>
-						<td class="num muted">{n.kind === 'file' ? formatBytes(n.size) : ''}</td>
-						<td class="muted">
+						<td class="num muted wide-only">{n.kind === 'file' ? formatBytes(n.size) : ''}</td>
+						<td class="muted wide-only when">
 							<time datetime={n.updated_at} title={dateTime(n.updated_at)}>{timeAgo(n.updated_at)}</time>
 							{#if n.updated_by_name}
 								<span class="editor">· {n.updated_by === page.data.user?.id ? 'jij' : n.updated_by_name}</span>
 							{/if}
 						</td>
 						<td class="row-actions">
-							{#if allows(n.permission, 'manage')}
-								<button class="icon-button" aria-label="Delen" title="Delen" onclick={() => (sharing = n)}><Icon name="share" /></button>
-							{/if}
-							{#if n.kind === 'file' && editable(n.name)}
-								<a class="icon-button" href="/edit/{n.id}" aria-label={allows(n.permission, 'edit') ? 'Bewerken' : 'Openen'} title={allows(n.permission, 'edit') ? 'Bewerken' : 'Openen'}><Icon name="edit" /></a>
-							{/if}
-							{#if n.kind === 'file'}
-								<button class="icon-button" aria-label="Versies" title="Versies" onclick={() => (history = n)}><Icon name="history" /></button>
-							{/if}
-							{#if allows(n.permission, 'edit')}
-								<button class="icon-button" aria-label="Hernoemen" title="Hernoemen" onclick={() => (renaming = { id: n.id, name: n.name })}><Icon name="rename" /></button>
-								<button class="icon-button" aria-label="Verplaatsen" title="Verplaatsen" onclick={() => (moving = n)}><Icon name="move" /></button>
-								<button class="icon-button" aria-label="Verwijderen" title="Verwijderen" onclick={() => trash(n)}><Icon name="trash" /></button>
-							{/if}
+							<div class="row-actions__icons">{@render itemActions(n, false)}</div>
+							<details class="row-menu" use:dismissible>
+								<summary class="icon-button" aria-label="Acties voor {n.name}" title="Acties"><Icon name="more" /></summary>
+								<div class="row-menu__list" role="menu">{@render itemActions(n, true)}</div>
+							</details>
 						</td>
 					</tr>
 				{/each}
@@ -315,6 +331,79 @@
 	.drop {
 		min-height: 200px;
 		transition: border-color 0.15s;
+		/* The table adapts to the room it gets, not to the window: the sidebar
+		   takes part of the width. */
+		container-type: inline-size;
+	}
+	.files-table .name {
+		min-width: 12rem;
+	}
+	.meta {
+		display: block;
+		margin-top: 0.15rem;
+	}
+	.narrow-only,
+	.row-menu {
+		display: none;
+	}
+	.row-menu {
+		position: relative;
+	}
+	.row-menu summary {
+		list-style: none;
+	}
+	.row-menu summary::-webkit-details-marker {
+		display: none;
+	}
+	.row-menu__list {
+		position: absolute;
+		z-index: 10;
+		right: 0;
+		top: calc(100% + 0.25rem);
+		min-width: 190px;
+		display: flex;
+		flex-direction: column;
+		padding: 0.35rem;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+	}
+	.row-menu__list .icon-button {
+		width: auto;
+		height: auto;
+		justify-content: flex-start;
+		gap: 0.65rem;
+		padding: 0.55rem 0.75rem;
+		border-radius: 8px;
+		color: var(--text);
+		font: inherit;
+		text-decoration: none;
+	}
+	/* Not enough room for all icons: one menu per row. */
+	@container (max-width: 760px) {
+		.row-actions__icons {
+			display: none;
+		}
+		.row-menu {
+			display: inline-block;
+		}
+	}
+	/* Narrower still: size and date move under the name. */
+	@container (max-width: 520px) {
+		.wide-only {
+			display: none;
+		}
+		.narrow-only {
+			display: block;
+		}
+		.files-table .name {
+			min-width: 0;
+		}
+		.files-table th,
+		.files-table td {
+			padding-inline: 0.4rem;
+		}
 	}
 	.drop--active {
 		border-color: var(--accent);
@@ -334,7 +423,8 @@
 		overflow-wrap: anywhere;
 		margin-right: 0.5rem;
 	}
-	.editor {
+	.editor,
+	.when {
 		white-space: nowrap;
 	}
 	.num {

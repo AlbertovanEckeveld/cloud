@@ -40,7 +40,7 @@
 {:else}
 	<section class="panel">
 		<table class="table">
-			<thead><tr><th>Naam</th><th>Locatie</th><th class="num">Grootte</th><th>Gewijzigd</th></tr></thead>
+			<thead><tr><th>Naam</th><th>Locatie</th><th class="num col-optional">Grootte</th><th class="col-optional">Gewijzigd</th></tr></thead>
 			<tbody>
 				{#each results as r (r.id)}
 					<tr>
@@ -67,8 +67,8 @@
 								{r.location}
 							{/if}
 						</td>
-						<td class="num muted">{r.kind === 'file' ? formatBytes(r.size) : ''}</td>
-						<td class="muted"><time datetime={r.updated_at} title={dateTime(r.updated_at)}>{timeAgo(r.updated_at)}</time></td>
+						<td class="num muted col-optional">{r.kind === 'file' ? formatBytes(r.size) : ''}</td>
+						<td class="muted col-optional"><time datetime={r.updated_at} title={dateTime(r.updated_at)}>{timeAgo(r.updated_at)}</time></td>
 					</tr>
 				{/each}
 			</tbody>

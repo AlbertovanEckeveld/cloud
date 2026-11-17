@@ -216,43 +216,45 @@
 	.usage progress {
 		width: 100%;
 	}
-	@media (max-width: 760px) {
+	/* Narrow windows: the sidebar becomes a bar above the files, with the
+	   sections in one row that scrolls sideways. */
+	@media (max-width: 900px) {
 		.files {
-			grid-template-columns: 1fr;
+			grid-template-columns: minmax(0, 1fr);
 			gap: 1rem;
 		}
-		.search {
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-		padding: 0 1.1rem;
-		margin-bottom: 1.25rem;
-		background: var(--surface-2);
-		border: 1px solid transparent;
-		border-radius: 999px;
-		color: var(--muted);
-	}
-	.search:focus-within {
-		border-color: var(--accent);
-		background: var(--surface);
-	}
-	.search input {
-		flex: 1;
-		border: 0;
-		background: none;
-		padding: 0.75rem 0;
-		color: var(--text);
-		outline: none;
-	}
-	.sidebar {
+		.sidebar {
 			position: static;
-		}
-		.nav {
 			flex-direction: row;
 			flex-wrap: wrap;
+			align-items: center;
+			gap: 0.75rem;
+		}
+		.nav {
+			order: 1;
+			flex: 1 1 100%;
+			flex-direction: row;
+			overflow-x: auto;
+			scrollbar-width: thin;
+			padding-bottom: 0.25rem;
+		}
+		.nav a {
+			white-space: nowrap;
+			overflow-wrap: normal;
+		}
+		.nav a[aria-current='page'] {
+			box-shadow: inset 0 -2px 0 var(--accent);
 		}
 		.nav__heading {
-			width: 100%;
+			display: none;
+		}
+		.nav__trash {
+			margin-top: 0;
+		}
+		.usage {
+			margin-left: auto;
+			padding: 0;
+			min-width: 9rem;
 		}
 	}
 </style>

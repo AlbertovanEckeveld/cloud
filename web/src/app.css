@@ -186,6 +186,18 @@ code {
 	border-bottom: 0;
 }
 
+/* Tables adapt to the room they get: secondary columns (col-optional)
+   disappear when a table is narrow, so names stay readable on a phone. */
+.table-wrap,
+.panel:has(> .table) {
+	container-type: inline-size;
+}
+@container (max-width: 520px) {
+	.table .col-optional {
+		display: none;
+	}
+}
+
 .skip-link {
 	position: absolute;
 	left: -9999px;

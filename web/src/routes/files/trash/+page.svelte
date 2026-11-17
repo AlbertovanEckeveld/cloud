@@ -73,12 +73,12 @@
 {#if nodes && nodes.length > 0}
 	<div class="panel table-wrap">
 		<table class="table">
-			<thead><tr><th>Naam</th><th>Grootte</th><th>Verwijderd</th><th></th></tr></thead>
+			<thead><tr><th>Naam</th><th class="col-optional">Grootte</th><th>Verwijderd</th><th></th></tr></thead>
 			<tbody>
 				{#each nodes as n (n.id)}
 					<tr>
 						<td><span class="with-icon"><Icon name={n.kind === 'folder' ? 'folder' : 'file'} />{n.name}</span></td>
-						<td class="muted">{n.kind === 'file' ? formatBytes(n.size) : ''}</td>
+						<td class="muted col-optional">{n.kind === 'file' ? formatBytes(n.size) : ''}</td>
 						<td class="muted">
 							{#if n.trashed_at}<time datetime={n.trashed_at} title={dateTime(n.trashed_at)}>{timeAgo(n.trashed_at)}</time>{/if}
 						</td>

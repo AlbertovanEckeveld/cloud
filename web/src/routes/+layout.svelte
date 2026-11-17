@@ -90,4 +90,18 @@
 	main {
 		padding-block: 2.5rem 4rem;
 	}
+	@media (max-width: 600px) {
+		.site-header__inner {
+			gap: 0.5rem 1rem;
+		}
+		.site-header__actions a {
+			max-width: 9rem;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		main {
+			padding-block: 1.25rem 3rem;
+		}
+	}
 </style>
