@@ -31,6 +31,7 @@ import (
 	"github.com/AlbertovanEckeveld/cloud/internal/core/database"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/health"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/httpserver"
+	"github.com/AlbertovanEckeveld/cloud/internal/core/keycheck"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/logging"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/mailer"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
@@ -111,6 +112,11 @@ func setup(ctx context.Context, logOutput io.Writer) (*app, error) {
 
 	sl, err := sealer.New([]byte(cfg.EncryptionKey.Reveal()))
 	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	// Before anything is sealed or opened: refuse to run with another key.
+	if err := keycheck.Verify(startupCtx, pool, sl); err != nil {
 		pool.Close()
 		return nil, err
 	}
