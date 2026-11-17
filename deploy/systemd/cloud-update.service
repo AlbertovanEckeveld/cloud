@@ -8,7 +8,7 @@ After=network-online.target docker.service
 Type=oneshot
 User=cloud-deploy
 Group=cloud-deploy
-ExecStart=/opt/ave-cloud/deploy/update.sh
+ExecStart=/opt/cloud/deploy/update.sh
 # cosign keeps the Sigstore trust root here; Docker its client config.
 StateDirectory=cloud-update
 Environment=HOME=/var/lib/cloud-update
@@ -18,7 +18,7 @@ TimeoutStartSec=15min
 # script itself can touch on this machine.
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/opt/ave-cloud/deploy
+ReadWritePaths=/opt/cloud/deploy
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true

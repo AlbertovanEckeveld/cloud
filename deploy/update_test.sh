@@ -69,6 +69,14 @@ run && fail "kept an unhealthy image"
 run || fail "run after a rejected image"
 grep -q cosign "$work/calls" && fail "retried a rejected image"
 
+# Without cosign nothing is checked, so nothing is started, and the log says why.
+mv "$work/bin/cosign" "$work/cosign.away"
+echo "$B" >"$work/digest"; rm "$work/deploy/rejected"
+run && fail "ran without cosign"
+grep -q "cosign is not installed" "$work/out" || fail "no clear message about a missing cosign"
+grep -q "up -d" "$work/calls" && fail "started something without cosign"
+mv "$work/cosign.away" "$work/bin/cosign"
+
 # A malformed digest from the registry is refused.
 echo "sha256:../../etc" >"$work/digest"
 run && fail "accepted a malformed digest"

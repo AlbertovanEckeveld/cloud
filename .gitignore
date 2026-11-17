@@ -48,7 +48,6 @@ go.work.sum
 # Deployment secrets (deploy/*.example are the templates)
 /deploy/.env
 /deploy/platform.env
-/deploy/dns-provider.env
 /deploy/release.env
 /deploy/release.env.new
 /deploy/rejected

@@ -135,7 +135,7 @@ functionaliteitsrijk. Liever één goed doordacht scherm dan vijf halve.
 /workers/ml            Python ML-service
 /web                   SvelteKit-frontend; web/embed.go bedt web/build in de binary in
 /docker/dev-setup      Postgres, pgAdmin, RustFS voor de ontwikkelserver
-/deploy                compose voor staging op ave-dev-cloud (Traefik, platform, Collabora)
+/deploy                compose voor staging op ave-dev-cloud, update.sh + systemd-timer
 /docs/adr              ADR's (architectuurbeslissingen)
 ```
 
@@ -223,8 +223,9 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   alleen hun eigen data op (`it-*`, `e2e-*`).
 - Mail: SMTP-gegevens staan in `.skills/mail.md` en `.env`. Stuur geen echte mail naar
   buiten zonder mijn akkoord; tests gebruiken een nep-SMTP-server.
-- Staging: `deploy/` voor `https://ave-dev-cloud.albertove.cloud` klaar (ADR 0019); eerste
-  start door mij (de assistent heeft geen Docker-toegang).
+- Staging: `deploy/` voor `http://ave-dev-cloud.albertove.cloud:8080` (ADR 0019). Traefik er
+  voorlopig uit: http via NetBird, ontwikkelmodus, geen passkeys; Collabora is de bestaande op
+  `:9980`. Eerste start door mij (de assistent heeft geen Docker-toegang).
 - Fase 0.3 CI: GitHub Actions draait (`ci.yml` op PR's). Uitrollen (ADR 0020): `release.yml`
   bouwt na een groene CI op `main` een cosign-ondertekend image in GHCR; de VM haalt het op
   via `deploy/update.sh` + systemd-timer. Release en VM-kant nog niet end-to-end getest (pas na
@@ -250,7 +251,8 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - Frontend-dependencies fase 2: pdfjs-dist (Apache-2.0, PDF-lezer), marked (MIT, alleen als
   markdown-parser; renderen gebeurt in Svelte zonder ruwe HTML).
 - Staging en later productie draaien achter Traefik (TLS met Let's Encrypt via DNS-01, geen
-  Docker-socket), Collabora op hetzelfde adres (ADR 0019). Geen WireGuard naast NetBird.
+  Docker-socket), Collabora op hetzelfde adres (ADR 0019); voorlopig opgeschort, staging draait
+  op http via NetBird. Geen WireGuard naast NetBird.
 - Dev-adres: `http://albertove-msi.albertove.cloud:8443`, alleen op het NetBird-adres
   (100.80.128.240, versleuteld door WireGuard). Voorlopig http: passkeys werken daar pas met
   HTTPS (eigen certificaat of Let's Encrypt via DNS-01; besluit volgt).

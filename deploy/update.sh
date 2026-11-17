@@ -20,6 +20,10 @@ log() { echo "update: $*"; }
 die() { echo "update: $*" >&2; exit 1; }
 compose() { release=$1; shift; docker compose --env-file .env --env-file "$release" "$@"; }
 
+for tool in curl cosign docker; do
+	command -v "$tool" >/dev/null || die "$tool is not installed or not on PATH ($PATH); see README.md, step 0"
+done
+
 # 1. Where does the tag point now? This answer is untrusted until step 2.
 token=$(curl -fsS --max-time 30 "https://ghcr.io/token?scope=repository:$REPO:pull" |
 	sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
