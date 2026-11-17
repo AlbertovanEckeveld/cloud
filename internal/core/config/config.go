@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -74,6 +75,9 @@ type Mail struct {
 	Password Secret
 	// From is the sender, e.g. "Cloud <cloud@example.com>".
 	From string
+	// DevDir, development only: write each mail as an .eml file into this
+	// directory instead of sending it. Host is then not used.
+	DevDir string
 }
 
 // Storage configures the S3-compatible object store.
@@ -331,18 +335,35 @@ func (l *loader) publicURL(name string, env Env) *url.URL {
 	return u
 }
 
-// mail reads the optional SMTP settings. Without SMTP_HOST mail is off.
+// mail reads the optional mail settings. Without SMTP_HOST and MAIL_DEV_DIR
+// mail is off.
 func (l *loader) mail(env Env) *Mail {
 	host := l.str("SMTP_HOST", "")
-	if host == "" {
+	devDir := l.str("MAIL_DEV_DIR", "")
+	if host == "" && devDir == "" {
 		return nil
 	}
-	m := &Mail{
-		Host:     host,
-		Security: MailSecurity(l.str("SMTP_SECURITY", string(MailTLS))),
-		Username: l.str("SMTP_USERNAME", ""),
-		From:     l.required("SMTP_FROM"),
+	m := &Mail{From: l.required("SMTP_FROM")}
+	if m.From != "" {
+		if _, err := netmail.ParseAddress(m.From); err != nil {
+			l.fail("SMTP_FROM must be an address like \"Cloud <cloud@example.com>\"")
+		}
 	}
+	if devDir != "" {
+		// Mails carry secrets such as activation links: files on disk are
+		// fine on a developer's own machine, never on a server.
+		if env != EnvDevelopment {
+			l.fail("MAIL_DEV_DIR is only allowed in development")
+		}
+		if !filepath.IsAbs(devDir) {
+			l.fail("MAIL_DEV_DIR must be an absolute path")
+		}
+		m.DevDir = filepath.Clean(devDir)
+		return m
+	}
+	m.Host = host
+	m.Security = MailSecurity(l.str("SMTP_SECURITY", string(MailTLS)))
+	m.Username = l.str("SMTP_USERNAME", "")
 	switch m.Security {
 	case MailTLS:
 		m.Port = 465
@@ -365,11 +386,6 @@ func (l *loader) mail(env Env) *Mail {
 	}
 	if m.Username != "" {
 		m.Password = l.secret("SMTP_PASSWORD")
-	}
-	if m.From != "" {
-		if _, err := netmail.ParseAddress(m.From); err != nil {
-			l.fail("SMTP_FROM must be an address like \"Cloud <cloud@example.com>\"")
-		}
 	}
 	return m
 }

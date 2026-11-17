@@ -208,6 +208,10 @@ func serve(ctx context.Context) error {
 				logger.Warn("mail server check failed; mail stays queued until it works", "error", err)
 				return
 			}
+			if cfg.Mail.DevDir != "" {
+				logger.Warn("mail is not sent but written to MAIL_DEV_DIR", "dir", cfg.Mail.DevDir)
+				return
+			}
 			logger.Info("mail server reachable", "host", cfg.Mail.Host)
 		}()
 		go a.mailer.Run(ctx)
