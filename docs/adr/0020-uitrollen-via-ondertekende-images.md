@@ -35,7 +35,7 @@ Alternatieven:
    afgekeurde.
 4. Het GHCR-package is publiek (de code is dat ook; het image bevat geen geheimen), dus de VM
    heeft geen token nodig.
-5. Wijzigingen in `deploy/` zelf (compose, Traefik) rolt de timer **niet** uit; dat blijft een
+5. Wijzigingen in `deploy/` zelf (compose, instellingen) rolt de timer **niet** uit; dat blijft een
    handmatige `git pull`. Anders zou een push naar `main` alsnog willekeurige containers op de VM
    kunnen starten, buiten de handtekening om.
 

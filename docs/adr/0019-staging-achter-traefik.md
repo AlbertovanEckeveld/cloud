@@ -1,6 +1,6 @@
 # ADR 0019: Staging achter Traefik
 
-- Status: geaccepteerd (vervangt "geen reverse proxy; het platform doet zelf HTTPS")
+- Status: geaccepteerd, **tijdelijk opgeschort** (zie "Voorlopig zonder Traefik")
 - Datum: 2026-11-17
 
 ## Context
@@ -35,3 +35,12 @@ bereikbaar, dus Let's Encrypt kan het alleen via DNS-01 controleren.
   voor iets anders dan ontwikkelen moeten die dicht of op het NetBird-adres.
 - Het image en de compose zijn niet door de assistent gedraaid (geen Docker-toegang): de eerste
   start is ook een test.
+
+## Voorlopig zonder Traefik (2026-11-17)
+
+Traefik is voorlopig uit `deploy/` gehaald (zonder DNS-01-token geen certificaat). Staging draait
+nu op `http://ave-dev-cloud.albertove.cloud:8080`, alleen op het NetBird-adres, in
+ontwikkelmodus: WireGuard versleutelt het verkeer, maar er is geen HSTS en passkeys werken niet.
+Collabora is de bestaande instantie op `:9980`. `TRUSTED_PROXIES` en `PRIVATE_NETWORK_HOSTS`
+blijven in het platform (getest, ongebruikt zolang ze leeg zijn) voor als de proxy terugkomt. Dan
+komen de Traefik-configuratie en de Collabora-routes uit de git-geschiedenis terug.
