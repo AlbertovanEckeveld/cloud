@@ -91,6 +91,28 @@ func TestLoadProductionValid(t *testing.T) {
 	}
 }
 
+func TestPrivateNetworkHosts(t *testing.T) {
+	env := validEnv()
+	env["APP_ENV"] = "production"
+	env["PUBLIC_URL"] = "https://cloud.example.com"
+	env["DATABASE_URL"] = "postgres://user:pw@postgres/app?sslmode=disable"
+	env["S3_ENDPOINT"] = "http://rustfs:9000"
+	if _, err := Load(getenv(env)); err == nil {
+		t.Fatal("plain text to the database accepted in production")
+	}
+	env["PRIVATE_NETWORK_HOSTS"] = "postgres, rustfs"
+	if _, err := Load(getenv(env)); err != nil {
+		t.Fatalf("private container hosts: %v", err)
+	}
+	// Only container service names: never a real host or address.
+	for _, bad := range []string{"db.example.com", "10.0.0.5", "rustfs:9000", "localhost"} {
+		env["PRIVATE_NETWORK_HOSTS"] = bad
+		if _, err := Load(getenv(env)); err == nil || !strings.Contains(err.Error(), "PRIVATE_NETWORK_HOSTS") {
+			t.Errorf("%q accepted: %v", bad, err)
+		}
+	}
+}
+
 func TestLoadReportsAllErrorsAtOnce(t *testing.T) {
 	_, err := Load(getenv(map[string]string{}))
 	if err == nil {
@@ -258,5 +280,18 @@ func TestSecretIsRedactedEverywhere(t *testing.T) {
 	}
 	if s.Reveal() != "hunter2" {
 		t.Error("Reveal must return the raw value")
+	}
+}
+
+func TestTrustedProxies(t *testing.T) {
+	env := validEnv()
+	env["TRUSTED_PROXIES"] = "172.20.0.0/16, 10.0.0.7"
+	cfg, err := Load(getenv(env))
+	if err != nil || len(cfg.TrustedProxies) != 2 || cfg.TrustedProxies[1].Bits() != 32 {
+		t.Fatalf("trusted proxies: %v %v", cfg.TrustedProxies, err)
+	}
+	env["TRUSTED_PROXIES"] = "traefik"
+	if _, err := Load(getenv(env)); err == nil {
+		t.Error("a name accepted as trusted proxy")
 	}
 }

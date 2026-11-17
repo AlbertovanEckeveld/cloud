@@ -135,7 +135,7 @@ functionaliteitsrijk. Liever één goed doordacht scherm dan vijf halve.
 /workers/ml            Python ML-service
 /web                   SvelteKit-frontend; web/embed.go bedt web/build in de binary in
 /docker/dev-setup      Postgres, pgAdmin, RustFS voor de ontwikkelserver
-/deploy                productie-compose en deploy-scripts (nog niet aangemaakt)
+/deploy                compose voor staging op ave-dev-cloud (Traefik, platform, Collabora)
 /docs/adr              ADR's (architectuurbeslissingen)
 ```
 
@@ -223,6 +223,8 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   alleen hun eigen data op (`it-*`, `e2e-*`).
 - Mail: SMTP-gegevens staan in `.skills/mail.md` en `.env`. Stuur geen echte mail naar
   buiten zonder mijn akkoord; tests gebruiken een nep-SMTP-server.
+- Staging: `deploy/` voor `https://ave-dev-cloud.albertove.cloud` klaar (ADR 0019); eerste
+  start door mij (de assistent heeft geen Docker-toegang).
 - Open vragen: definitieve keuze Go vs. Rust (huidige keuze: Go)
 
 ## 12. Beslissingen
@@ -241,7 +243,8 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   wazero (PDF-tekst in een WebAssembly-sandbox, zonder bestandssysteem).
 - Frontend-dependencies fase 2: pdfjs-dist (Apache-2.0, PDF-lezer), marked (MIT, alleen als
   markdown-parser; renderen gebeurt in Svelte zonder ruwe HTML).
-- Geen Caddy/WireGuard; het platform verzorgt zelf HTTPS zodra het buiten het thuisnetwerk komt.
+- Staging en later productie draaien achter Traefik (TLS met Let's Encrypt via DNS-01, geen
+  Docker-socket), Collabora op hetzelfde adres (ADR 0019). Geen WireGuard naast NetBird.
 - Dev-adres: `http://albertove-msi.albertove.cloud:8443`, alleen op het NetBird-adres
   (100.80.128.240, versleuteld door WireGuard). Voorlopig http: passkeys werken daar pas met
   HTTPS (eigen certificaat of Let's Encrypt via DNS-01; besluit volgt).

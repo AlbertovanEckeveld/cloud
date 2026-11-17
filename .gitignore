@@ -41,3 +41,8 @@ go.work.sum
 # Desktop app: dependencies and the built window (made by make desktop-web)
 /desktop/frontend/node_modules/
 /desktop/frontend/dist/
+
+# Deployment secrets (deploy/*.example are the templates)
+/deploy/.env
+/deploy/platform.env
+/deploy/dns-provider.env

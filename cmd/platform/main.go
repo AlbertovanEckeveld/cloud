@@ -233,16 +233,17 @@ func serve(ctx context.Context) error {
 	}
 
 	router := newRouter(routerDeps{
-		logger:    logger,
-		hsts:      cfg.Env == config.EnvProduction,
-		siteID:    cfg.SiteID,
-		version:   version,
-		startedAt: time.Now().UTC(),
-		health:    checker,
-		sites:     registry,
-		frontend:  spa,
-		oidc:      oidcProvider,
-		avatars:   a.identity.AvatarHandler,
+		logger:         logger,
+		hsts:           cfg.Env == config.EnvProduction,
+		trustedProxies: cfg.TrustedProxies,
+		siteID:         cfg.SiteID,
+		version:        version,
+		startedAt:      time.Now().UTC(),
+		health:         checker,
+		sites:          registry,
+		frontend:       spa,
+		oidc:           oidcProvider,
+		avatars:        a.identity.AvatarHandler,
 		drive: func(r chi.Router) {
 			files.Routes(r, drive.Auth{
 				RequireUser:       a.identity.RequireUserOrDevice,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,14 +17,16 @@ import (
 // routerDeps are the collaborators the HTTP routes need. Interfaces keep the
 // router testable without a database.
 type routerDeps struct {
-	logger    *slog.Logger
-	hsts      bool
-	siteID    string
-	version   string
-	startedAt time.Time
-	health    healthReporter
-	sites     siteLister
-	frontend  http.Handler
+	logger *slog.Logger
+	hsts   bool
+	// trustedProxies are the reverse proxies whose X-Forwarded-For counts.
+	trustedProxies []netip.Prefix
+	siteID         string
+	version        string
+	startedAt      time.Time
+	health         healthReporter
+	sites          siteLister
+	frontend       http.Handler
 	// oidc is the OpenID Connect provider, mounted at /oidc.
 	oidc http.Handler
 	// avatars serves profile pictures at /avatars/{file}; public by design.
@@ -65,6 +68,7 @@ func newRouter(d routerDeps) http.Handler {
 
 	r := chi.NewRouter()
 	r.Use(
+		httpserver.RealIP(d.trustedProxies),
 		httpserver.RequestID,
 		httpserver.AccessLog(d.logger),
 		httpserver.SecurityHeaders(d.hsts),

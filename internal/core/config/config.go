@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	netmail "net/mail"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -44,6 +45,9 @@ type Config struct {
 	// Collabora is the Collabora Online server for editing documents
 	// (WOPI); nil disables editing in the browser.
 	Collabora *url.URL
+	// TrustedProxies are the reverse proxies in front of the platform,
+	// whose X-Forwarded-For is believed for the client's address.
+	TrustedProxies []netip.Prefix
 }
 
 // Database configures the PostgreSQL connection.
@@ -98,6 +102,7 @@ var bucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
 // NAME_FILE is an error, because it is ambiguous which one wins.
 func Load(getenv func(string) string) (Config, error) {
 	l := loader{getenv: getenv}
+	l.privateHosts = l.privateNetworkHosts("PRIVATE_NETWORK_HOSTS")
 
 	cfg := Config{
 		Env:           Env(l.str("APP_ENV", string(EnvProduction))),
@@ -136,6 +141,7 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.EncryptionKey = l.encryptionKey("ENCRYPTION_KEY", cfg.EncryptionKey)
 	cfg.Storage.Endpoint, cfg.Storage.UseTLS = l.storageEndpoint("S3_ENDPOINT", cfg.Env)
 	cfg.Collabora = l.origin("COLLABORA_URL", cfg.Env)
+	cfg.TrustedProxies = l.prefixes("TRUSTED_PROXIES")
 
 	if err := errors.Join(l.errs...); err != nil {
 		return Config{}, fmt.Errorf("invalid configuration:\n%w", err)
@@ -144,8 +150,9 @@ func Load(getenv func(string) string) (Config, error) {
 }
 
 type loader struct {
-	getenv func(string) string
-	errs   []error
+	getenv       func(string) string
+	errs         []error
+	privateHosts map[string]bool
 }
 
 func (l *loader) fail(format string, args ...any) {
@@ -208,6 +215,50 @@ func (l *loader) logLevel(name string) slog.Level {
 	return level
 }
 
+// prefixes reads a comma-separated list of addresses or CIDR ranges.
+func (l *loader) prefixes(name string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, s := range strings.Split(l.str(name, ""), ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			a, aerr := netip.ParseAddr(s)
+			if aerr != nil {
+				l.fail("%s must list addresses or CIDR ranges, like 172.20.0.0/16: %q", name, s)
+				continue
+			}
+			p = netip.PrefixFrom(a, a.BitLen())
+		}
+		out = append(out, p.Masked())
+	}
+	return out
+}
+
+// privateNetworkHosts reads hosts that, in production, may be reached
+// without TLS because they live on a private container network with the
+// platform (e.g. "postgres,rustfs" in a Compose network). Only single-label
+// names are accepted: a container's service name, never a public host name
+// or address, so this cannot be used to send data over a real network in
+// plain text by mistake.
+func (l *loader) privateNetworkHosts(name string) map[string]bool {
+	out := map[string]bool{}
+	for _, h := range strings.Split(l.str(name, ""), ",") {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			continue
+		}
+		if strings.ContainsAny(h, ".:/") || net.ParseIP(h) != nil || h == "localhost" {
+			l.fail("%s may only list container service names (no dots, ports or addresses): %q", name, h)
+			continue
+		}
+		out[h] = true
+	}
+	return out
+}
+
 // validateDatabaseURL checks the URL form and, in production, that the
 // connection verifies the server certificate. sslmode=prefer or require would
 // still allow a man-in-the-middle to impersonate the database.
@@ -228,8 +279,8 @@ func (l *loader) validateDatabaseURL(s Secret, env Env) {
 	if u.Hostname() == "" {
 		l.fail("DATABASE_URL must contain a host")
 	}
-	if env == EnvProduction && u.Query().Get("sslmode") != "verify-full" {
-		l.fail("DATABASE_URL must use sslmode=verify-full in production")
+	if env == EnvProduction && u.Query().Get("sslmode") != "verify-full" && !l.privateHosts[u.Hostname()] {
+		l.fail("DATABASE_URL must use sslmode=verify-full in production (or name its host in PRIVATE_NETWORK_HOSTS)")
 	}
 }
 
@@ -354,8 +405,8 @@ func (l *loader) storageEndpoint(name string, env Env) (hostport string, useTLS 
 	case "https":
 		useTLS = true
 	case "http":
-		if env == EnvProduction {
-			l.fail("%s must use https in production", name)
+		if env == EnvProduction && !l.privateHosts[u.Hostname()] {
+			l.fail("%s must use https in production (or name its host in PRIVATE_NETWORK_HOSTS)", name)
 		}
 	default:
 		l.fail("%s must use http or https", name)
