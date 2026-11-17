@@ -223,6 +223,11 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   alleen hun eigen data op (`it-*`, `e2e-*`).
 - Mail: SMTP-gegevens staan in `.skills/mail.md` en `.env`. Stuur geen echte mail naar
   buiten zonder mijn akkoord; tests gebruiken een nep-SMTP-server.
+- Omgevingen (2026-11-17): VM `ave-dev-cloud` = dev-installatie met mijn echte gegevens
+  (database `ave_cloud`); laptop (`make run`) = `ave_cloud_local` om stappen te testen; tests =
+  `ave_cloud_test`. Elke database heeft een eigen ENCRYPTION_KEY; S3-bucket wordt gedeeld (dus
+  nooit een opruimtaak die de bucket doorzoekt). `ave_cloud` is nog eigendom van een superuser-rol;
+  een eigen rol zonder superuser-rechten is nog te doen.
 - Staging: `deploy/` voor `http://ave-dev-cloud.albertove.cloud:8080` (ADR 0019). Traefik er
   voorlopig uit: http via NetBird, ontwikkelmodus, geen passkeys; Collabora is de bestaande op
   `:9980`. Eerste start door mij (de assistent heeft geen Docker-toegang).

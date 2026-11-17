@@ -1,8 +1,21 @@
 # Staging op ave-dev-cloud.albertove.cloud
 
-Een testinstallatie van het platform op `http://ave-dev-cloud.albertove.cloud:8080`, alleen
-bereikbaar via NetBird. Gebruikt de bestaande Postgres, RustFS en Collabora op deze machine, maar
-een **eigen, lege database en bucket**. Ontwerp en afwegingen: ADR 0019 en ADR 0020.
+De dev-installatie van het platform op `http://ave-dev-cloud.albertove.cloud:8080`, alleen
+bereikbaar via NetBird. Gebruikt de Postgres, RustFS en Collabora op deze machine. Ontwerp en
+afwegingen: ADR 0019 en ADR 0020.
+
+Elke omgeving heeft een **eigen database met een eigen ENCRYPTION_KEY**; nooit twee omgevingen op
+één database (het platform weigert te starten met een andere sleutel dan die van de database):
+
+| Omgeving | Database | Sleutel |
+|---|---|---|
+| Deze VM | `ave_cloud` (je echte gegevens) | de sleutel waarmee `ave_cloud` versleuteld is |
+| Laptop (`make run`) | `ave_cloud_local` | eigen sleutel in je `.env` |
+| Tests (`make test-integration`) | `ave_cloud_test` | idem |
+
+S3 (RustFS) mag dezelfde bucket delen: objectsleutels zijn UUIDv7 en elke omgeving verwijdert
+alleen objecten die in **haar eigen** database staan. Een opruimtaak die de bucket doorzoekt op
+"onbekende" objecten mag daarom nooit gebouwd worden zolang buckets gedeeld worden.
 
 ```
 NetBird :8080 ── platform ── netwerk ave-cloud ── postgres, rustfs
@@ -54,16 +67,15 @@ Het GHCR-package is publiek, dus de VM heeft geen token nodig.
 
 ## 1. Database en bucket
 
-Een eigen database met een eigen rol met minimale rechten (niet de superuser):
+De VM gebruikt de bestaande database `ave_cloud` en de bestaande bucket. Neem in `platform.env`
+over uit je laptop-`.env` (daar staan ze als commentaar sinds de laptop een eigen database heeft):
 
-```sh
-docker exec -it <postgres-container> psql -U <superuser> -c "CREATE ROLE cloud_staging LOGIN PASSWORD '<sterk wachtwoord>'"
-docker exec -it <postgres-container> psql -U <superuser> -c "CREATE DATABASE ave_cloud_staging OWNER cloud_staging"
-```
+- `DATABASE_URL`: dezelfde rol en database, maar met host `postgres` (het platform bereikt
+  Postgres via het Docker-netwerk);
+- `ENCRYPTION_KEY`: precies de sleutel waarmee `ave_cloud` versleuteld is;
+- de S3-sleutels en `S3_BUCKET`, met `S3_ENDPOINT=http://rustfs:9000`.
 
-Het platform maakt de schema's zelf aan (de rol is eigenaar van de database). In de
-RustFS-console (poort 9001) maak je de bucket `ave-cloud-staging` en een toegangssleutel die
-alleen die bucket mag gebruiken.
+Bewaar de sleutel ook in je wachtwoordmanager en haal de commentaarregels daarna uit je `.env`.
 
 ## 2. Collabora
 
@@ -85,9 +97,7 @@ sudo chmod 600 .env platform.env
 
 Vul in `platform.env` in:
 
-- `ENCRYPTION_KEY`: een **nieuwe** sleutel: `openssl rand -base64 32`. Bewaar hem veilig (zonder
-  deze sleutel zijn de versleutelde gegevens van deze installatie onleesbaar).
-- het databasewachtwoord en de S3-sleutels uit stap 1;
+- de database, sleutel en S3-gegevens uit stap 1;
 - `COLLABORA_URL`: hetzelfde adres als in je dev-platform (`…:9980`);
 - optioneel SMTP voor activatielinks.
 
@@ -109,13 +119,13 @@ sudo systemctl enable --now cloud-update.timer
 journalctl -u cloud-update -f
 ```
 
-De eerste beheerder:
+Je bestaande account werkt meteen. Een extra beheerder of een reset (bijvoorbeeld als je
+TOTP-app weg is):
 
 ```sh
 docker compose --env-file .env --env-file release.env run --rm platform user create -username <naam> -name "<volledige naam>" -email <adres> -admin
+docker compose --env-file .env --env-file release.env run --rm platform user reset -username <naam>
 ```
-
-Open de activatielink en stel een wachtwoord met TOTP in.
 
 ## 5. Controleren
 

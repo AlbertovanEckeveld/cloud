@@ -58,6 +58,12 @@ test-integration: web ## Integration tests against TEST_DATABASE_URL and the S3 
 	@$(ENV) && test -n "$$TEST_DATABASE_URL" || (echo "TEST_DATABASE_URL is not set in .env"; exit 1)
 	$(ENV) && DATABASE_URL="$$TEST_DATABASE_URL" go test -tags integration -race -count=1 ./...
 
+.PHONY: admin
+admin: build ## Create an administrator in the database from .env: make admin USERNAME=… NAME="…" [EMAIL=…]
+	@test "$(origin USERNAME)" = "command line" -a -n "$(NAME)" || \
+		(echo 'usage: make admin USERNAME=alberto NAME="Alberto" [EMAIL=you@example.com]'; exit 1)
+	@$(ENV) && ./bin/platform user create -username "$(USERNAME)" -name "$(NAME)" $(if $(EMAIL),-email "$(EMAIL)") -admin
+
 .PHONY: run
 run: build ## Run the platform with .env
 	$(ENV) && ./bin/platform
