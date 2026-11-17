@@ -1,8 +1,8 @@
 # Developer entry points. Run `make help` for an overview.
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-# Loads .env into the environment of a recipe line.
-ENV := set -a && . ./.env && set +a
+# Loads .env (if present; CI sets the environment itself) into a recipe line.
+ENV := set -a && { [ ! -f .env ] || . ./.env; } && set +a
 
 .DEFAULT_GOAL := help
 
