@@ -7,6 +7,7 @@
 	const tabs = [
 		{ href: '/admin/users', label: 'Gebruikers' },
 		{ href: '/admin/groups', label: 'Groepen' },
+		{ href: '/admin/team-folders', label: 'Teammappen' },
 		{ href: '/admin/apps', label: 'Apps' },
 		{ href: '/admin/audit', label: 'Audit-log' },
 		{ href: '/admin/system', label: 'Systeem' }

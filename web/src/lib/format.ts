@@ -29,7 +29,8 @@ export function dateTime(iso: string): string {
 
 const checkLabels: Record<string, string> = {
 	database: 'Database',
-	storage: 'Objectopslag (S3)'
+	storage: 'Objectopslag (S3)',
+	collabora: 'Documenteditor (Collabora)'
 };
 
 /** Returns the Dutch display label for a health check name. */
@@ -69,7 +70,20 @@ const eventLabels: Record<string, string> = {
 	'oidc.client.secret_rotated': 'Client-secret van app vernieuwd',
 	'oidc.app_revoked': 'Toegang van app ingetrokken',
 	'auth.logout_everywhere': 'Overal uitgelogd, ook bij apps',
-	'user.profile_updated': 'Profiel gewijzigd'
+	'user.profile_updated': 'Profiel gewijzigd',
+	'share.granted': 'Gedeeld',
+	'share.revoked': 'Delen gestopt',
+	'teamfolder.created': 'Teammap aangemaakt',
+	'teamfolder.renamed': 'Teammap hernoemd',
+	'teamfolder.quota_changed': 'Quotum van teammap gewijzigd',
+	'teamfolder.deleted': 'Teammap opgeheven',
+	'teamfolder.restored': 'Teammap teruggezet',
+	'teamfolder.purged': 'Teammap definitief verwijderd',
+	'link.created': 'Openbare link gemaakt',
+	'link.deleted': 'Openbare link ingetrokken',
+	'app_password.created': 'App-wachtwoord aangemaakt',
+	'app_password.revoked': 'App-wachtwoord ingetrokken',
+	'app_password.failed': 'Fout app-wachtwoord gebruikt'
 };
 
 /** Returns the Dutch description of an audit event. */
@@ -129,4 +143,99 @@ export function describeUserAgent(ua: string): string {
 			[/Linux/, 'Linux']
 		].find(([re]) => (re as RegExp).test(ua))?.[1];
 	return os ? `${browser} op ${os}` : String(browser);
+}
+
+const byteUnits = ['B', 'KB', 'MB', 'GB', 'TB'];
+
+/** Formats a byte count for people: 1536 → "1,5 KB" (powers of 1024). */
+export function formatBytes(bytes: number): string {
+	let value = bytes;
+	let unit = 0;
+	while (value >= 1024 && unit < byteUnits.length - 1) {
+		value /= 1024;
+		unit++;
+	}
+	const digits = unit === 0 || value >= 10 ? 0 : 1;
+	return `${value.toLocaleString('nl-NL', { maximumFractionDigits: digits })} ${byteUnits[unit]}`;
+}
+
+/** A name that does not clash with existing ones: "foto.jpg" → "foto (2).jpg". */
+export function uniqueName(name: string, taken: Set<string>): string {
+	const lower = new Set([...taken].map((n) => n.toLowerCase()));
+	if (!lower.has(name.toLowerCase())) return name;
+	const dot = name.lastIndexOf('.');
+	const [base, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+	for (let i = 2; ; i++) {
+		const candidate = `${base} (${i})${ext}`;
+		if (!lower.has(candidate.toLowerCase())) return candidate;
+	}
+}
+
+const permissionLabels = { view: 'Kan bekijken', edit: 'Kan bewerken', manage: 'Kan beheren' } as const;
+
+/** Returns the Dutch description of a sharing level. */
+export function permissionLabel(p: keyof typeof permissionLabels): string {
+	return permissionLabels[p];
+}
+
+const rank = { view: 1, edit: 2, manage: 3 } as const;
+
+/** Whether permission p includes need (view < edit < manage). */
+export function allows(p: keyof typeof rank, need: keyof typeof rank): boolean {
+	return rank[p] >= rank[need];
+}
+
+export type PreviewKind = 'image' | 'video' | 'audio' | 'text' | 'markdown' | 'pdf';
+
+const previewMedia: Record<string, PreviewKind> = {
+	'image/jpeg': 'image', 'image/png': 'image', 'image/gif': 'image', 'image/webp': 'image', 'image/avif': 'image',
+	'video/mp4': 'video', 'video/webm': 'video', 'video/ogg': 'video',
+	'audio/mpeg': 'audio', 'audio/ogg': 'audio', 'audio/wav': 'audio', 'audio/x-wav': 'audio', 'audio/mp4': 'audio',
+	'audio/webm': 'audio', 'audio/flac': 'audio', 'application/pdf': 'pdf'
+};
+const textLike = ['application/json', 'application/xml', 'application/javascript', 'application/x-yaml', 'application/yaml', 'application/toml'];
+
+/**
+ * How a file can be previewed; mirrors the server's whitelist
+ * (drive/preview.go). Markdown is text that Cloud renders itself.
+ */
+export function previewKind(contentType: string, name = ''): PreviewKind | null {
+	const type = contentType.split(';')[0].trim().toLowerCase();
+	if (previewMedia[type]) return previewMedia[type];
+	if (type.startsWith('text/') || textLike.includes(type)) {
+		return type === 'text/markdown' || /\.(md|markdown)$/i.test(name) ? 'markdown' : 'text';
+	}
+	return null;
+}
+
+/**
+ * Splits a search snippet into plain and highlighted parts. The server marks
+ * matches with \x02 … \x03; the parts are rendered as text, never as HTML.
+ */
+export function snippetParts(snippet: string): { text: string; hit: boolean }[] {
+	const parts: { text: string; hit: boolean }[] = [];
+	for (const piece of snippet.split('\x02')) {
+		const end = piece.indexOf('\x03');
+		if (end >= 0) parts.push({ text: piece.slice(0, end), hit: true });
+		const rest = piece.slice(end + 1); // the whole piece when there is no end marker
+		if (rest) parts.push({ text: rest, hit: false });
+	}
+	return parts;
+}
+
+/**
+ * Estimates the time left of a transfer from the speed so far, e.g.
+ * "nog ~2 min". Empty while there is too little to go on (the first
+ * seconds) or when it is done.
+ */
+export function remaining(done: number, total: number, startedMs: number, nowMs: number): string {
+	const elapsed = (nowMs - startedMs) / 1000;
+	if (elapsed < 1 || done <= 0 || done >= total) return '';
+	const seconds = ((total - done) / done) * elapsed;
+	if (seconds < 10) return 'bijna klaar';
+	if (seconds < 60) return `nog ~${Math.round(seconds / 5) * 5} s`;
+	if (seconds < 3600) return `nog ~${Math.round(seconds / 60)} min`;
+	const h = Math.floor(seconds / 3600);
+	const m = Math.round((seconds % 3600) / 60);
+	return m ? `nog ~${h} u ${m} min` : `nog ~${h} u`;
 }

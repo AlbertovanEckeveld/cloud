@@ -1,0 +1,34 @@
+# Routes for the staging deployment (Traefik file provider).
+http:
+  routers:
+    collabora:
+      entryPoints: [websecure]
+      rule: >-
+        Host(`ave-dev-cloud.albertove.cloud`) &&
+        (PathPrefix(`/browser`) || PathPrefix(`/hosting`) || PathPrefix(`/cool`)) &&
+        !PathPrefix(`/browser/dist/admin`) && !PathPrefix(`/cool/adminws`)
+      service: collabora
+      tls:
+        certResolver: letsencrypt
+    platform:
+      entryPoints: [websecure]
+      rule: Host(`ave-dev-cloud.albertove.cloud`)
+      service: platform
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    platform:
+      loadBalancer:
+        servers:
+          - url: http://platform:8080
+    collabora:
+      loadBalancer:
+        servers:
+          - url: http://collabora-staging:9980
+
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      sniStrict: true

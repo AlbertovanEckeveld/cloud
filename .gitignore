@@ -35,5 +35,20 @@ go.work.sum
 # Local AI-assistant notes; contain credentials
 .skills/
 
+# Visual Studio Code settings
+.vscode/
+
 # Build output
 /bin/
+
+# Desktop app: dependencies and the built window (made by make desktop-web)
+/desktop/frontend/node_modules/
+/desktop/frontend/dist/
+
+# Deployment secrets (deploy/*.example are the templates)
+/deploy/.env
+/deploy/platform.env
+/deploy/dns-provider.env
+/deploy/release.env
+/deploy/release.env.new
+/deploy/rejected

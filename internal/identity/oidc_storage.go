@@ -304,11 +304,20 @@ func (st *oidcStorage) TokenRequestByRefreshToken(ctx context.Context, token str
 	return r, nil
 }
 
-// RevokeToken implements RFC 7009 for access token IDs and refresh tokens.
+// RevokeToken implements RFC 7009. The library passes the ID of a token it
+// recognised: for a refresh token the ID from GetRefreshTokenInfo, for an
+// access token the decrypted token ID. Both are UUIDs, so both tables are
+// tried; deleting a refresh token also ends the access tokens issued with it
+// (ON DELETE CASCADE).
 func (st *oidcStorage) RevokeToken(ctx context.Context, tokenOrID, _ string, clientID string) *oidc.Error {
 	if id, err := uuid.Parse(tokenOrID); err == nil {
-		if _, err := st.s.db.Exec(ctx, `DELETE FROM identity.oidc_access_tokens WHERE id = $1 AND client_id = $2`, id, clientID); err != nil {
-			return oidc.ErrServerError()
+		for _, q := range []string{
+			`DELETE FROM identity.oidc_refresh_tokens WHERE id = $1 AND client_id = $2`,
+			`DELETE FROM identity.oidc_access_tokens WHERE id = $1 AND client_id = $2`,
+		} {
+			if _, err := st.s.db.Exec(ctx, q, id, clientID); err != nil {
+				return oidc.ErrServerError()
+			}
 		}
 		return nil
 	}

@@ -1,0 +1,96 @@
+# Continuous integration: static checks, unit tests and integration tests
+# against a throwaway Postgres and S3 that exist only for this job.
+name: ci
+
+# Pushes to main run these checks through release.yml, which publishes an
+# image only when they pass.
+on:
+  pull_request:
+  workflow_call:
+
+# Least privilege: read the code, nothing else. Pull requests from forks get
+# no secrets either way; this workflow needs none.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ave_cloud_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d ave_cloud_test"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      APP_ENV: development
+      SITE_ID: ci
+      PUBLIC_URL: http://localhost:8080
+      LOG_LEVEL: warn
+      TEST_DATABASE_URL: postgres://ci:ci@localhost:5432/ave_cloud_test?sslmode=disable
+      S3_ENDPOINT: http://localhost:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: ave-cloud-ci
+      S3_ACCESS_KEY_ID: ci-access-key
+      S3_SECRET_ACCESS_KEY: ci-secret-key
+      S3_FORCE_PATH_STYLE: "true"
+      SMTP_FROM: Cloud <cloud@example.com>
+    steps:
+      # Actions are pinned to a commit: a tag can be moved to other code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            desktop/go.sum
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop/frontend/package-lock.json
+
+      # The desktop app links against GTK and WebKitGTK; go vet needs their headers.
+      - name: Install desktop build libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      # RustFS needs a start argument, which service containers cannot pass.
+      - name: Start S3 (RustFS)
+        run: |
+          docker run -d --name rustfs -p 9000:9000 \
+            -e RUSTFS_ACCESS_KEY="$S3_ACCESS_KEY_ID" -e RUSTFS_SECRET_KEY="$S3_SECRET_ACCESS_KEY" \
+            rustfs/rustfs:1.0.3 /data
+          for _ in $(seq 60); do
+            AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" \
+              aws --endpoint-url "$S3_ENDPOINT" --region "$S3_REGION" s3 mb "s3://$S3_BUCKET" && exit 0
+            sleep 1
+          done
+          docker logs rustfs
+          exit 1
+
+      # A fresh key per run, never stored anywhere.
+      - name: Generate encryption key
+        run: |
+          key=$(openssl rand -base64 32)
+          echo "::add-mask::$key"
+          echo "ENCRYPTION_KEY=$key" >> "$GITHUB_ENV"
+
+      - run: make check
+      - run: make test
+      - run: make test-integration

@@ -19,6 +19,8 @@ export interface CheckResult {
 	name: string;
 	ok: boolean;
 	latency_ms: number;
+	/** An optional feature: failing does not make the platform unready. */
+	optional: boolean;
 }
 
 export interface Status {
@@ -135,6 +137,153 @@ export interface Profile {
 	picture: string;
 }
 
+export interface DriveNode {
+	id: string;
+	parent_id: string | null;
+	kind: 'folder' | 'file';
+	name: string;
+	size: number;
+	content_type: string;
+	created_at: string;
+	updated_at: string;
+	trashed_at: string | null;
+	/** What the signed-in user may do with it. */
+	permission: Permission;
+	/** Shared with others (only reported to users who may manage it). */
+	shared: boolean;
+	/** Who last changed it (in folder listings). */
+	updated_by: string | null;
+	updated_by_name: string;
+}
+
+/** Sharing levels; each includes the ones before it. */
+export type Permission = 'view' | 'edit' | 'manage';
+
+export interface FolderView {
+	folder: DriveNode | null;
+	path: { id: string; name: string }[];
+	children: DriveNode[];
+	/** The folder belongs to someone else and is shared with the user. */
+	shared: boolean;
+	/** The team folder the folder belongs to, if any. */
+	team: TeamRef | null;
+}
+
+export interface TeamRef {
+	id: string;
+	root_id: string;
+	name: string;
+}
+
+/** A team folder as administrators see it: no contents, only who has access. */
+export interface TeamFolder {
+	id: string;
+	root_id: string;
+	name: string;
+	groups: Share[];
+	usage: Usage;
+	created_at: string;
+	/** Set while the team folder is deleted (in the trash). */
+	deleted_at: string | null;
+}
+
+export interface ShareLink {
+	id: string;
+	/** Only present right after creating the link. */
+	token: string;
+	password: boolean;
+	expires_at: string | null;
+	created_at: string;
+	downloads: number;
+}
+
+/** What a public link shows. */
+export interface PublicView {
+	node: DriveNode;
+	folder: DriveNode | null;
+	path: { id: string; name: string }[];
+	children: DriveNode[];
+}
+
+export interface AppPassword {
+	id: string;
+	name: string;
+	/** Only present right after creating it. */
+	password: string;
+	created_at: string;
+	last_used_at: string | null;
+}
+
+export interface OfficeInfo {
+	enabled: boolean;
+	/** Collabora's origin; messages from the editor must come from here. */
+	origin: string;
+	extensions: string[];
+}
+
+export interface OfficeSession {
+	url: string;
+	access_token: string;
+	access_token_ttl: number;
+	edit: boolean;
+}
+
+export interface ActivityItem {
+	at: string;
+	action: 'created' | 'updated' | 'renamed' | 'moved' | 'trashed' | 'restored' | 'deleted';
+	node_id: string;
+	name: string;
+	kind: string;
+	actor_name: string;
+	via: '' | 'web' | 'desktop' | 'webdav' | 'editor';
+	present: boolean;
+}
+
+export interface SearchResult extends DriveNode {
+	/** The folder it is in, or "Mijn bestanden", "Teammappen", "Gedeeld met mij". */
+	location: string;
+	location_id: string | null;
+	/** Where the words were found in the text; \x02 and \x03 mark the matches. */
+	snippet: string;
+}
+
+export interface SharedNode extends DriveNode {
+	owner_name: string;
+}
+
+export interface Subject {
+	type: 'user' | 'group';
+	id: string;
+}
+
+export interface Share {
+	subject: Subject;
+	name: string;
+	permission: Permission;
+	granted_at: string;
+}
+
+export interface DirectoryEntry extends Subject {
+	name: string;
+	/** Username, or the group's description. */
+	detail: string;
+	picture: string;
+}
+
+export interface FileVersion {
+	id: string;
+	size: number;
+	content_type: string;
+	created_at: string;
+	created_by_name: string;
+	current: boolean;
+}
+
+export interface Usage {
+	used_bytes: number;
+	limit_bytes: number | null;
+}
+
 export interface OidcRequest {
 	app_name: string;
 	/** The app asked for no sign-in page at all (prompt=none). */
@@ -234,7 +383,7 @@ export const parseStatus: Validator<Status> = (v) => {
 		ok: bool(o, 'ok'),
 		checks: list(o, 'checks', (c) => {
 			const r = record(c, 'check');
-			return { name: str(r, 'name'), ok: bool(r, 'ok'), latency_ms: num(r, 'latency_ms') };
+			return { name: str(r, 'name'), ok: bool(r, 'ok'), latency_ms: num(r, 'latency_ms'), optional: r.optional === true };
 		}),
 		checked_at: str(o, 'checked_at')
 	};
@@ -446,6 +595,163 @@ const parseProfile: Validator<Profile> = (v) => {
 	};
 };
 
+function permission(o: Record<string, unknown>, key: string): Permission {
+	const p = str(o, key);
+	if (p !== 'view' && p !== 'edit' && p !== 'manage') fail(key);
+	return p;
+}
+
+function subjectType(o: Record<string, unknown>): Subject['type'] {
+	const t = str(o, 'type');
+	if (t !== 'user' && t !== 'group') fail('type');
+	return t;
+}
+
+const parseNode: Validator<DriveNode> = (v) => {
+	const r = record(v, 'node');
+	const kind = str(r, 'kind');
+	if (kind !== 'folder' && kind !== 'file') fail('kind');
+	return {
+		id: str(r, 'id'),
+		parent_id: r.parent_id === null || r.parent_id === undefined ? null : str(r, 'parent_id'),
+		kind,
+		name: str(r, 'name'),
+		size: num(r, 'size'),
+		content_type: str(r, 'content_type'),
+		created_at: str(r, 'created_at'),
+		updated_at: str(r, 'updated_at'),
+		trashed_at: r.trashed_at === undefined || r.trashed_at === null ? null : str(r, 'trashed_at'),
+		permission: permission(r, 'permission'),
+		shared: r.shared === true,
+		updated_by: r.updated_by === null || r.updated_by === undefined ? null : str(r, 'updated_by'),
+		updated_by_name: typeof r.updated_by_name === 'string' ? r.updated_by_name : ''
+	};
+};
+
+const parseLink: Validator<ShareLink> = (v) => {
+	const r = record(v, 'link');
+	const token = typeof r.token === 'string' ? r.token : '';
+	if (token && !/^[A-Za-z0-9_-]{43}$/.test(token)) fail('token');
+	return {
+		id: str(r, 'id'),
+		token,
+		password: bool(r, 'password'),
+		expires_at: nullableStr(r, 'expires_at'),
+		created_at: str(r, 'created_at'),
+		downloads: num(r, 'downloads')
+	};
+};
+
+const parsePublicView: Validator<PublicView> = (v) => {
+	const r = record(v, 'link');
+	return {
+		node: parseNode(r.node),
+		folder: r.folder === null || r.folder === undefined ? null : parseNode(r.folder),
+		path: list(r, 'path', (c) => {
+			const p = record(c, 'crumb');
+			return { id: str(p, 'id'), name: str(p, 'name') };
+		}),
+		children: list(r, 'children', parseNode)
+	};
+};
+
+const parseAppPassword: Validator<AppPassword> = (v) => {
+	const r = record(v, 'app_password');
+	const password = typeof r.password === 'string' ? r.password : '';
+	if (password && !/^[a-z2-7]{5}(-[a-z2-7]{1,5}){5}$/.test(password)) fail('password');
+	return {
+		id: str(r, 'id'),
+		name: str(r, 'name'),
+		password,
+		created_at: str(r, 'created_at'),
+		last_used_at: nullableStr(r, 'last_used_at')
+	};
+};
+
+const parseSearchResult: Validator<SearchResult> = (v) => {
+	const r = record(v, 'result');
+	return {
+		...parseNode(r),
+		location: str(r, 'location'),
+		location_id: nullableStr(r, 'location_id'),
+		snippet: typeof r.snippet === 'string' ? r.snippet : ''
+	};
+};
+
+const parseSharedNode: Validator<SharedNode> = (v) => ({
+	...parseNode(v),
+	owner_name: str(record(v, 'node'), 'owner_name')
+});
+
+const parseShare: Validator<Share> = (v) => {
+	const r = record(v, 'share');
+	const sub = record(r.subject, 'subject');
+	return {
+		subject: { type: subjectType(sub), id: str(sub, 'id') },
+		name: str(r, 'name'),
+		permission: permission(r, 'permission'),
+		granted_at: str(r, 'granted_at')
+	};
+};
+
+const parseShares: Validator<Share[]> = (v) => list(record(v, 'shares'), 'shares', parseShare);
+
+const parseDirectoryEntry: Validator<DirectoryEntry> = (v) => {
+	const r = record(v, 'entry');
+	const picture = str(r, 'picture');
+	if (picture && !/^https?:\/\/[^\s/]+\/avatars\/[0-9a-f]{32}\.jpg$/.test(picture)) fail('picture');
+	return { type: subjectType(r), id: str(r, 'id'), name: str(r, 'name'), detail: str(r, 'detail'), picture };
+};
+
+const parseVersion: Validator<FileVersion> = (v) => {
+	const r = record(v, 'version');
+	return {
+		id: str(r, 'id'),
+		size: num(r, 'size'),
+		content_type: str(r, 'content_type'),
+		created_at: str(r, 'created_at'),
+		created_by_name: str(r, 'created_by_name'),
+		current: bool(r, 'current')
+	};
+};
+
+const parseFolderView: Validator<FolderView> = (v) => {
+	const r = record(v, 'folder');
+	return {
+		folder: r.folder === null ? null : parseNode(r.folder),
+		path: list(r, 'path', (c) => {
+			const p = record(c, 'crumb');
+			return { id: str(p, 'id'), name: str(p, 'name') };
+		}),
+		children: list(r, 'children', parseNode),
+		shared: bool(r, 'shared'),
+		team: r.team === null || r.team === undefined ? null : parseTeamRef(r.team)
+	};
+};
+
+const parseTeamRef: Validator<TeamRef> = (v) => {
+	const r = record(v, 'team');
+	return { id: str(r, 'id'), root_id: str(r, 'root_id'), name: str(r, 'name') };
+};
+
+const parseTeamFolder: Validator<TeamFolder> = (v) => {
+	const r = record(v, 'team_folder');
+	return {
+		id: str(r, 'id'),
+		root_id: str(r, 'root_id'),
+		name: str(r, 'name'),
+		groups: list(r, 'groups', parseShare),
+		usage: parseUsage(r.usage),
+		created_at: str(r, 'created_at'),
+		deleted_at: nullableStr(r, 'deleted_at')
+	};
+};
+
+const parseUsage: Validator<Usage> = (v) => {
+	const r = record(v, 'usage');
+	return { used_bytes: num(r, 'used_bytes'), limit_bytes: r.limit_bytes === null ? null : num(r, 'limit_bytes') };
+};
+
 const parseRemaining: Validator<number> = (v) => num(record(v, 'recovery'), 'remaining');
 const parseRevoked: Validator<number> = (v) => num(record(v, 'revoked'), 'revoked');
 
@@ -600,6 +906,148 @@ export const api = {
 			if (!/^https?:\/\//.test(redirect)) fail('redirect');
 			return { app_name: str(r, 'app_name'), redirect } as LogoutRequest;
 		}, f),
+	drive: {
+		folder: (id: string | null, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/folders/${id ? enc(id) : 'root'}`, parseFolderView, f),
+		createFolder: (parentId: string | null, name: string, f: typeof fetch = fetch) =>
+			post('/api/v1/drive/folders', parseNode, { parent_id: parentId ?? 'root', name }, f),
+		update: (id: string, change: { name?: string; parent_id?: string }, f: typeof fetch = fetch) =>
+			request('PATCH', `/api/v1/drive/nodes/${enc(id)}`, parseNode, change, f),
+		trash: (id: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/nodes/${enc(id)}`, noContent, undefined, f),
+		listTrash: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/trash', (v) => list(record(v, 'trash'), 'nodes', parseNode), f),
+		restore: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/trash/${enc(id)}/restore`, parseNode, undefined, f),
+		deleteForever: (id: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/trash/${enc(id)}`, noContent, undefined, f),
+		emptyTrash: (f: typeof fetch = fetch) => request('DELETE', '/api/v1/drive/trash', noContent, undefined, f),
+		usage: (f: typeof fetch = fetch) => get('/api/v1/drive/usage', parseUsage, f),
+		downloadURL: (id: string) => `/api/v1/drive/files/${enc(id)}/content`,
+		previewURL: (id: string) => `/api/v1/drive/files/${enc(id)}/content?inline=1`,
+		teamFolders: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/team-folders', (v) => list(record(v, 'team_folders'), 'nodes', parseNode), f),
+		teamTrash: (teamId: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/team-folders/${enc(teamId)}/trash`, (v) => {
+				const r = record(v, 'trash');
+				return { team: parseTeamRef(r.team), nodes: list(r, 'nodes', parseNode) };
+			}, f),
+		emptyTeamTrash: (teamId: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/team-folders/${enc(teamId)}/trash`, noContent, undefined, f),
+		links: (id: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/nodes/${enc(id)}/links`, (v) => list(record(v, 'links'), 'links', parseLink), f),
+		createLink: (id: string, opts: { expires_at: string | null; password: string }, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/nodes/${enc(id)}/links`, parseLink, opts, f),
+		deleteLink: (linkId: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/links/${enc(linkId)}`, noContent, undefined, f),
+		/** Opens a public link; no account needed. */
+		openLink: (token: string, password: string, folderId: string | null, f: typeof fetch = fetch) =>
+			post('/api/v1/drive/public/links/open', parsePublicView, { token, password, folder_id: folderId ?? '' }, f),
+		linkDownloadURL: '/api/v1/drive/public/links/download',
+		/** Opens a document of a public link in the editor, read-only. */
+		openLinkInOffice: (token: string, password: string, fileId: string, f: typeof fetch = fetch) =>
+			post('/api/v1/drive/public/links/office', (v) => {
+				const r = record(v, 'office');
+				const url = str(r, 'url');
+				if (!/^https?:\/\//.test(url)) fail('url');
+				return { url, access_token: str(r, 'access_token'), access_token_ttl: num(r, 'access_token_ttl'), edit: false } as OfficeSession;
+			}, { token, password, file_id: fileId }, f),
+		office: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/office', (v) => {
+				const r = record(v, 'office');
+				const origin = str(r, 'origin');
+				if (origin && !/^https?:\/\/[^\s/]+$/.test(origin)) fail('origin');
+				return { enabled: bool(r, 'enabled'), origin, extensions: strList(r, 'extensions') } as OfficeInfo;
+			}, f),
+		openInOffice: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/files/${enc(id)}/office`, (v) => {
+				const r = record(v, 'office');
+				const url = str(r, 'url');
+				if (!/^https?:\/\//.test(url)) fail('url');
+				return { url, access_token: str(r, 'access_token'), access_token_ttl: num(r, 'access_token_ttl'), edit: bool(r, 'edit') } as OfficeSession;
+			}, undefined, f),
+		activity: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/activity', (v) => list(record(v, 'activity'), 'items', (i) => {
+				const r = record(i, 'item');
+				const action = str(r, 'action');
+				const via = str(r, 'via');
+				if (!['created', 'updated', 'renamed', 'moved', 'trashed', 'restored', 'deleted'].includes(action)) fail('action');
+				if (!['', 'web', 'desktop', 'webdav', 'editor'].includes(via)) fail('via');
+				return {
+					at: str(r, 'at'), action, node_id: str(r, 'node_id'), name: str(r, 'name'), kind: str(r, 'kind'),
+					actor_name: str(r, 'actor_name'), via, present: bool(r, 'present')
+				} as ActivityItem;
+			}), f),
+		search: (query: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/search?q=${enc(query)}`, (v) => list(record(v, 'search'), 'results', parseSearchResult), f),
+		sharedWithMe: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/shared', (v) => list(record(v, 'shared'), 'nodes', parseSharedNode), f),
+		shares: (id: string, f: typeof fetch = fetch) => get(`/api/v1/drive/nodes/${enc(id)}/shares`, parseShares, f),
+		share: (id: string, subject: Subject, permission: Permission, f: typeof fetch = fetch) =>
+			request('PUT', `/api/v1/drive/nodes/${enc(id)}/shares`, parseShares, { subject, permission }, f),
+		unshare: (id: string, subject: Subject, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/nodes/${enc(id)}/shares/${subject.type}/${enc(subject.id)}`, noContent, undefined, f),
+		versions: (id: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/files/${enc(id)}/versions`, (v) => list(record(v, 'versions'), 'versions', parseVersion), f),
+		versionURL: (id: string, versionId: string) =>
+			`/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}/content`,
+		restoreVersion: (id: string, versionId: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}/restore`, parseNode, undefined, f),
+		deleteVersion: (id: string, versionId: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}`, noContent, undefined, f),
+		userUsage: (userId: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/drive/admin/users/${enc(userId)}/usage`, parseUsage, f),
+		setQuota: (userId: string, limitBytes: number | null, f: typeof fetch = fetch) =>
+			request('PUT', `/api/v1/drive/admin/users/${enc(userId)}/quota`, parseUsage, { limit_bytes: limitBytes }, f),
+
+		/**
+		 * Uploads a file with progress reporting. fetch() cannot report upload
+		 * progress, so this uses XMLHttpRequest.
+		 */
+		upload: (
+			parentId: string | null,
+			file: File,
+			replace: boolean,
+			onProgress: (fraction: number) => void
+		): Promise<DriveNode> =>
+			new Promise((resolve, reject) => {
+				const q = new URLSearchParams({ parent: parentId ?? 'root', name: file.name, replace: String(replace) });
+				const xhr = new XMLHttpRequest();
+				xhr.open('PUT', `/api/v1/drive/files?${q}`);
+				xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+				xhr.setRequestHeader('Accept', 'application/json');
+				xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+				xhr.onerror = () => reject(new ApiError(0, 'network', 'De server is niet bereikbaar'));
+				xhr.onload = () => {
+					let data: unknown = null;
+					try {
+						data = JSON.parse(xhr.responseText);
+					} catch {
+						/* handled below */
+					}
+					if (xhr.status >= 200 && xhr.status < 300) {
+						try {
+							resolve(parseNode(data));
+						} catch (e) {
+							reject(e);
+						}
+						return;
+					}
+					const err = (data as { error?: { code?: string; message?: string } } | null)?.error;
+					reject(new ApiError(xhr.status, err?.code ?? 'http_error', err?.message ?? `Serverfout (${xhr.status})`));
+				};
+				xhr.send(file);
+			})
+	},
+	appPasswords: (f: typeof fetch = fetch) =>
+		get('/api/v1/account/app-passwords', (v) => list(record(v, 'app_passwords'), 'app_passwords', parseAppPassword), f),
+	createAppPassword: (name: string, f: typeof fetch = fetch) =>
+		post('/api/v1/account/app-passwords', parseAppPassword, { name }, f),
+	revokeAppPassword: (id: string, f: typeof fetch = fetch) =>
+		request('DELETE', `/api/v1/account/app-passwords/${enc(id)}`, noContent, undefined, f),
+	/** Users and groups to share with. */
+	directory: (query: string, f: typeof fetch = fetch) =>
+		get(`/api/v1/directory?q=${enc(query)}`, (v) => list(record(v, 'directory'), 'entries', parseDirectoryEntry), f),
 	ownGroups: (f: typeof fetch = fetch) =>
 		get('/api/v1/account/groups', (v) => list(record(v, 'groups'), 'groups', parseGroupRef), f),
 
@@ -650,6 +1098,25 @@ export const api = {
 			post(`/api/v1/admin/apps/${enc(id)}/secret`, (v) => str(record(v, 'secret'), 'secret'), undefined, f),
 		deleteApp: (id: string, f: typeof fetch = fetch) =>
 			request('DELETE', `/api/v1/admin/apps/${enc(id)}`, noContent, undefined, f),
+
+		teamFolders: (f: typeof fetch = fetch) =>
+			get('/api/v1/drive/admin/team-folders/', (v) => list(record(v, 'team_folders'), 'team_folders', parseTeamFolder), f),
+		createTeamFolder: (name: string, f: typeof fetch = fetch) =>
+			post('/api/v1/drive/admin/team-folders/', parseTeamFolder, { name }, f),
+		renameTeamFolder: (id: string, name: string, f: typeof fetch = fetch) =>
+			request('PATCH', `/api/v1/drive/admin/team-folders/${enc(id)}`, parseTeamFolder, { name }, f),
+		setTeamFolderQuota: (id: string, limitBytes: number | null, f: typeof fetch = fetch) =>
+			request('PUT', `/api/v1/drive/admin/team-folders/${enc(id)}/quota`, parseTeamFolder, { limit_bytes: limitBytes }, f),
+		setTeamFolderGroup: (id: string, groupId: string, permission: Permission, f: typeof fetch = fetch) =>
+			request('PUT', `/api/v1/drive/admin/team-folders/${enc(id)}/groups/${enc(groupId)}`, parseTeamFolder, { permission }, f),
+		removeTeamFolderGroup: (id: string, groupId: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/admin/team-folders/${enc(id)}/groups/${enc(groupId)}`, parseTeamFolder, undefined, f),
+		deleteTeamFolder: (id: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/drive/admin/team-folders/${enc(id)}`, parseTeamFolder, undefined, f),
+		restoreTeamFolder: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/admin/team-folders/${enc(id)}/restore`, parseTeamFolder, undefined, f),
+		purgeTeamFolder: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/admin/team-folders/${enc(id)}/purge`, noContent, undefined, f),
 
 		audit: (before: string | null, f: typeof fetch = fetch) =>
 			get(

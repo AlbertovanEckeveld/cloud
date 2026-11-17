@@ -1,3 +1,4 @@
+
 services:
   postgres:
     image: pgvector/pgvector:pg17
@@ -22,6 +23,9 @@ services:
       timeout: 5s
       retries: 5
 
+    networks:
+      - ave-cloud
+
 
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -42,6 +46,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+    networks:
+      - ave-cloud
 
 
   rustfs:
@@ -65,7 +72,46 @@ services:
     volumes:
       - rustfs_data:/data
 
+    networks:
+      - ave-cloud
+
+
+  collabora:
+    image: collabora/code:latest
+    container_name: ave-cloud-collabora
+    restart: unless-stopped
+
+    cap_add:
+      - MKNOD
+
+    environment:
+      # Collabora admin account
+      username: ${COLLABORA_ADMIN_USER}
+      password: ${COLLABORA_ADMIN_PASSWORD}
+
+      # Allow your application as WOPI host
+      aliasgroup1: "http://albertove-msi.albertove.cloud:8443"
+
+      # Reverse proxy handles HTTPS
+      extra_params: >-
+        --o:ssl.enable=false
+        --o:ssl.termination=true
+        --o:server_name=ave-dev-cloud.albertove.cloud
+
+    ports:
+      - "9980:9980"
+
+    networks:
+      - ave-cloud
+
+
 volumes:
   postgres_data:
   rustfs_data:
   pgadmin_data:
+
+
+networks:
+  ave-cloud:
+    name: ave-cloud
+    driver: bridge

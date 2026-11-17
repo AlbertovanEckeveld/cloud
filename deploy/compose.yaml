@@ -1,0 +1,96 @@
+# Staging deployment on ave-dev-cloud.albertove.cloud (ADR 0019).
+#
+#   NetBird :443 ── traefik ──┬── platform           (everything else)
+#                             └── collabora-staging  (/browser, /hosting, /cool)
+#   platform ── network ave-cloud ── postgres, rustfs (from docker/dev-setup)
+#
+# Only Traefik publishes a port, and only on the NetBird address. Start and
+# update with ./update.sh, which picks the signed platform image (ADR 0020).
+
+name: cloud-staging
+
+services:
+  traefik:
+    image: traefik:${TRAEFIK_VERSION:?pin the Traefik version in .env}
+    restart: unless-stopped
+    command:
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+      - --log.level=INFO
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls.certresolver=letsencrypt
+      # Uploads of up to 10 GB take long; Traefik v3 cuts requests after 60 s by default.
+      - --entrypoints.websecure.transport.respondingtimeouts.readtimeout=12h
+      - --entrypoints.websecure.transport.respondingtimeouts.writetimeout=12h
+      - --entrypoints.websecure.transport.respondingtimeouts.idletimeout=3m
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?set ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      # The domain is only reachable over NetBird, so the certificate is
+      # proven through DNS (DNS-01) instead of HTTP.
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=${ACME_DNS_PROVIDER:?set ACME_DNS_PROVIDER}
+      # Routes come from a file; Traefik gets no access to the Docker socket.
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+    env_file: dns-provider.env
+    ports:
+      - "${BIND_IP:?set BIND_IP to the NetBird address}:443:443"
+      - "${BIND_IP}:80:80"
+    volumes:
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - letsencrypt:/letsencrypt
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    networks:
+      edge:
+        ipv4_address: 172.31.250.10
+        # The platform and Collabora reach each other through Traefik under
+        # the public name, with the real certificate.
+        aliases: [ave-dev-cloud.albertove.cloud]
+
+  platform:
+    # A signed image from GHCR, pinned by digest. update.sh verifies the
+    # signature and writes the digest to release.env.
+    image: ${PLATFORM_IMAGE:?start the stack with ./update.sh}
+    restart: unless-stopped
+    env_file: platform.env
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks:
+      edge: {}
+      ave-cloud: {}
+
+  collabora-staging:
+    image: collabora/code:${COLLABORA_VERSION:?pin the Collabora version in .env}
+    restart: unless-stopped
+    environment:
+      # Only this platform may use Collabora as WOPI host.
+      aliasgroup1: https://ave-dev-cloud.albertove.cloud:443
+      dictionaries: nl en_US
+      extra_params: >-
+        --o:ssl.enable=false
+        --o:ssl.termination=true
+        --o:server_name=ave-dev-cloud.albertove.cloud
+        --o:admin_console.enable=false
+    cap_add: [MKNOD]
+    networks:
+      edge: {}
+
+volumes:
+  letsencrypt: {}
+
+networks:
+  # Traefik, the platform and Collabora. Only Traefik's address is a trusted
+  # proxy for the platform (TRUSTED_PROXIES).
+  edge:
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
+  # Postgres and RustFS from docker/dev-setup.
+  ave-cloud:
+    external: true

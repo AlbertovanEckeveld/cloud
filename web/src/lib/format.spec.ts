@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkLabel, describeUserAgent, eventLabel, groupSecret, safeNext, timeAgo } from './format.ts';
+import { allows, checkLabel, describeUserAgent, eventLabel, formatBytes, groupSecret, permissionLabel, previewKind, remaining, snippetParts, safeNext, timeAgo, uniqueName } from './format.ts';
 
 const now = new Date('2026-11-15T12:00:00Z');
 
@@ -63,5 +63,68 @@ describe('describeUserAgent', () => {
 		['curl/8.0', 'Onbekende browser']
 	])('%s', (ua, want) => {
 		expect(describeUserAgent(ua)).toBe(want);
+	});
+});
+
+describe('formatBytes', () => {
+	it.each([
+		[0, '0 B'],
+		[1023, '1.023 B'],
+		[1536, '1,5 KB'],
+		[10 * 1024 * 1024, '10 MB'],
+		[10 * 1024 ** 3, '10 GB']
+	])('%d → %s', (n, want) => {
+		expect(formatBytes(n)).toBe(want);
+	});
+});
+
+describe('uniqueName', () => {
+	it('adds a number before the extension, ignoring case', () => {
+		const taken = new Set(['Foto.jpg', 'foto (2).jpg', 'map']);
+		expect(uniqueName('nieuw.txt', taken)).toBe('nieuw.txt');
+		expect(uniqueName('foto.JPG', taken)).toBe('foto (3).JPG');
+		expect(uniqueName('Map', taken)).toBe('Map (2)');
+		expect(uniqueName('.bashrc', new Set(['.bashrc']))).toBe('.bashrc (2)');
+	});
+});
+
+describe('permissions', () => {
+	it('orders view < edit < manage', () => {
+		expect(allows('manage', 'edit')).toBe(true);
+		expect(allows('edit', 'edit')).toBe(true);
+		expect(allows('view', 'edit')).toBe(false);
+		expect(permissionLabel('edit')).toBe('Kan bewerken');
+	});
+});
+
+describe('previewKind', () => {
+	it('follows the server whitelist', () => {
+		expect(previewKind('image/png')).toBe('image');
+		expect(previewKind('image/svg+xml')).toBeNull();
+		expect(previewKind('text/html; charset=utf-8')).toBe('text');
+		expect(previewKind('application/pdf')).toBe('pdf');
+		expect(previewKind('text/plain; charset=utf-8', 'LEESMIJ.md')).toBe('markdown');
+		expect(previewKind('application/zip', 'x.md')).toBeNull();
+		expect(previewKind('video/mp4')).toBe('video');
+	});
+});
+
+describe('snippetParts', () => {
+	it('marks hits and keeps HTML as text', () => {
+		expect(snippetParts('de \x02begrotingen\x03 voor <b>2027</b>')).toEqual([
+			{ text: 'de ', hit: false },
+			{ text: 'begrotingen', hit: true },
+			{ text: ' voor <b>2027</b>', hit: false }
+		]);
+	});
+});
+
+describe('remaining', () => {
+	it('estimates from the speed so far', () => {
+		expect(remaining(50, 100, 0, 30_000)).toBe('nog ~30 s');
+		expect(remaining(10, 100, 0, 60_000)).toBe('nog ~9 min');
+		expect(remaining(1, 100, 0, 60_000)).toBe('nog ~1 u 39 min');
+		expect(remaining(99, 100, 0, 10_000)).toBe('bijna klaar');
+		expect(remaining(10, 100, 0, 500)).toBe('');
 	});
 });

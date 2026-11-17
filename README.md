@@ -4,7 +4,8 @@ Een zelfgebouwd private-cloudplatform: één Go-binary met een ingebedde SvelteK
 PostgreSQL voor metadata en S3 voor bestanden. Achtergrond, roadmap en werkafspraken staan in
 [CLAUDE.md](CLAUDE.md); architectuurbeslissingen in [docs/adr/](docs/adr/).
 
-**Status:** fase 1 — `identity` (vervangt Authentik). Inloggen met passkey, of met wachtwoord
+**Status:** fase 2.2 — `drive`: mappen en bestanden (uploaden, downloaden, verplaatsen,
+prullenbak, quota), delen met gebruikers en groepen, versies, teammappen, openbare deellinks, voorbeeldweergave (ook markdown en PDF), zoeken op naam en inhoud (ook PDF en Office), WebDAV en documenten bewerken met Collabora. Fase 1 — `identity` (vervangt Authentik) is af. Inloggen met passkey, of met wachtwoord
 plus authenticator-app (TOTP) of herstelcode; sessiebeheer; een beheeromgeving voor
 gebruikers, groepen, apps, audit-log en systeemstatus; een OpenID Connect-provider zodat
 andere apps met je Cloud-account inloggen; optioneel mail voor activatielinks en
@@ -112,11 +113,26 @@ problemen tegelijk.
 | `/api/v1/auth/*` | Inloggen (passkey, wachtwoord + TOTP of herstelcode), activeren, uitloggen. |
 | `/api/v1/account/*` | Eigen account: wachtwoord, passkeys, herstelcodes, sessies, activiteit. Vereist login. |
 | `/api/v1/admin/*` | Gebruikers, groepen, apps en audit-log beheren. Alleen beheerders. |
+| `/api/v1/drive/*` | Bestanden en mappen: lijst, upload, download, hernoemen, verplaatsen, prullenbak, verbruik, delen, versies, teammappen (beheer onder `/admin/team-folders`), deellinks (publiek: `/public/links/*`). |
+| `/api/v1/directory` | Gebruikers en groepen zoeken om mee te delen. Vereist login. |
+| `/dav/{files,teams,shared}/` | WebDAV voor desktop- en mobiele clients; inloggen met gebruikersnaam + app-wachtwoord. |
+| `/wopi/files/*` | WOPI-host voor Collabora Online (server tot server, met ondertekend toegangstoken). |
 | `/api/v1/oidc/*` | Inlogverzoeken van apps afhandelen (voor de pagina `/connect`). |
 | `/oidc/*` | De OpenID Connect-provider: discovery, authorize, token, userinfo, keys. |
 | `/api/v1/status` | Status van deze instantie en de afhankelijkheden. Alleen beheerders. |
 | `/api/v1/sites` | Alle sites met versie en laatste heartbeat. Alleen beheerders. |
 | overige paden | De frontend (single-page app). |
+
+## Desktop-app
+
+```sh
+make desktop        # Linux: bin/cloud-desktop (WebKitGTK 4.1 en libsecret nodig)
+```
+
+Op macOS (Xcode Command Line Tools nodig): `make desktop DESKTOP_TAGS=desktop,production`.
+De app draait als achtergronddienst met een icoon in de systeembalk (de kleur toont de
+sync-status); het instellingenvenster opent vanuit dat icoon of door de app opnieuw te starten.
+Koppelen gaat via de browser (passkey); kies daarna welke mappen je wilt synchroniseren.
 
 ## Container
 
@@ -133,11 +149,16 @@ health check (`/platform healthcheck`, die `/readyz` aanroept).
 ```
 cmd/platform/        main: configuratie, opstarten, routes, CLI (user create/reset)
 internal/core/       gedeelde basis: config, logging, database, storage, health, httpserver,
-                     sealer (versleuteling at rest), mailer (outbox + SMTP), site
+                     sealer (versleuteling at rest), mailer (outbox + SMTP), site,
+                     authz (typen van het deelmodel, door identity geïmplementeerd)
 internal/identity/   accounts, wachtwoorden, TOTP, passkeys, herstelcodes, sessies,
-                     throttling, audit-log, gebruikers- en groepsbeheer, OIDC-provider
+                     throttling, audit-log, gebruikers- en groepsbeheer, OIDC-provider,
+                     shares (het centrale deelmodel)
+internal/drive/      bestanden en mappen: boom in Postgres, inhoud in S3, prullenbak, quota,
+                     delen, versies, teammappen
 migrations/<module>/ SQL-migraties per module; de mapnaam is ook het Postgres-schema
 web/                 SvelteKit-frontend; web/embed.go bedt web/build in de binary in
+desktop/             desktop-app (aparte Go-module): sync-engine, later de Wails-app
 docker/dev-setup/    Postgres, pgAdmin en RustFS (S3) voor de ontwikkelserver
 docs/adr/            architectuurbeslissingen
 ```

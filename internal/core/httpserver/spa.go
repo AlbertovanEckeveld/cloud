@@ -33,7 +33,9 @@ type SPA struct {
 }
 
 // NewSPA reads index.html from fsys and derives its Content-Security-Policy.
-func NewSPA(fsys fs.FS) (*SPA, error) {
+// frameOrigins may list origins the app embeds in iframes and posts forms
+// to, such as the Collabora Online editor; nothing else is allowed.
+func NewSPA(fsys fs.FS, frameOrigins ...string) (*SPA, error) {
 	index, err := fs.ReadFile(fsys, "index.html")
 	if err != nil {
 		return nil, fmt.Errorf("read frontend index.html (was the frontend built?): %w", err)
@@ -42,7 +44,7 @@ func NewSPA(fsys fs.FS) (*SPA, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SPA{fsys: fsys, index: index, csp: pageCSP(index, styles)}, nil
+	return &SPA{fsys: fsys, index: index, csp: pageCSP(index, styles, frameOrigins)}, nil
 }
 
 // styleAttributes collects every distinct style attribute value found in the
@@ -82,7 +84,7 @@ func hashSource(b []byte) string {
 // pageCSP builds the policy for index.html. Inline scripts are allowed by hash.
 // Style attributes need the CSP Level 3 'unsafe-hashes' keyword, which despite
 // its name only allows attribute values whose hash is listed, nothing else.
-func pageCSP(html []byte, styleAttrs [][]byte) string {
+func pageCSP(html []byte, styleAttrs [][]byte, frameOrigins []string) string {
 	scriptSrc := []string{"'self'"}
 	for _, m := range inlineScript.FindAllSubmatch(html, -1) {
 		if attrs := strings.ToLower(string(m[1])); strings.Contains(attrs, "src=") {
@@ -97,6 +99,11 @@ func pageCSP(html []byte, styleAttrs [][]byte) string {
 			styleSrc = append(styleSrc, hashSource(s))
 		}
 	}
+	frameSrc, formAction := "frame-src 'none'", "form-action 'self'"
+	if len(frameOrigins) > 0 {
+		frameSrc = "frame-src " + strings.Join(frameOrigins, " ")
+		formAction += " " + strings.Join(frameOrigins, " ")
+	}
 	return strings.Join([]string{
 		"default-src 'self'",
 		"script-src " + strings.Join(scriptSrc, " "),
@@ -106,7 +113,8 @@ func pageCSP(html []byte, styleAttrs [][]byte) string {
 		"connect-src 'self'",
 		"object-src 'none'",
 		"base-uri 'none'",
-		"form-action 'self'",
+		formAction,
+		frameSrc,
 		"frame-ancestors 'none'",
 	}, "; ")
 }

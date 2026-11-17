@@ -39,6 +39,8 @@ const (
 	EventGroupMemberRemoved = "group.member_removed"
 
 	EventProfileUpdated   = "user.profile_updated"
+	EventShareGranted     = "share.granted"
+	EventShareRevoked     = "share.revoked"
 	EventLogoutEverywhere = "auth.logout_everywhere"
 	EventAppRevoked       = "oidc.app_revoked"
 

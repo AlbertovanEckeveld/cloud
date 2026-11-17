@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,18 +17,26 @@ import (
 // routerDeps are the collaborators the HTTP routes need. Interfaces keep the
 // router testable without a database.
 type routerDeps struct {
-	logger    *slog.Logger
-	hsts      bool
-	siteID    string
-	version   string
-	startedAt time.Time
-	health    healthReporter
-	sites     siteLister
-	frontend  http.Handler
+	logger *slog.Logger
+	hsts   bool
+	// trustedProxies are the reverse proxies whose X-Forwarded-For counts.
+	trustedProxies []netip.Prefix
+	siteID         string
+	version        string
+	startedAt      time.Time
+	health         healthReporter
+	sites          siteLister
+	frontend       http.Handler
 	// oidc is the OpenID Connect provider, mounted at /oidc.
 	oidc http.Handler
 	// avatars serves profile pictures at /avatars/{file}; public by design.
 	avatars http.HandlerFunc
+	// drive mounts the drive module's routes under /api/v1/drive.
+	drive func(chi.Router)
+	// dav mounts WebDAV for desktop and mobile clients under /dav.
+	dav func(chi.Router)
+	// wopi mounts the WOPI host endpoints Collabora Online calls.
+	wopi func(chi.Router)
 
 	// identity mounts the identity module's routes under /api/v1.
 	identity     func(chi.Router)
@@ -59,6 +68,7 @@ func newRouter(d routerDeps) http.Handler {
 
 	r := chi.NewRouter()
 	r.Use(
+		httpserver.RealIP(d.trustedProxies),
 		httpserver.RequestID,
 		httpserver.AccessLog(d.logger),
 		httpserver.SecurityHeaders(d.hsts),
@@ -72,6 +82,7 @@ func newRouter(d routerDeps) http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(httpserver.NoStore)
 		d.identity(r)
+		r.Route("/drive", d.drive)
 		r.Group(func(r chi.Router) {
 			r.Use(d.requireUser, d.requireAdmin)
 			r.Get("/status", statusHandler(d))
@@ -85,6 +96,12 @@ func newRouter(d routerDeps) http.Handler {
 		})
 	})
 
+	// WebDAV clients are not browsers: they send no Origin headers, so the
+	// cross-origin check lets them through; they authenticate with app
+	// passwords (HTTP Basic), never with the session cookie.
+	r.Route("/dav", d.dav)
+	// Collabora calls these server to server with a signed access token.
+	r.Route("/wopi", d.wopi)
 	r.Mount("/oidc", d.oidc)
 	r.Get("/avatars/{file}", d.avatars)
 	r.Handle("/*", d.frontend)

@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AlbertovanEckeveld/cloud/internal/core/config"
@@ -34,6 +36,7 @@ import (
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/site"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/storage"
+	"github.com/AlbertovanEckeveld/cloud/internal/drive"
 	"github.com/AlbertovanEckeveld/cloud/internal/identity"
 	"github.com/AlbertovanEckeveld/cloud/migrations"
 	"github.com/AlbertovanEckeveld/cloud/web"
@@ -43,7 +46,7 @@ import (
 var version = "dev"
 
 // modules lists every module with migrations, in dependency order.
-var modules = []string{"core", "identity"}
+var modules = []string{"core", "identity", "drive"}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -173,8 +176,21 @@ func serve(ctx context.Context) error {
 	if err := registry.Heartbeat(startupCtx); err != nil {
 		return err
 	}
+	opts := drive.Options{Logger: logger, Sharing: a.identity}
+	var frameOrigins []string
+	if cfg.Collabora != nil {
+		// A separate key per purpose: a leaked WOPI key cannot forge OIDC tokens.
+		wopiKey, err := hkdf.Key(sha256.New, []byte(cfg.EncryptionKey.Reveal()), nil, "cloud wopi access tokens", 32)
+		if err != nil {
+			return fmt.Errorf("derive wopi key: %w", err)
+		}
+		opts.Office = &drive.Office{URL: cfg.Collabora, PublicURL: cfg.PublicURL, Key: [32]byte(wopiKey)}
+		frameOrigins = append(frameOrigins, cfg.Collabora.String())
+	}
+	files := drive.New(a.pool, store, opts)
 	go registry.Run(ctx)
 	go a.identity.Run(ctx)
+	go files.Run(ctx)
 	if a.mailer.Enabled() {
 		// A wrong password or unreachable server should show up in the log
 		// right away, but must neither stop nor delay startup: mail is queued
@@ -193,10 +209,14 @@ func serve(ctx context.Context) error {
 		logger.Info("mail disabled: no SMTP_HOST configured")
 	}
 
-	checker := health.NewChecker(logger,
-		health.Check{Name: "database", Run: a.pool.Ping},
-		health.Check{Name: "storage", Run: store.Ping},
-	)
+	checks := []health.Check{
+		{Name: "database", Run: a.pool.Ping},
+		{Name: "storage", Run: store.Ping},
+	}
+	if cfg.Collabora != nil {
+		checks = append(checks, health.Check{Name: "collabora", Run: files.OfficeCheck, Optional: true})
+	}
+	checker := health.NewChecker(logger, checks...)
 
 	oidcProvider, err := a.identity.OIDCHandler(startupCtx)
 	if err != nil {
@@ -207,22 +227,46 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("frontend: %w", err)
 	}
-	spa, err := httpserver.NewSPA(dist)
+	spa, err := httpserver.NewSPA(dist, frameOrigins...)
 	if err != nil {
 		return err
 	}
 
 	router := newRouter(routerDeps{
-		logger:       logger,
-		hsts:         cfg.Env == config.EnvProduction,
-		siteID:       cfg.SiteID,
-		version:      version,
-		startedAt:    time.Now().UTC(),
-		health:       checker,
-		sites:        registry,
-		frontend:     spa,
-		oidc:         oidcProvider,
-		avatars:      a.identity.AvatarHandler,
+		logger:         logger,
+		hsts:           cfg.Env == config.EnvProduction,
+		trustedProxies: cfg.TrustedProxies,
+		siteID:         cfg.SiteID,
+		version:        version,
+		startedAt:      time.Now().UTC(),
+		health:         checker,
+		sites:          registry,
+		frontend:       spa,
+		oidc:           oidcProvider,
+		avatars:        a.identity.AvatarHandler,
+		drive: func(r chi.Router) {
+			files.Routes(r, drive.Auth{
+				RequireUser:       a.identity.RequireUserOrDevice,
+				RequireAdmin:      identity.RequireAdmin,
+				RequireRecentAuth: a.identity.RequireRecentAuth,
+				Audit:             a.identity.AuditRequest,
+				UserID: func(r *http.Request) uuid.UUID {
+					p, _ := identity.PrincipalFrom(r.Context())
+					return p.User.ID
+				},
+				Desktop: func(r *http.Request) bool {
+					p, _ := identity.PrincipalFrom(r.Context())
+					return p.Device
+				},
+			})
+		},
+		wopi: files.WOPIRoutes,
+		dav: func(r chi.Router) {
+			files.DAVRoutes(r, a.identity.RequireAppPassword("Cloud"), func(r *http.Request) uuid.UUID {
+				p, _ := identity.PrincipalFrom(r.Context())
+				return p.User.ID
+			})
+		},
 		identity:     a.identity.Routes,
 		requireUser:  a.identity.RequireUser,
 		requireAdmin: identity.RequireAdmin,

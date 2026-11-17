@@ -20,7 +20,7 @@ func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, ni
 func ok(context.Context) error { return nil }
 
 func TestReportAllHealthy(t *testing.T) {
-	c := NewChecker(discard(), Check{"database", ok}, Check{"storage", ok})
+	c := NewChecker(discard(), Check{Name: "database", Run: ok}, Check{Name: "storage", Run: ok})
 	r := c.Report(context.Background())
 	if !r.OK || len(r.Checks) != 2 {
 		t.Fatalf("report = %+v", r)
@@ -34,8 +34,8 @@ func TestReportFailureIsLoggedNotExposed(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	c := NewChecker(logger,
-		Check{"database", ok},
-		Check{"storage", func(context.Context) error { return errors.New("dial tcp 10.0.0.5:9000: refused") }},
+		Check{Name: "database", Run: ok},
+		Check{Name: "storage", Run: func(context.Context) error { return errors.New("dial tcp 10.0.0.5:9000: refused") }},
 	)
 	r := c.Report(context.Background())
 	if r.OK || r.Checks[0].OK != true || r.Checks[1].OK != false {
@@ -46,9 +46,23 @@ func TestReportFailureIsLoggedNotExposed(t *testing.T) {
 	}
 }
 
+func TestOptionalCheckDoesNotFailReadiness(t *testing.T) {
+	failing := func(context.Context) error { return errors.New("editor unreachable") }
+	c := NewChecker(discard(), Check{Name: "database", Run: ok}, Check{Name: "collabora", Run: failing, Optional: true})
+	r := c.Report(context.Background())
+	if !r.OK || r.Checks[1].OK || !r.Checks[1].Optional {
+		t.Fatalf("report = %+v", r)
+	}
+	w := httptest.NewRecorder()
+	c.Readiness(w, httptest.NewRequest("GET", "/readyz", nil))
+	if w.Code != http.StatusOK {
+		t.Errorf("readiness = %d, want 200", w.Code)
+	}
+}
+
 func TestReportCachesResults(t *testing.T) {
 	var calls atomic.Int32
-	c := NewChecker(discard(), Check{"db", func(context.Context) error { calls.Add(1); return nil }})
+	c := NewChecker(discard(), Check{Name: "db", Run: func(context.Context) error { calls.Add(1); return nil }})
 	now := time.Now()
 	c.now = func() time.Time { return now }
 
@@ -69,7 +83,7 @@ func TestReportCachesResults(t *testing.T) {
 }
 
 func TestReportTimesOutHangingCheck(t *testing.T) {
-	c := NewChecker(discard(), Check{"hang", func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }})
+	c := NewChecker(discard(), Check{Name: "hang", Run: func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }})
 	c.timeout = 50 * time.Millisecond
 
 	start := time.Now()
@@ -83,7 +97,7 @@ func TestReportTimesOutHangingCheck(t *testing.T) {
 }
 
 func TestReportIgnoresCallerCancellation(t *testing.T) {
-	c := NewChecker(discard(), Check{"db", func(ctx context.Context) error { return ctx.Err() }})
+	c := NewChecker(discard(), Check{Name: "db", Run: func(ctx context.Context) error { return ctx.Err() }})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if !c.Report(ctx).OK {
@@ -93,7 +107,7 @@ func TestReportIgnoresCallerCancellation(t *testing.T) {
 
 func TestProbes(t *testing.T) {
 	healthy := true
-	c := NewChecker(discard(), Check{"db", func(context.Context) error {
+	c := NewChecker(discard(), Check{Name: "db", Run: func(context.Context) error {
 		if healthy {
 			return nil
 		}

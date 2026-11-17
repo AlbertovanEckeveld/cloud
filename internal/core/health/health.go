@@ -14,6 +14,9 @@ import (
 type Check struct {
 	Name string
 	Run  func(ctx context.Context) error
+	// Optional checks are reported but do not make the instance unready:
+	// a feature is unavailable, the platform still works.
+	Optional bool
 }
 
 // Result is the outcome of one check. Error details are deliberately not part
@@ -21,6 +24,7 @@ type Check struct {
 type Result struct {
 	Name      string `json:"name"`
 	OK        bool   `json:"ok"`
+	Optional  bool   `json:"optional"`
 	LatencyMS int64  `json:"latency_ms"`
 }
 
@@ -83,7 +87,7 @@ func (c *Checker) Report(ctx context.Context) Report {
 		wg.Go(func() {
 			start := c.now()
 			err := check.Run(ctx)
-			results[i] = Result{Name: check.Name, OK: err == nil, LatencyMS: c.now().Sub(start).Milliseconds()}
+			results[i] = Result{Name: check.Name, OK: err == nil, Optional: check.Optional, LatencyMS: c.now().Sub(start).Milliseconds()}
 			if err != nil {
 				c.logger.Warn("health check failed", "check", check.Name, "error", err)
 			}
@@ -93,7 +97,7 @@ func (c *Checker) Report(ctx context.Context) Report {
 
 	report := Report{OK: true, Checks: results, CheckedAt: c.now().UTC()}
 	for _, r := range results {
-		report.OK = report.OK && r.OK
+		report.OK = report.OK && (r.OK || r.Optional)
 	}
 	c.last = report
 	return report

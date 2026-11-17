@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { api, type Activation, type AdminUser, type AuditEvent, type Group } from '#lib/api.ts';
-	import { dateTime, timeAgo } from '#lib/format.ts';
+	import { api, type Activation, type AdminUser, type AuditEvent, type Group, type Usage } from '#lib/api.ts';
+	import { dateTime, formatBytes, timeAgo } from '#lib/format.ts';
 	import ActivationLink from '#lib/components/ActivationLink.svelte';
 	import ActivityList from '#lib/components/ActivityList.svelte';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
@@ -12,6 +12,8 @@
 	let user = $state<AdminUser | null>(null);
 	let groups = $state<Group[]>([]);
 	let events = $state<AuditEvent[]>([]);
+	let usage = $state<Usage | null>(null);
+	let quotaGB = $state('');
 	let error = $state<unknown>(null);
 	let saved = $state(false);
 	let activation = $state<Activation | null>(null);
@@ -27,7 +29,13 @@
 
 	async function load() {
 		try {
-			[user, groups, events] = await Promise.all([api.admin.user(id), api.admin.groups(), api.admin.userActivity(id)]);
+			[user, groups, events, usage] = await Promise.all([
+				api.admin.user(id),
+				api.admin.groups(),
+				api.admin.userActivity(id),
+				api.drive.userUsage(id)
+			]);
+			quotaGB = usage.limit_bytes === null ? '' : String(usage.limit_bytes / 1024 ** 3);
 			displayName = user.display_name;
 			email = user.email;
 			isAdmin = user.is_admin;
@@ -78,6 +86,19 @@
 		if (disable && !confirm('Account uitschakelen? De gebruiker wordt direct overal uitgelogd.')) return;
 		return act(() => api.admin.setDisabled(id, disable));
 	};
+
+	function saveQuota(e: SubmitEvent) {
+		e.preventDefault();
+		const gb = quotaGB.trim() === '' ? null : Number(quotaGB.replace(',', '.'));
+		if (gb !== null && (!Number.isFinite(gb) || gb < 0)) {
+			error = new Error('Vul een aantal GB in, of laat het veld leeg voor geen limiet.');
+			return;
+		}
+		return act(async () => {
+			usage = await api.drive.setQuota(id, gb === null ? null : Math.round(gb * 1024 ** 3));
+			saved = true;
+		});
+	}
 
 	const toggleGroup = (groupId: string, member: boolean) => act(() => api.admin.setMember(groupId, id, member));
 </script>
@@ -149,6 +170,21 @@
 					</div>
 					<p class="muted small">Resetten geeft een nieuwe activatielink, bijvoorbeeld als iemand zijn telefoon kwijt is.</p>
 				{/if}
+			</section>
+
+			<section class="panel">
+				<h2>Opslag</h2>
+				{#if usage}
+					<p>
+						{formatBytes(usage.used_bytes)} gebruikt{#if usage.limit_bytes !== null}&nbsp;van {formatBytes(usage.limit_bytes)}{/if}
+					</p>
+				{/if}
+				<form class="add" onsubmit={saveQuota}>
+					<input bind:value={quotaGB} inputmode="decimal" placeholder="Geen limiet" aria-label="Limiet in GB" />
+					<span class="muted">GB</span>
+					<button class="button" disabled={busy}>Limiet opslaan</button>
+				</form>
+				<p class="muted small">Laat leeg voor geen limiet. Ook bestanden in de prullenbak en oude versies tellen mee.</p>
 			</section>
 
 			<section class="panel">

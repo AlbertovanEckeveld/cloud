@@ -1,0 +1,30 @@
+# Runs deploy/update.sh (ADR 0020). Install: see deploy/README.md.
+[Unit]
+Description=Deploy the newest signed Cloud platform image
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=cloud-deploy
+Group=cloud-deploy
+ExecStart=/opt/ave-cloud/deploy/update.sh
+# cosign keeps the Sigstore trust root here; Docker its client config.
+StateDirectory=cloud-update
+Environment=HOME=/var/lib/cloud-update
+TimeoutStartSec=15min
+
+# Membership of the docker group is root-equivalent; this limits what the
+# script itself can touch on this machine.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ave-cloud/deploy
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077

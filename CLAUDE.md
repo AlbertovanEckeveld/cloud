@@ -135,7 +135,7 @@ functionaliteitsrijk. Liever één goed doordacht scherm dan vijf halve.
 /workers/ml            Python ML-service
 /web                   SvelteKit-frontend; web/embed.go bedt web/build in de binary in
 /docker/dev-setup      Postgres, pgAdmin, RustFS voor de ontwikkelserver
-/deploy                productie-compose en deploy-scripts (nog niet aangemaakt)
+/deploy                compose voor staging op ave-dev-cloud (Traefik, platform, Collabora)
 /docs/adr              ADR's (architectuurbeslissingen)
 ```
 
@@ -192,33 +192,68 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 
 ## 11. Huidige status
 
-- Fase 0: 0.1 skelet af. 0.2 NATS + outbox, 0.3 CI en 0.4 back-ups uitgesteld; back-ups
+- Fase 0: 0.1 skelet af, 0.3 CI af. 0.2 NATS + outbox en 0.4 back-ups uitgesteld; back-ups
   moeten er zijn vóór er echte data in staat.
 - Fase 1 – identity: **af** (2026-11-15), door mij getest. Accounts, passkeys, wachtwoord +
   TOTP, herstelcodes, sessies, beheer van gebruikers/groepen/apps, audit-log, mail
   (ADR 0007), OIDC-provider met amr/acr, profielclaims en back-channel logout (ADR 0008).
   Het deelmodel is ontworpen (ADR 0006) en wordt gebouwd in fase 2 met `drive`.
-- Bezig met: keuze volgende stap.
+- Bezig met: **fase 2 – drive**. 2.1 af (ADR 0009). 2.2 delen + versies (ADR 0010),
+  2.2b teammappen (ADR 0011) en 2.3a deellinks (ADR 0012) en 2.3b voorbeeldweergave (incl. markdown en PDF) en 2.3c zoeken op
+  naam (ADR 0013) en 2.4 app-wachtwoorden + WebDAV (ADR 0014) en 2.5 Collabora/WOPI (ADR 0015, door mij werkend
+  bevestigd) gebouwd en getest; wachten op
+  mijn eigen test. Alle onderdelen van fase 2 zijn gebouwd; wacht op mijn eindtest.
+  Stappen: 2.1 drive-basis (mappen, streaming upload/download,
+  hernoemen, verplaatsen, prullenbak, quota, bestandsbrowser); 2.2 versies + delen met
+  gebruikers/groepen (deelmodel ADR 0006); 2.2b teammappen die beheerders aanmaken voor groepen; 2.3 deellinks, voorbeeldweergave, zoeken;
+  2.4 app-wachtwoorden + WebDAV; 2.5 WOPI/Collabora; 2.6 desktop-synchronisatieclient
+  (technologie nog te kiezen); zoeken op inhoud groeit mee (2.3c, uitgebreid zodra er
+  tekstextractie is).
+- Fase 2.6 desktop-sync: Go + Wails v2, eerst Linux en macOS, volledige kopie van gekozen mappen,
+  inloggen via browser (OIDC + PKCE, loopback). 2.6a server, 2.6b sync-engine en 2.6c app
+  (module `desktop/`, ADR 0016) gebouwd en getest, ook tegen de echte server; wacht op mijn test. Desktop-deps: wails v2.17.1, fsnotify, go-keyring, fyne.io/systray,
+  modernc.org/sqlite.
+- Klaar als (fase 2): uploaden/downloaden in browser en via WebDAV-client, delen met
+  gebruiker/groep/link, versies terugzetten, prullenbak, document bewerken in Collabora,
+  **een desktop-applicatie die foutloos uploadt en synchroniseert** (twee richtingen, met
+  conflictafhandeling, ook na offline werken) en **een goede zoekoplossing** (snel, op naam én
+  inhoud, binnen alles waar je toegang toe hebt). Zonder die twee is `drive` niet af.
 - Testen: integratie- en browsertests draaien tegen een aparte database (`TEST_DATABASE_URL`,
   `ave_cloud_test`), nooit tegen de dev-database met mijn eigen account. Tests ruimen ook daar
   alleen hun eigen data op (`it-*`, `e2e-*`).
 - Mail: SMTP-gegevens staan in `.skills/mail.md` en `.env`. Stuur geen echte mail naar
   buiten zonder mijn akkoord; tests gebruiken een nep-SMTP-server.
+- Staging: `deploy/` voor `https://ave-dev-cloud.albertove.cloud` klaar (ADR 0019); eerste
+  start door mij (de assistent heeft geen Docker-toegang).
+- Fase 0.3 CI: GitHub Actions draait (`ci.yml` op PR's). Uitrollen (ADR 0020): `release.yml`
+  bouwt na een groene CI op `main` een cosign-ondertekend image in GHCR; de VM haalt het op
+  via `deploy/update.sh` + systemd-timer. Release en VM-kant nog niet end-to-end getest (pas na
+  de eerste merge naar `main`).
 - Open vragen: definitieve keuze Go vs. Rust (huidige keuze: Go)
 
 ## 12. Beslissingen
 
 - Geen eigen S3-objectopslag bouwen; bestaande S3-server gebruiken.
-- Home Assistant en Collabora blijven extern en worden gekoppeld.
+- Home Assistant en Collabora blijven extern en worden gekoppeld. Collabora (dev) draait op
+  `ave-dev-cloud.albertove.cloud:9980` (andere NetBird-host); platform-instelling `COLLABORA_URL`.
 - Frontend: SvelteKit met `adapter-static`, ingebed in de Go-binary (één origin, geen Node in productie).
 - Go-dependencies fase 0: chi, pgx/v5, goose, minio-go, google/uuid. Frontend: SvelteKit, Vite, Vitest.
-- CI: GitHub Actions.
+- CI: GitHub Actions. Uitrollen alleen pull-based: de VM start alleen images die cosign
+  (keyless) als gebouwd door `release.yml` op `main` herkent; GitHub krijgt geen toegang tot de
+  VM (ADR 0020). Actions vastgezet op commit-SHA.
 - Inloggen: passkey als hoofdroute; wachtwoord alleen samen met een tweede factor (TOTP of passkey); herstelcodes.
 - Eerste admin via CLI (`platform user create --admin`), die een eenmalige activatielink geeft.
 - OIDC-provider op basis van `zitadel/oidc` (OpenID-gecertificeerd).
 - Go-dependencies fase 1: golang.org/x/crypto (argon2id), go-webauthn/webauthn, zitadel/oidc.
-- Geen Caddy/WireGuard; het platform verzorgt zelf HTTPS zodra het buiten het thuisnetwerk komt.
+- Go-dependencies fase 2: golang.org/x/net/webdav (WebDAV klasse 1+2, ook LOCK), go-pdfium +
+  wazero (PDF-tekst in een WebAssembly-sandbox, zonder bestandssysteem).
+- Frontend-dependencies fase 2: pdfjs-dist (Apache-2.0, PDF-lezer), marked (MIT, alleen als
+  markdown-parser; renderen gebeurt in Svelte zonder ruwe HTML).
+- Staging en later productie draaien achter Traefik (TLS met Let's Encrypt via DNS-01, geen
+  Docker-socket), Collabora op hetzelfde adres (ADR 0019). Geen WireGuard naast NetBird.
 - Dev-adres: `http://albertove-msi.albertove.cloud:8443`, alleen op het NetBird-adres
   (100.80.128.240, versleuteld door WireGuard). Voorlopig http: passkeys werken daar pas met
   HTTPS (eigen certificaat of Let's Encrypt via DNS-01; besluit volgt).
+- Drive: standaard geen quota (beheerder kan per gebruiker instellen), max. 10 GB per bestand,
+  prullenbak 30 dagen. Beheerders zien geen bestanden van anderen.
 - Multi-site hot-hot: nu nog niet repliceren, wel alles multi-site-proof ontwerpen (zie §3); replicatie wordt een eigen fase.

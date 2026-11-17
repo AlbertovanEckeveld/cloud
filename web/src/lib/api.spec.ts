@@ -6,7 +6,7 @@ const status = {
 	version: 'v1',
 	started_at: '2026-11-15T10:00:00Z',
 	ok: true,
-	checks: [{ name: 'database', ok: true, latency_ms: 3 }],
+	checks: [{ name: 'database', ok: true, latency_ms: 3, optional: false }],
 	checked_at: '2026-11-15T10:00:05Z'
 };
 
@@ -184,5 +184,99 @@ describe('profile', () => {
 		const res = respond({ error: { code: 'invalid_image', message: 'Geen afbeelding' } }, 422);
 		const file = new File(['x'], 'a.png', { type: 'image/png' });
 		await expect(api.uploadAvatar(file, res)).rejects.toMatchObject({ status: 422, code: 'invalid_image' });
+	});
+});
+
+describe('drive sharing', () => {
+	const node = {
+		id: 'n1',
+		parent_id: null,
+		kind: 'folder',
+		name: 'Vakantie',
+		size: 0,
+		content_type: '',
+		created_at: '2026-11-15T10:00:00Z',
+		updated_at: '2026-11-15T10:00:00Z',
+		permission: 'edit'
+	};
+
+	it('validates the permission of a node', async () => {
+		const view = await api.drive.folder('n1', respond({ folder: node, path: [], children: [], shared: true }));
+		expect(view.folder).toMatchObject({ permission: 'edit', shared: false });
+		expect(view.shared).toBe(true);
+		const bad = { folder: { ...node, permission: 'owner' }, path: [], children: [], shared: true };
+		await expect(api.drive.folder('n1', respond(bad))).rejects.toMatchObject({ code: 'invalid_response' });
+	});
+
+	it('lists what is shared with me, with the owner', async () => {
+		const list = await api.drive.sharedWithMe(respond({ nodes: [{ ...node, owner_name: 'Eigenaar' }] }));
+		expect(list[0]).toMatchObject({ name: 'Vakantie', owner_name: 'Eigenaar' });
+	});
+
+	it('rejects a share with an unknown subject type', async () => {
+		const share = { subject: { type: 'user', id: 'u1' }, name: 'Kijker', permission: 'view', granted_at: '2026-11-15T10:00:00Z' };
+		expect(await api.drive.shares('n1', respond({ shares: [share] }))).toHaveLength(1);
+		const bad = { ...share, subject: { type: 'everyone', id: 'u1' } };
+		await expect(api.drive.shares('n1', respond({ shares: [bad] }))).rejects.toMatchObject({ code: 'invalid_response' });
+	});
+
+	it('accepts only avatar URLs in the directory', async () => {
+		const entry = { type: 'user', id: 'u1', name: 'Kijker', detail: 'kijker', picture: '' };
+		expect(await api.directory('kij', respond({ entries: [entry] }))).toHaveLength(1);
+		const bad = { ...entry, picture: 'javascript:alert(1)' };
+		await expect(api.directory('kij', respond({ entries: [bad] }))).rejects.toMatchObject({ code: 'invalid_response' });
+	});
+
+	it('encodes the subject in the unshare URL', async () => {
+		let url = '';
+		const capture: typeof fetch = async (input) => {
+			url = String(input);
+			return new Response(null, { status: 204 });
+		};
+		await api.drive.unshare('n1', { type: 'group', id: 'a/b' }, capture);
+		expect(url).toBe('/api/v1/drive/nodes/n1/shares/group/a%2Fb');
+	});
+});
+
+describe('team folders', () => {
+	const folder = {
+		id: 't1',
+		root_id: 'r1',
+		name: 'Familie',
+		groups: [{ subject: { type: 'group', id: 'g1' }, name: 'familie', permission: 'edit', granted_at: '2026-11-16T10:00:00Z' }],
+		usage: { used_bytes: 4, limit_bytes: null },
+		created_at: '2026-11-16T10:00:00Z',
+		deleted_at: null
+	};
+
+	it('validates the administrator overview', async () => {
+		const list = await api.admin.teamFolders(respond({ team_folders: [folder] }));
+		expect(list[0]).toMatchObject({ name: 'Familie', deleted_at: null, usage: { used_bytes: 4 } });
+		const bad = { ...folder, groups: [{ ...folder.groups[0], permission: 'owner' }] };
+		await expect(api.admin.teamFolders(respond({ team_folders: [bad] }))).rejects.toMatchObject({ code: 'invalid_response' });
+	});
+
+	it('returns the team of a team trash', async () => {
+		const trash = await api.drive.teamTrash('t1', respond({ team: { id: 't1', root_id: 'r1', name: 'Familie' }, nodes: [] }));
+		expect(trash.team.name).toBe('Familie');
+	});
+});
+
+describe('share links', () => {
+	it('accepts only a well-formed token', async () => {
+		const link = { id: 'l1', token: 'A'.repeat(43), password: false, expires_at: null, created_at: '2026-11-16T10:00:00Z', downloads: 0 };
+		expect((await api.drive.createLink('n1', { expires_at: null, password: '' }, respond(link, 201))).token).toHaveLength(43);
+		await expect(api.drive.createLink('n1', { expires_at: null, password: '' }, respond({ ...link, token: 'x/../y' }, 201))).rejects.toMatchObject({
+			code: 'invalid_response'
+		});
+	});
+});
+
+describe('search', () => {
+	it('validates results with their location', async () => {
+		const r = { id: 'n1', parent_id: null, kind: 'file', name: 'rapport.pdf', size: 1, content_type: 'application/pdf',
+			created_at: '2026-11-16T10:00:00Z', updated_at: '2026-11-16T10:00:00Z', permission: 'view', location: 'Werk', location_id: 'f1' };
+		expect((await api.drive.search('rapp', respond({ results: [r] })))[0]).toMatchObject({ location: 'Werk', location_id: 'f1' });
+		await expect(api.drive.search('rapp', respond({ results: [{ ...r, location: 3 }] }))).rejects.toMatchObject({ code: 'invalid_response' });
 	});
 });
