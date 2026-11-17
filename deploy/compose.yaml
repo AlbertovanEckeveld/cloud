@@ -4,8 +4,8 @@
 #                             └── collabora-staging  (/browser, /hosting, /cool)
 #   platform ── network ave-cloud ── postgres, rustfs (from docker/dev-setup)
 #
-# Only Traefik publishes a port, and only on the NetBird address. Start with:
-#   docker compose --env-file .env up -d --build
+# Only Traefik publishes a port, and only on the NetBird address. Start and
+# update with ./update.sh, which picks the signed platform image (ADR 0020).
 
 name: cloud-staging
 
@@ -52,11 +52,9 @@ services:
         aliases: [ave-dev-cloud.albertove.cloud]
 
   platform:
-    build:
-      context: ..
-      args:
-        VERSION: staging
-    image: cloud-platform:staging
+    # A signed image from GHCR, pinned by digest. update.sh verifies the
+    # signature and writes the digest to release.env.
+    image: ${PLATFORM_IMAGE:?start the stack with ./update.sh}
     restart: unless-stopped
     env_file: platform.env
     read_only: true

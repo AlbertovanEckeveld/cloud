@@ -35,6 +35,9 @@ go.work.sum
 # Local AI-assistant notes; contain credentials
 .skills/
 
+# Visual Studio Code settings
+.vscode/
+
 # Build output
 /bin/
 
@@ -46,3 +49,6 @@ go.work.sum
 /deploy/.env
 /deploy/platform.env
 /deploy/dns-provider.env
+/deploy/release.env
+/deploy/release.env.new
+/deploy/rejected

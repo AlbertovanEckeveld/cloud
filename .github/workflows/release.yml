@@ -1,0 +1,71 @@
+# Release: on every push to main, run CI; only when it passes, build the
+# platform image, push it to GHCR and sign it keyless with cosign. The VM
+# pulls it itself (deploy/update.sh) and starts only images whose signature
+# proves they were built by this workflow on main (ADR 0020).
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One release at a time, in order; never cancel one halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/albertovaneckeveld/cloud
+  COSIGN_VERSION: v3.1.4
+  COSIGN_SHA256: 424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Only this job may write packages and ask GitHub for an OIDC token; the
+    # token is what cosign trades for a short-lived signing certificate.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install cosign
+        run: |
+          curl -fsSLo cosign "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  cosign" | sha256sum -c -
+          sudo install -m 0755 cosign /usr/local/bin/cosign
+          rm cosign
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push
+        run: |
+          docker buildx build . \
+            --build-arg VERSION="${GITHUB_SHA::12}" \
+            --label org.opencontainers.image.source="https://github.com/${GITHUB_REPOSITORY}" \
+            --label org.opencontainers.image.revision="${GITHUB_SHA}" \
+            --tag "${IMAGE}:main" --tag "${IMAGE}:sha-${GITHUB_SHA::12}" \
+            --metadata-file meta.json --push
+          digest=$(jq -r '."containerimage.digest"' meta.json)
+          echo "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          echo "DIGEST=${digest}" >> "$GITHUB_ENV"
+
+      # Signs the digest, not the tag. The certificate records this workflow
+      # file and ref; the VM accepts nothing else.
+      - name: Sign
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Summary
+        run: echo "Published \`${IMAGE}@${DIGEST}\` from ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"

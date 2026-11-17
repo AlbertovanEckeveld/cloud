@@ -2,11 +2,10 @@
 # against a throwaway Postgres and S3 that exist only for this job.
 name: ci
 
+# Pushes to main run these checks through release.yml, which publishes an
+# image only when they pass.
 on:
   pull_request:
-  push:
-    branches: [main]
-  # Lets release.yml run the same checks before it publishes an image.
   workflow_call:
 
 # Least privilege: read the code, nothing else. Pull requests from forks get

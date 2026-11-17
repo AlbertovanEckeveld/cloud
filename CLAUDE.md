@@ -192,7 +192,7 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 
 ## 11. Huidige status
 
-- Fase 0: 0.1 skelet af. 0.2 NATS + outbox, 0.3 CI en 0.4 back-ups uitgesteld; back-ups
+- Fase 0: 0.1 skelet af, 0.3 CI af. 0.2 NATS + outbox en 0.4 back-ups uitgesteld; back-ups
   moeten er zijn vóór er echte data in staat.
 - Fase 1 – identity: **af** (2026-11-15), door mij getest. Accounts, passkeys, wachtwoord +
   TOTP, herstelcodes, sessies, beheer van gebruikers/groepen/apps, audit-log, mail
@@ -225,6 +225,10 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   buiten zonder mijn akkoord; tests gebruiken een nep-SMTP-server.
 - Staging: `deploy/` voor `https://ave-dev-cloud.albertove.cloud` klaar (ADR 0019); eerste
   start door mij (de assistent heeft geen Docker-toegang).
+- Fase 0.3 CI: GitHub Actions draait (`ci.yml` op PR's). Uitrollen (ADR 0020): `release.yml`
+  bouwt na een groene CI op `main` een cosign-ondertekend image in GHCR; de VM haalt het op
+  via `deploy/update.sh` + systemd-timer. Release en VM-kant nog niet end-to-end getest (pas na
+  de eerste merge naar `main`).
 - Open vragen: definitieve keuze Go vs. Rust (huidige keuze: Go)
 
 ## 12. Beslissingen
@@ -234,7 +238,9 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   `ave-dev-cloud.albertove.cloud:9980` (andere NetBird-host); platform-instelling `COLLABORA_URL`.
 - Frontend: SvelteKit met `adapter-static`, ingebed in de Go-binary (één origin, geen Node in productie).
 - Go-dependencies fase 0: chi, pgx/v5, goose, minio-go, google/uuid. Frontend: SvelteKit, Vite, Vitest.
-- CI: GitHub Actions.
+- CI: GitHub Actions. Uitrollen alleen pull-based: de VM start alleen images die cosign
+  (keyless) als gebouwd door `release.yml` op `main` herkent; GitHub krijgt geen toegang tot de
+  VM (ADR 0020). Actions vastgezet op commit-SHA.
 - Inloggen: passkey als hoofdroute; wachtwoord alleen samen met een tweede factor (TOTP of passkey); herstelcodes.
 - Eerste admin via CLI (`platform user create --admin`), die een eenmalige activatielink geeft.
 - OIDC-provider op basis van `zitadel/oidc` (OpenID-gecertificeerd).

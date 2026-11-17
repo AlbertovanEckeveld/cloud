@@ -51,6 +51,7 @@ test: web desktop-web ## Unit tests (Go with race detector, frontend)
 	go test -race -count=1 ./...
 	cd desktop && go test -race -count=1 ./...
 	cd web && npm test
+	sh deploy/update_test.sh
 
 .PHONY: test-integration
 test-integration: web ## Integration tests against TEST_DATABASE_URL and the S3 from .env
