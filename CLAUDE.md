@@ -256,6 +256,9 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - Dev-adres: `http://albertove-msi.albertove.cloud:8443`, alleen op het NetBird-adres
   (100.80.128.240, versleuteld door WireGuard). Voorlopig http: passkeys werken daar pas met
   HTTPS (eigen certificaat of Let's Encrypt via DNS-01; besluit volgt).
+- `ENCRYPTION_KEY` is aan de database gebonden: bij de eerste start wordt een controlewaarde
+  (`core.key_canary`) versleuteld opgeslagen; met een andere sleutel weigert het platform (ook de
+  CLI) te starten (`internal/core/keycheck`).
 - Drive: standaard geen quota (beheerder kan per gebruiker instellen), max. 10 GB per bestand,
   prullenbak 30 dagen. Beheerders zien geen bestanden van anderen.
 - Multi-site hot-hot: nu nog niet repliceren, wel alles multi-site-proof ontwerpen (zie §3); replicatie wordt een eigen fase.
