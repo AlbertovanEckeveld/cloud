@@ -13,8 +13,17 @@
 	let query = $state('');
 	const searching = $derived(query.trim().length >= 2);
 
-	// Opening a result (or any other page) ends the search.
-	afterNavigate(() => (query = ''));
+	let nav: HTMLElement;
+
+	// Opening a result (or any other page) ends the search. In a narrow
+	// window the sections are one row that scrolls sideways: keep the
+	// current one in view.
+	afterNavigate(() => {
+		query = '';
+		requestAnimationFrame(() =>
+			nav?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+		);
+	});
 
 	onMount(refreshDrive);
 
@@ -46,7 +55,7 @@
 			{/if}
 		</details>
 
-		<nav class="nav">
+		<nav class="nav" bind:this={nav}>
 			<a href="/files" aria-current={current('mine')}><Icon name="home" />Mijn bestanden</a>
 			<a href="/files/shared" aria-current={current('shared')}><Icon name="share" />Gedeeld met mij</a>
 			{#if drive.teams.length > 0}

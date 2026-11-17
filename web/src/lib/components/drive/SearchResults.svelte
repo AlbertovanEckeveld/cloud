@@ -68,7 +68,7 @@
 							{/if}
 						</td>
 						<td class="num muted col-optional">{r.kind === 'file' ? formatBytes(r.size) : ''}</td>
-						<td class="muted col-optional"><time datetime={r.updated_at} title={dateTime(r.updated_at)}>{timeAgo(r.updated_at)}</time></td>
+						<td class="muted col-optional when"><time datetime={r.updated_at} title={dateTime(r.updated_at)}>{timeAgo(r.updated_at)}</time></td>
 					</tr>
 				{/each}
 			</tbody>
@@ -106,6 +106,9 @@
 	}
 	.num {
 		text-align: right;
+		white-space: nowrap;
+	}
+	.when {
 		white-space: nowrap;
 	}
 </style>
