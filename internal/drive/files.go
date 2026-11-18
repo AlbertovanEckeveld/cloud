@@ -168,8 +168,8 @@ func (s *Service) Store(ctx context.Context, userID uuid.UUID, up Upload) (Node,
 			return fmt.Errorf("store node: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO drive.versions (id, node_id, object_key, size, sha256, content_type, created_at, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, versionID, node.ID, key, up.Size, sum, ctype, now, userID); err != nil {
+			INSERT INTO drive.versions (id, node_id, object_key, size, sha256, content_type, created_at, created_by, created_via)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, versionID, node.ID, key, up.Size, sum, ctype, now, userID, viaFrom(ctx)); err != nil {
 			return fmt.Errorf("store version: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `

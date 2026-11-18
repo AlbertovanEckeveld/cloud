@@ -70,7 +70,9 @@ func newTestEnv(t *testing.T) *testEnv {
 	pass := func(next http.Handler) http.Handler { return next }
 	r.Route("/api/v1/drive", func(r chi.Router) {
 		e.svc.Routes(r, Auth{RequireUser: pass, RequireAdmin: pass, RequireRecentAuth: pass, UserID: userFrom,
-			Audit: func(_ *http.Request, event string, _ map[string]any) { e.audited = append(e.audited, event) }})
+			// A desktop app is simulated with X-Test-Device.
+			DeviceID: func(r *http.Request) uuid.UUID { id, _ := uuid.Parse(r.Header.Get("X-Test-Device")); return id },
+			Audit:    func(_ *http.Request, event string, _ map[string]any) { e.audited = append(e.audited, event) }})
 	})
 	r.Route("/dav", func(r chi.Router) { e.svc.DAVRoutes(r, pass, userFrom) })
 	r.Route("/wopi", e.svc.WOPIRoutes)
@@ -101,7 +103,7 @@ func (e *testEnv) newUser(t *testing.T) uuid.UUID {
 		}
 		// The change log last: deleting nodes records changes too.
 		for _, q := range []string{`DELETE FROM drive.nodes WHERE owner_id = $1`, `DELETE FROM drive.quotas WHERE user_id = $1`,
-			`DELETE FROM drive.changes WHERE owner_id = $1`} {
+			`DELETE FROM drive.changes WHERE owner_id = $1`, `DELETE FROM drive.sync_devices WHERE user_id = $1`} {
 			if _, err := e.pool.Exec(ctx, q, id); err != nil {
 				t.Errorf("cleanup: %v", err)
 			}

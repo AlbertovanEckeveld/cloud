@@ -270,18 +270,26 @@ export interface DirectoryEntry extends Subject {
 	picture: string;
 }
 
+export type Via = 'web' | 'desktop' | 'webdav' | 'editor';
+
 export interface FileVersion {
 	id: string;
 	size: number;
 	content_type: string;
 	created_at: string;
 	created_by_name: string;
+	/** How it arrived; null for versions from before this was recorded. */
+	created_via: Via | null;
+	/** The user's name for this version; named versions survive a clean-up. */
+	label: string | null;
 	current: boolean;
 }
 
 export interface Usage {
 	used_bytes: number;
 	limit_bytes: number | null;
+	/** Part of used_bytes in versions that are not current. */
+	old_versions_bytes: number;
 }
 
 export interface OidcRequest {
@@ -329,6 +337,28 @@ export interface AuditEvent {
 	site_id: string;
 	ip: string;
 	user_agent: string;
+}
+
+/** One page of the user's own activity; has_more tells whether older events follow. */
+export interface ActivityPage {
+	events: AuditEvent[];
+	has_more: boolean;
+}
+
+/** A computer where the desktop app is linked to this account. */
+export interface Device {
+	id: string;
+	name: string | null;
+	platform: 'linux' | 'darwin' | 'windows' | null;
+	linked_at: string;
+	last_seen_at: string | null;
+}
+
+/** What one linked computer keeps in sync, as it last reported. */
+export interface SyncDevice {
+	device_id: string;
+	last_sync_at: string;
+	folders: { id: string; name: string; kind: string }[];
 }
 
 type Validator<T> = (v: unknown) => T;
@@ -433,6 +463,38 @@ const parseEnrollment: Validator<TotpEnrollment> = (v) => {
 
 export const parseActivity: Validator<AuditEvent[]> = (v) =>
 	list(record(v, 'activity'), 'events', (e) => parseAuditEvent(e));
+
+export const parseActivityPage: Validator<ActivityPage> = (v) => {
+	const o = record(v, 'activity');
+	return { events: list(o, 'events', (e) => parseAuditEvent(e)), has_more: bool(o, 'has_more') };
+};
+
+export const parseDevices: Validator<Device[]> = (v) =>
+	list(record(v, 'devices'), 'devices', (d) => {
+		const r = record(d, 'device');
+		const platform = nullableStr(r, 'platform');
+		if (platform !== null && !['linux', 'darwin', 'windows'].includes(platform)) fail('platform');
+		return {
+			id: str(r, 'id'),
+			name: nullableStr(r, 'name'),
+			platform: platform as Device['platform'],
+			linked_at: str(r, 'linked_at'),
+			last_seen_at: nullableStr(r, 'last_seen_at')
+		};
+	});
+
+export const parseSyncDevices: Validator<SyncDevice[]> = (v) =>
+	list(record(v, 'devices'), 'devices', (d) => {
+		const r = record(d, 'device');
+		return {
+			device_id: str(r, 'device_id'),
+			last_sync_at: str(r, 'last_sync_at'),
+			folders: list(r, 'folders', (x) => {
+				const f = record(x, 'folder');
+				return { id: str(f, 'id'), name: str(f, 'name'), kind: str(f, 'kind') };
+			})
+		};
+	});
 
 const noContent: Validator<void> = () => undefined;
 
@@ -711,9 +773,17 @@ const parseVersion: Validator<FileVersion> = (v) => {
 		content_type: str(r, 'content_type'),
 		created_at: str(r, 'created_at'),
 		created_by_name: str(r, 'created_by_name'),
+		created_via: parseVia(r, 'created_via'),
+		label: nullableStr(r, 'label'),
 		current: bool(r, 'current')
 	};
 };
+
+function parseVia(o: Record<string, unknown>, key: string): Via | null {
+	const v = nullableStr(o, key);
+	if (v !== null && !['web', 'desktop', 'webdav', 'editor'].includes(v)) fail(key);
+	return v as Via | null;
+}
 
 const parseFolderView: Validator<FolderView> = (v) => {
 	const r = record(v, 'folder');
@@ -749,7 +819,11 @@ const parseTeamFolder: Validator<TeamFolder> = (v) => {
 
 const parseUsage: Validator<Usage> = (v) => {
 	const r = record(v, 'usage');
-	return { used_bytes: num(r, 'used_bytes'), limit_bytes: r.limit_bytes === null ? null : num(r, 'limit_bytes') };
+	return {
+		used_bytes: num(r, 'used_bytes'),
+		limit_bytes: r.limit_bytes === null ? null : num(r, 'limit_bytes'),
+		old_versions_bytes: r.old_versions_bytes === undefined ? 0 : num(r, 'old_versions_bytes')
+	};
 };
 
 const parseRemaining: Validator<number> = (v) => num(record(v, 'recovery'), 'remaining');
@@ -897,6 +971,9 @@ export const api = {
 			}), f),
 	revokeApp: (clientId: string, f: typeof fetch = fetch) =>
 		request('DELETE', `/api/v1/account/apps/${enc(clientId)}`, noContent, undefined, f),
+	devices: (f: typeof fetch = fetch) => get('/api/v1/account/devices', parseDevices, f),
+	unlinkDevice: (id: string, f: typeof fetch = fetch) =>
+		request('DELETE', `/api/v1/account/devices/${enc(id)}`, noContent, undefined, f),
 	/** Signs out of Cloud and of every app (apps are told via back-channel logout). */
 	logoutEverywhere: (f: typeof fetch = fetch) => post('/api/v1/auth/logout-everywhere', noContent, {}, f),
 	logoutRequest: (id: string, f: typeof fetch = fetch) =>
@@ -966,6 +1043,7 @@ export const api = {
 				if (!/^https?:\/\//.test(url)) fail('url');
 				return { url, access_token: str(r, 'access_token'), access_token_ttl: num(r, 'access_token_ttl'), edit: bool(r, 'edit') } as OfficeSession;
 			}, undefined, f),
+		syncDevices: (f: typeof fetch = fetch) => get('/api/v1/drive/sync/devices', parseSyncDevices, f),
 		activity: (f: typeof fetch = fetch) =>
 			get('/api/v1/drive/activity', (v) => list(record(v, 'activity'), 'items', (i) => {
 				const r = record(i, 'item');
@@ -995,6 +1073,15 @@ export const api = {
 			post(`/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}/restore`, parseNode, undefined, f),
 		deleteVersion: (id: string, versionId: string, f: typeof fetch = fetch) =>
 			request('DELETE', `/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}`, noContent, undefined, f),
+		/** Names a version (null removes the name). */
+		labelVersion: (id: string, versionId: string, label: string | null, f: typeof fetch = fetch) =>
+			request('PATCH', `/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}`, noContent, { label }, f),
+		/** Deletes every old version without a name; returns what was freed. */
+		pruneVersions: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/files/${enc(id)}/versions/prune`, (v) => {
+				const r = record(v, 'pruned');
+				return { versions: num(r, 'versions'), bytes: num(r, 'bytes') };
+			}, undefined, f),
 		userUsage: (userId: string, f: typeof fetch = fetch) =>
 			get(`/api/v1/drive/admin/users/${enc(userId)}/usage`, parseUsage, f),
 		setQuota: (userId: string, limitBytes: number | null, f: typeof fetch = fetch) =>
@@ -1126,7 +1213,12 @@ export const api = {
 			)
 	},
 
-	activity: (f: typeof fetch = fetch) => get('/api/v1/account/activity', parseActivity, f),
+	/** A page of the user's activity, newest first; pass the last event's ID as before for the next. */
+	activity: (before: string | null = null, limit = 20, f: typeof fetch = fetch) => {
+		const q = new URLSearchParams({ limit: String(limit) });
+		if (before) q.set('before', before);
+		return get(`/api/v1/account/activity?${q}`, parseActivityPage, f);
+	},
 	changePassword: (currentPassword: string, newPassword: string, f: typeof fetch = fetch) =>
 		post(
 			'/api/v1/account/password',

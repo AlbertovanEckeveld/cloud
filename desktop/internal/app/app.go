@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/fsnotify/fsnotify"
 
@@ -90,6 +92,7 @@ type App struct {
 	lastErr   string
 	current   *Transfer
 	recent    []RecentItem
+	reported  bool // this sign-in's device name was sent to the server
 	trigger   chan struct{}
 	stop      context.CancelFunc
 }
@@ -190,11 +193,58 @@ func (a *App) runAll(ctx context.Context) {
 				break
 			}
 		}
+		a.report(ctx, client, cfg.Folders)
 	}
 	a.mu.Lock()
 	a.syncing = false
 	a.mu.Unlock()
 	a.publish()
+}
+
+// report tells the server, for the user's device list, what this computer
+// is called (once per sign-in) and which folders it keeps in sync. Failures
+// only cost the list some freshness; syncing goes on.
+func (a *App) report(ctx context.Context, client *syncer.Client, folders []Folder) {
+	a.mu.Lock()
+	signedIn, reported := a.sess != nil, a.reported
+	a.mu.Unlock()
+	if !signedIn {
+		return
+	}
+	if !reported {
+		if err := client.ReportDevice(ctx, deviceName(a.host), runtime.GOOS); err != nil {
+			a.log.Warn("report device", "error", err)
+		} else {
+			a.mu.Lock()
+			a.reported = true
+			a.mu.Unlock()
+		}
+	}
+	roots := make([]string, 0, len(folders))
+	for _, f := range folders {
+		roots = append(roots, f.Root)
+	}
+	if err := client.ReportSync(ctx, roots); err != nil {
+		a.log.Warn("report sync", "error", err)
+	}
+}
+
+// deviceName is the computer's name as the server accepts it: at most 64
+// characters, without control characters.
+func deviceName(host string) string {
+	clean := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(host))
+	if r := []rune(clean); len(r) > 64 {
+		clean = string(r[:64])
+	}
+	if clean == "" {
+		return "Computer"
+	}
+	return clean
 }
 
 func (a *App) progress(folder string, p syncer.Progress) {
@@ -335,7 +385,7 @@ func (a *App) SignIn(ctx context.Context, server string, allowInsecure bool, ope
 	if a.cfg.Server != server {
 		a.cfg.Folders = nil // folders belong to the server they came from
 	}
-	a.cfg.Server, a.cfg.AllowInsecure, a.sess, a.lastErr = server, allowInsecure, sess, ""
+	a.cfg.Server, a.cfg.AllowInsecure, a.sess, a.lastErr, a.reported = server, allowInsecure, sess, "", false
 	cfg := a.cfg
 	a.mu.Unlock()
 	if err := saveConfig(cfg); err != nil {

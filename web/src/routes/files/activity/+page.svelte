@@ -3,7 +3,7 @@
 	// web app, the desktop app (sync), WebDAV or the document editor.
 	import { onMount } from 'svelte';
 	import { api, type ActivityItem } from '#lib/api.ts';
-	import { dateTime } from '#lib/format.ts';
+	import { dateTime, viaLabels } from '#lib/format.ts';
 	import Icon from '#lib/components/Icon.svelte';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
 	import { drive } from '#lib/drive-state.svelte.ts';
@@ -22,13 +22,7 @@
 		restored: 'heeft teruggezet',
 		deleted: ''
 	};
-	const channels: Record<ActivityItem['via'], string> = {
-		'': '',
-		web: 'via de webapp',
-		desktop: 'via de desktop-app',
-		webdav: 'via WebDAV',
-		editor: 'via de documenteditor'
-	};
+	const channels: Record<ActivityItem['via'], string> = { '': '', ...viaLabels };
 
 	const day = (iso: string) => new Date(iso).toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' });
 	const time = (iso: string) => new Date(iso).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });

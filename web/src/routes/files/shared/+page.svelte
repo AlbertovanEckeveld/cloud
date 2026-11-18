@@ -45,7 +45,7 @@
 {#if nodes && nodes.length > 0}
 	<div class="panel table-wrap">
 		<table class="table">
-			<thead><tr><th>Naam</th><th>Van</th><th>Recht</th><th>Gewijzigd</th><th><span class="visually-hidden">Acties</span></th></tr></thead>
+			<thead><tr><th>Naam</th><th class="col-optional">Van</th><th>Recht</th><th class="col-optional">Gewijzigd</th><th><span class="visually-hidden">Acties</span></th></tr></thead>
 			<tbody>
 				{#each nodes as n (n.id)}
 					<tr>
@@ -61,9 +61,9 @@
 								<span class="muted small">{formatBytes(n.size)}</span>
 							{/if}
 						</td>
-						<td>{n.owner_name}</td>
+						<td class="col-optional">{n.owner_name}</td>
 						<td><span class="badge">{permissionLabel(n.permission)}</span></td>
-						<td class="muted"><time datetime={n.updated_at} title={dateTime(n.updated_at)}>{timeAgo(n.updated_at)}</time></td>
+						<td class="muted col-optional"><time datetime={n.updated_at} title={dateTime(n.updated_at)}>{timeAgo(n.updated_at)}</time></td>
 						<td class="row-actions"><button class="button" onclick={() => leave(n)}>Verlaten</button></td>
 					</tr>
 				{/each}

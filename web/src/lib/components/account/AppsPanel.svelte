@@ -4,9 +4,13 @@
 	import { api, type AppGrant } from '#lib/api.ts';
 	import { dateTime, timeAgo } from '#lib/format.ts';
 	import ErrorNotice from '../ErrorNotice.svelte';
+	import Pager from '../Pager.svelte';
+	import { pageOf } from '#lib/paging.ts';
 
 	let apps = $state<AppGrant[] | null>(null);
 	let error = $state<unknown>(null);
+	let page = $state(0);
+	const shown = $derived(pageOf(apps ?? [], page, 3));
 
 	async function load() {
 		try {
@@ -46,7 +50,7 @@
 	<ErrorNotice {error} />
 	{#if apps && apps.length > 0}
 		<ul class="list">
-			{#each apps as a (a.client_id)}
+			{#each shown.items as a (a.client_id)}
 				<li>
 					<div>
 						<span class="list__title">{a.name}</span>
@@ -58,6 +62,8 @@
 				</li>
 			{/each}
 		</ul>
+		<Pager label={shown.label} canPrev={shown.page > 0} canNext={shown.page < shown.pages - 1}
+			onprev={() => (page = shown.page - 1)} onnext={() => (page = shown.page + 1)} />
 	{:else if apps}
 		<p class="muted">Je bent nog bij geen enkele app ingelogd.</p>
 	{/if}

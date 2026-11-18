@@ -24,6 +24,9 @@ type Principal struct {
 	// Device is set for the desktop app (an access token, not a browser
 	// session): it may use files, never administration.
 	Device bool
+	// DeviceID identifies that linked device (its refresh token); zero for
+	// browser sessions.
+	DeviceID uuid.UUID
 }
 
 type principalKey struct{}
@@ -180,6 +183,8 @@ func (s *Service) Routes(r chi.Router) {
 		r.Delete("/sessions/{id}", s.handleRevokeSession)
 		r.Post("/sessions/revoke-others", s.handleRevokeOtherSessions)
 		r.Get("/groups", s.handleOwnGroups)
+		r.Get("/devices", s.handleDevices)
+		r.Delete("/devices/{id}", s.handleUnlinkDevice)
 		r.Get("/apps", s.handleAppGrants)
 		r.Delete("/apps/{clientID}", s.handleRevokeApp)
 		r.Get("/profile", s.handleGetProfile)
@@ -191,6 +196,8 @@ func (s *Service) Routes(r chi.Router) {
 		r.Delete("/app-passwords/{id}", s.handleRevokeAppPassword)
 	})
 	r.With(s.RequireUser).Get("/directory", s.handleDirectory)
+	// The desktop app reports its own name and platform (device token only).
+	r.With(s.RequireUserOrDevice).Put("/device", s.handleReportDevice)
 	r.Route("/admin", s.adminRoutes)
 	r.Route("/oidc", s.oidcRoutes)
 }
@@ -312,16 +319,42 @@ func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request, sess Sess
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleActivity pages through the user's own events: ?limit=1..50 (default
+// 20) and ?before=<id of the last event shown>.
 func (s *Service) handleActivity(w http.ResponseWriter, r *http.Request) {
 	p, _ := PrincipalFrom(r.Context())
-	events, err := s.Activity(r.Context(), p.User.ID, 20)
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 50 {
+			httpserver.WriteError(w, http.StatusBadRequest, "invalid_input", "limit moet tussen 1 en 50 liggen.")
+			return
+		}
+		limit = n
+	}
+	var before *uuid.UUID
+	if v := r.URL.Query().Get("before"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			httpserver.WriteError(w, http.StatusBadRequest, "invalid_input", "Ongeldige paginaverwijzing.")
+			return
+		}
+		before = &id
+	}
+	// One extra row tells whether there is a next page.
+	events, err := s.Activity(r.Context(), p.User.ID, before, limit+1)
 	if err != nil {
 		s.writeError(w, r, err)
 		return
 	}
+	more := len(events) > limit
+	if more {
+		events = events[:limit]
+	}
 	httpserver.WriteJSON(w, http.StatusOK, struct {
-		Events []AuditEvent `json:"events"`
-	}{events})
+		Events  []AuditEvent `json:"events"`
+		HasMore bool         `json:"has_more"`
+	}{events, more})
 }
 
 func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {

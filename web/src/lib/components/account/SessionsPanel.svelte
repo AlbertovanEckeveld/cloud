@@ -4,9 +4,13 @@
 	import { api, type SessionInfo } from '#lib/api.ts';
 	import { dateTime, describeUserAgent, timeAgo } from '#lib/format.ts';
 	import ErrorNotice from '../ErrorNotice.svelte';
+	import Pager from '../Pager.svelte';
+	import { pageOf } from '#lib/paging.ts';
 
 	let sessions = $state<SessionInfo[] | null>(null);
 	let error = $state<unknown>(null);
+	let page = $state(0);
+	const shown = $derived(pageOf(sessions ?? [], page, 3));
 
 	async function load() {
 		try {
@@ -49,7 +53,7 @@
 	<ErrorNotice {error} />
 	{#if sessions}
 		<ul class="list">
-			{#each sessions as s (s.id)}
+			{#each shown.items as s (s.id)}
 				<li>
 					<div>
 						<span class="list__title">{describeUserAgent(s.user_agent)}</span>
@@ -63,6 +67,8 @@
 				</li>
 			{/each}
 		</ul>
+		<Pager label={shown.label} canPrev={shown.page > 0} canNext={shown.page < shown.pages - 1}
+			onprev={() => (page = shown.page - 1)} onnext={() => (page = shown.page + 1)} />
 		{#if sessions.length > 1}
 			<button class="button" onclick={revokeOthers}>Overal anders uitloggen</button>
 		{/if}

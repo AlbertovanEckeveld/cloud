@@ -110,7 +110,7 @@ func (s *Service) handleUserActivity(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	var events []AuditEvent
 	if err == nil {
-		events, err = s.Activity(r.Context(), id, 50)
+		events, err = s.Activity(r.Context(), id, nil, 50)
 	}
 	if err != nil {
 		s.writeError(w, r, err)

@@ -42,7 +42,8 @@ func (s *Service) AppGrants(ctx context.Context, userID uuid.UUID) ([]AppGrant, 
 	rows, err := s.db.Query(ctx, `
 		SELECT g.client_id, c.name, g.first_login_at, g.last_login_at
 		FROM identity.oidc_grants g JOIN identity.oidc_clients c ON c.id = g.client_id
-		WHERE g.user_id = $1 ORDER BY g.last_login_at DESC`, userID)
+		WHERE g.user_id = $1 AND g.client_id <> $2 -- the desktop app is listed per device
+		ORDER BY g.last_login_at DESC`, userID, DesktopClientID)
 	if err != nil {
 		return nil, fmt.Errorf("list app grants: %w", err)
 	}

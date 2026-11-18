@@ -543,7 +543,7 @@ func TestLogoutAndActivity(t *testing.T) {
 		t.Error("session valid after logout")
 	}
 
-	events, err := e.svc.Activity(ctx, u.ID, 50)
+	events, err := e.svc.Activity(ctx, u.ID, nil, 50)
 	if err != nil {
 		t.Fatal(err)
 	}

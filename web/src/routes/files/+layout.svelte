@@ -13,8 +13,17 @@
 	let query = $state('');
 	const searching = $derived(query.trim().length >= 2);
 
-	// Opening a result (or any other page) ends the search.
-	afterNavigate(() => (query = ''));
+	let nav: HTMLElement;
+
+	// Opening a result (or any other page) ends the search. In a narrow
+	// window the sections are one row that scrolls sideways: keep the
+	// current one in view.
+	afterNavigate(() => {
+		query = '';
+		requestAnimationFrame(() =>
+			nav?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+		);
+	});
 
 	onMount(refreshDrive);
 
@@ -46,7 +55,7 @@
 			{/if}
 		</details>
 
-		<nav class="nav">
+		<nav class="nav" bind:this={nav}>
 			<a href="/files" aria-current={current('mine')}><Icon name="home" />Mijn bestanden</a>
 			<a href="/files/shared" aria-current={current('shared')}><Icon name="share" />Gedeeld met mij</a>
 			{#if drive.teams.length > 0}
@@ -67,6 +76,9 @@
 					<span class="muted">{formatBytes(drive.usage.used_bytes)} van {formatBytes(drive.usage.limit_bytes)} gebruikt</span>
 				{:else}
 					<span class="muted">{formatBytes(drive.usage.used_bytes)} gebruikt</span>
+				{/if}
+				{#if drive.usage.old_versions_bytes > 0}
+					<span class="muted">waarvan {formatBytes(drive.usage.old_versions_bytes)} in oude versies</span>
 				{/if}
 			</div>
 		{/if}
@@ -216,43 +228,45 @@
 	.usage progress {
 		width: 100%;
 	}
-	@media (max-width: 760px) {
+	/* Narrow windows: the sidebar becomes a bar above the files, with the
+	   sections in one row that scrolls sideways. */
+	@media (max-width: 900px) {
 		.files {
-			grid-template-columns: 1fr;
+			grid-template-columns: minmax(0, 1fr);
 			gap: 1rem;
 		}
-		.search {
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-		padding: 0 1.1rem;
-		margin-bottom: 1.25rem;
-		background: var(--surface-2);
-		border: 1px solid transparent;
-		border-radius: 999px;
-		color: var(--muted);
-	}
-	.search:focus-within {
-		border-color: var(--accent);
-		background: var(--surface);
-	}
-	.search input {
-		flex: 1;
-		border: 0;
-		background: none;
-		padding: 0.75rem 0;
-		color: var(--text);
-		outline: none;
-	}
-	.sidebar {
+		.sidebar {
 			position: static;
-		}
-		.nav {
 			flex-direction: row;
 			flex-wrap: wrap;
+			align-items: center;
+			gap: 0.75rem;
+		}
+		.nav {
+			order: 1;
+			flex: 1 1 100%;
+			flex-direction: row;
+			overflow-x: auto;
+			scrollbar-width: thin;
+			padding-bottom: 0.25rem;
+		}
+		.nav a {
+			white-space: nowrap;
+			overflow-wrap: normal;
+		}
+		.nav a[aria-current='page'] {
+			box-shadow: inset 0 -2px 0 var(--accent);
 		}
 		.nav__heading {
-			width: 100%;
+			display: none;
+		}
+		.nav__trash {
+			margin-top: 0;
+		}
+		.usage {
+			margin-left: auto;
+			padding: 0;
+			min-width: 9rem;
 		}
 	}
 </style>
