@@ -59,6 +59,13 @@ func New(db *pgxpool.Pool, s *sealer.Sealer, cfg *config.Mail, heloName string, 
 		return nil, fmt.Errorf("mail sender: %w", err)
 	}
 	m.from = from
+	if cfg.DevDir != "" {
+		if err := prepareDir(cfg.DevDir); err != nil {
+			return nil, err
+		}
+		m.send = m.writeToDir(cfg.DevDir)
+		return m, nil
+	}
 	m.send = func(ctx context.Context, from, to string, raw []byte) error {
 		return send(ctx, cfg, heloName, from, to, raw)
 	}
@@ -72,6 +79,9 @@ func (m *Mailer) Enabled() bool { return m.cfg != nil }
 func (m *Mailer) Verify(ctx context.Context) error {
 	if !m.Enabled() {
 		return ErrDisabled
+	}
+	if m.cfg.DevDir != "" {
+		return prepareDir(m.cfg.DevDir)
 	}
 	return verify(ctx, m.cfg, m.heloName)
 }

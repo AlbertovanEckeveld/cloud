@@ -51,3 +51,6 @@ go.work.sum
 /deploy/release.env
 /deploy/release.env.new
 /deploy/rejected
+
+# Development mail (MAIL_DEV_DIR): contains activation links
+/.mail/

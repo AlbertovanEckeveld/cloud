@@ -223,6 +223,32 @@ func TestMailConfig(t *testing.T) {
 	}
 }
 
+func TestMailDevDir(t *testing.T) {
+	env := validEnv() // development
+	env["MAIL_DEV_DIR"] = "/tmp/cloud-mail/"
+	env["SMTP_FROM"] = "Cloud <cloud@example.com>"
+	cfg, err := Load(getenv(env))
+	if err != nil || cfg.Mail == nil || cfg.Mail.DevDir != "/tmp/cloud-mail" || cfg.Mail.Host != "" {
+		t.Fatalf("MAIL_DEV_DIR must turn mail on without SMTP: %+v, %v", cfg.Mail, err)
+	}
+
+	env["MAIL_DEV_DIR"] = "mail"
+	if _, err := Load(getenv(env)); err == nil || !strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("relative MAIL_DEV_DIR: got %v", err)
+	}
+
+	prod := validEnv()
+	prod["APP_ENV"] = "production"
+	prod["DATABASE_URL"] = "postgres://user:pw@db.internal/app?sslmode=verify-full"
+	prod["S3_ENDPOINT"] = "https://s3.internal"
+	prod["PUBLIC_URL"] = "https://cloud.example.com/"
+	prod["MAIL_DEV_DIR"] = "/tmp/cloud-mail"
+	prod["SMTP_FROM"] = "Cloud <cloud@example.com>"
+	if _, err := Load(getenv(prod)); err == nil || !strings.Contains(err.Error(), "MAIL_DEV_DIR is only allowed in development") {
+		t.Fatalf("MAIL_DEV_DIR in production: got %v", err)
+	}
+}
+
 func TestSecretFromFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s3_secret")
 	if err := os.WriteFile(path, []byte("from-file\n"), 0o600); err != nil {
