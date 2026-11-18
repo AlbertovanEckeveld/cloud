@@ -1,8 +1,11 @@
 <script lang="ts">
 	// Team folders: folders for groups that belong to no single person.
 	// Administrators decide which groups have access; they do not see the
-	// contents themselves (ADR 0011).
+	// contents themselves (ADR 0011). Each action needs its own permission
+	// (ADR 0022); the API checks them again.
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
+	import { can } from '#lib/permissions.ts';
 	import { api, type Group, type Permission, type TeamFolder } from '#lib/api.ts';
 	import { dateTime, formatBytes, permissionLabel } from '#lib/format.ts';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
@@ -19,6 +22,13 @@
 	let names = $state<Record<string, string>>({});
 	let quotas = $state<Record<string, string>>({});
 
+	const may = (p: string) => can(page.data.user, p);
+	const mayCreate = $derived(may('drive.teamfolders.create'));
+	const mayManage = $derived(may('drive.teamfolders.manage'));
+	const mayDelete = $derived(may('drive.teamfolders.delete'));
+	// Adding a group needs the list of groups, which is identity's.
+	const mayListGroups = $derived(may('identity.groups.view'));
+
 	function remember(list: TeamFolder[]) {
 		folders = list;
 		for (const t of list) {
@@ -30,7 +40,10 @@
 
 	async function load() {
 		try {
-			const [list, g] = await Promise.all([api.admin.teamFolders(), api.admin.groups()]);
+			const [list, g] = await Promise.all([
+				api.admin.teamFolders(),
+				mayManage && mayListGroups ? api.admin.groups() : Promise.resolve([])
+			]);
 			groups = g;
 			remember(list);
 		} catch (e) {
@@ -97,7 +110,7 @@
 </script>
 
 <svelte:head>
-	<title>Teammappen · Beheer · Cloud</title>
+	<title>Teammappen · Drive-instellingen · Cloud</title>
 </svelte:head>
 
 <h1>Teammappen</h1>
@@ -109,11 +122,13 @@
 
 <ErrorNotice {error} />
 
+{#if mayCreate}
 <form class="panel add-folder" onsubmit={create}>
 	<label class="visually-hidden" for="team-name">Naam van de nieuwe teammap</label>
 	<input id="team-name" bind:value={name} required maxlength="255" placeholder="Naam van de nieuwe teammap" />
 	<button class="button button--primary" disabled={busy}>Aanmaken</button>
 </form>
+{/if}
 
 {#if folders && folders.length === 0}
 	<p class="muted">Er zijn nog geen teammappen.</p>
@@ -133,10 +148,12 @@
 
 		{#if t.deleted_at}
 			<p class="muted">De leden kunnen er niet meer bij. Na 30 dagen wordt de teammap automatisch definitief verwijderd.</p>
-			<div class="dialog-actions">
-				<button class="button" disabled={busy} onclick={() => act(() => api.admin.restoreTeamFolder(t.id))}>Terugzetten</button>
-				<button class="button" disabled={busy} onclick={() => purge(t)}>Definitief verwijderen</button>
-			</div>
+			{#if mayDelete}
+				<div class="dialog-actions">
+					<button class="button" disabled={busy} onclick={() => act(() => api.admin.restoreTeamFolder(t.id))}>Terugzetten</button>
+					<button class="button" disabled={busy} onclick={() => purge(t)}>Definitief verwijderen</button>
+				</div>
+			{/if}
 		{:else}
 			<h3>Groepen</h3>
 			{#if t.groups.length === 0}
@@ -151,20 +168,24 @@
 								<select
 									id="lvl-{t.id}-{g.subject.id}"
 									value={g.permission}
-									disabled={busy}
+									disabled={busy || !mayManage}
 									onchange={(e) => act(() => api.admin.setTeamFolderGroup(t.id, g.subject.id, e.currentTarget.value as Permission))}
 								>
 									{#each levels as l (l)}<option value={l}>{permissionLabel(l)}</option>{/each}
 								</select>
-								<button class="link-button" disabled={busy} onclick={() => act(() => api.admin.removeTeamFolderGroup(t.id, g.subject.id))}>
-									Verwijderen
-								</button>
+								{#if mayManage}
+									<button class="link-button" disabled={busy} onclick={() => act(() => api.admin.removeTeamFolderGroup(t.id, g.subject.id))}>
+										Verwijderen
+									</button>
+								{/if}
 							</span>
 						</li>
 					{/each}
 				</ul>
 			{/if}
-			{#if available(t).length > 0}
+			{#if mayManage && !mayListGroups}
+				<p class="muted small">Om groepen toe te voegen heb je ook het recht "Groepen en leden zien" nodig.</p>
+			{:else if mayManage && available(t).length > 0}
 				<form class="add" onsubmit={(e) => add(e, t)}>
 					<label class="visually-hidden" for="grp-{t.id}">Groep toevoegen</label>
 					<select id="grp-{t.id}" bind:value={addGroup[t.id].group}>
@@ -179,6 +200,7 @@
 				</form>
 			{/if}
 
+			{#if mayManage}
 			<h3>Instellingen</h3>
 			<div class="settings">
 				<form class="add" onsubmit={(e) => rename(e, t)}>
@@ -192,9 +214,12 @@
 					<button class="button" disabled={busy}>Opslaan</button>
 				</form>
 			</div>
-			<div class="dialog-actions">
-				<button class="button" disabled={busy} onclick={() => remove(t)}>Opheffen</button>
-			</div>
+			{/if}
+			{#if mayDelete}
+				<div class="dialog-actions">
+					<button class="button" disabled={busy} onclick={() => remove(t)}>Opheffen</button>
+				</div>
+			{/if}
 		{/if}
 	</section>
 {/each}

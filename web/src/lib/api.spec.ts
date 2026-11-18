@@ -74,13 +74,18 @@ describe('api.sites', () => {
 });
 
 describe('api.session', () => {
-	const user = { id: 'u1', username: 'alice', display_name: 'Alice', is_admin: false, email: '' };
+	const user = { id: 'u1', username: 'alice', display_name: 'Alice', email: '', permissions: ['identity.users.view'] };
 
 	it('returns the user for an authenticated session', async () => {
 		expect(await api.session(respond({ state: 'authenticated', user }))).toEqual({
 			state: 'authenticated',
 			user
 		});
+	});
+
+	it('rejects a session user without permissions', async () => {
+		const { permissions: _, ...withoutPermissions } = user;
+		await expect(api.session(respond({ state: 'authenticated', user: withoutPermissions }))).rejects.toBeInstanceOf(ApiError);
 	});
 
 	it('never exposes a user for a partial session', async () => {
@@ -131,7 +136,7 @@ describe('POST requests', () => {
 });
 
 describe('admin.invite', () => {
-	const bob = { username: 'bob', display_name: 'Bob', is_admin: false, email: '' };
+	const bob = { username: 'bob', display_name: 'Bob', email: '' };
 
 	it('returns a well-formed activation link', async () => {
 		const link = 'https://cloud.example.com/activate#abc_DEF-123';

@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api, type AdminUser, type GroupDetail } from '#lib/api.ts';
+	import { api, type AdminUser, type GroupDetail, type Role } from '#lib/api.ts';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
+	import { can } from '#lib/permissions.ts';
 
 	let group = $state<GroupDetail | null>(null);
 	let users = $state<AdminUser[]>([]);
@@ -12,13 +13,23 @@
 	let name = $state('');
 	let description = $state('');
 	let newMember = $state('');
+	let roles = $state<Role[]>([]);
+	let roleToGive = $state('');
 
 	const id = $derived(page.params.id ?? '');
 	const candidates = $derived(users.filter((u) => !group?.members.some((m) => m.id === u.id)));
+	const may = (p: string) => can(page.data.user, p);
+	const mayManage = $derived(may('identity.groups.manage'));
+	// Roles this administrator may give: only those within their own permissions.
+	const givable = $derived(roles.filter((r) => r.permissions.every((p) => may(p)) && !group?.roles.some((x) => x.id === r.id)));
 
 	async function load() {
 		try {
-			[group, users] = await Promise.all([api.admin.group(id), api.admin.users()]);
+			[group, users, roles] = await Promise.all([
+				api.admin.group(id),
+				mayManage && may('identity.users.view') ? api.admin.users() : Promise.resolve([]),
+				may('identity.roles.assign') ? api.admin.roles() : Promise.resolve([])
+			]);
 			name = group.name;
 			description = group.description;
 		} catch (e) {
@@ -67,19 +78,37 @@
 			await load();
 		});
 
+	function giveRole(e: SubmitEvent) {
+		e.preventDefault();
+		const role = roleToGive;
+		if (!role) return;
+		return act(async () => {
+			await api.admin.setRole(role, 'groups', id, true);
+			roleToGive = '';
+			await load();
+		});
+	}
+
+	const takeRole = (roleId: string, name: string) =>
+		confirm(`De rol "${name}" intrekken bij deze groep? Alle leden verliezen de rechten direct.`) &&
+		act(async () => {
+			await api.admin.setRole(roleId, 'groups', id, false);
+			await load();
+		});
+
 	const remove = () =>
 		confirm(`Groep "${group?.name}" verwijderen? De leden blijven bestaan.`) &&
 		act(async () => {
 			await api.admin.deleteGroup(id);
-			await goto('/admin/groups');
+			await goto('/identity/groups');
 		});
 </script>
 
 <svelte:head>
-	<title>{group?.name ?? 'Groep'} · Beheer · Cloud</title>
+	<title>{group?.name ?? 'Groep'} · Identity · Cloud</title>
 </svelte:head>
 
-<p><a href="/admin/groups">← Groepen</a></p>
+<p><a href="/identity/groups">← Groepen</a></p>
 <ErrorNotice {error} />
 
 {#if group}
@@ -92,17 +121,17 @@
 					{#each group.members as m (m.id)}
 						<li>
 							<div>
-								<a class="list__title" href="/admin/users/{m.id}">{m.display_name}</a>
+								<a class="list__title" href="/identity/users/{m.id}">{m.display_name}</a>
 								<code>{m.username}</code>
 							</div>
-							<button class="button" onclick={() => removeMember(m.id)} disabled={busy}>Verwijderen</button>
+							{#if mayManage}<button class="button" onclick={() => removeMember(m.id)} disabled={busy}>Verwijderen</button>{/if}
 						</li>
 					{/each}
 				</ul>
 			{:else}
 				<p class="muted">Deze groep heeft nog geen leden.</p>
 			{/if}
-			{#if candidates.length > 0}
+			{#if mayManage && candidates.length > 0}
 				<form class="add" onsubmit={addMember}>
 					<select bind:value={newMember} required aria-label="Gebruiker toevoegen">
 						<option value="" disabled>Kies een gebruiker…</option>
@@ -116,6 +145,32 @@
 		</section>
 
 		<div class="stack">
+			<section class="panel">
+				<h2>Rollen</h2>
+				{#if group.roles.length === 0}
+					<p class="muted">Deze groep geeft geen beheerrechten.</p>
+				{:else}
+					<p class="flash">Iedereen in deze groep heeft deze rollen. Leden toevoegen of verwijderen is dus rechten uitdelen of afnemen.</p>
+					<ul class="list">
+						{#each group.roles as r (r.id)}
+							<li>
+								<span>{r.name}</span>
+								{#if may('identity.roles.assign')}<button class="button" disabled={busy} onclick={() => takeRole(r.id, r.name)}>Intrekken</button>{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				{#if may('identity.roles.assign') && givable.length > 0}
+					<form class="add" onsubmit={giveRole}>
+						<select bind:value={roleToGive} aria-label="Rol toekennen aan deze groep">
+							<option value="">Rol kiezen…</option>
+							{#each givable as r (r.id)}<option value={r.id}>{r.name}</option>{/each}
+						</select>
+						<button class="button" disabled={busy || !roleToGive}>Toekennen</button>
+					</form>
+				{/if}
+			</section>
+			{#if mayManage}
 			<form class="panel form" onsubmit={save}>
 				<h2>Instellingen</h2>
 				{#if saved}<p class="flash flash--success" role="status">Opgeslagen.</p>{/if}
@@ -135,6 +190,7 @@
 				<p class="muted small">De leden blijven bestaan; alleen de groep verdwijnt.</p>
 				<button class="button" onclick={remove} disabled={busy}>Verwijderen</button>
 			</section>
+			{/if}
 		</div>
 	</div>
 {/if}

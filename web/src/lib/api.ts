@@ -44,9 +44,23 @@ export interface User {
 	id: string;
 	username: string;
 	display_name: string;
-	is_admin: boolean;
 	/** Empty when the user has no e-mail address. */
 	email: string;
+}
+
+/** An administrative permission (ADR 0022), such as "drive.teamfolders.create". */
+export type AdminPermission = string;
+
+/** The signed-in user, with what they may administer. */
+export interface SessionUser extends User {
+	permissions: AdminPermission[];
+}
+
+/** A role a user has, and the group it comes through (null: given directly). */
+export interface RoleRef {
+	id: string;
+	name: string;
+	group: string | null;
 }
 
 export interface Activation {
@@ -59,7 +73,7 @@ export type SessionState = 'mfa_required' | 'mfa_enrollment_required' | 'authent
 
 export interface Session {
 	state: SessionState;
-	user: User | null;
+	user: SessionUser | null;
 }
 
 export interface TotpEnrollment {
@@ -108,6 +122,7 @@ export interface AdminUser extends User {
 	passkeys: number;
 	recovery_codes: number;
 	groups: GroupRef[];
+	roles: RoleRef[];
 }
 
 export interface Group {
@@ -120,6 +135,28 @@ export interface Group {
 
 export interface GroupDetail extends Group {
 	members: User[];
+	/** Roles given to the group: every member has them. */
+	roles: RoleRef[];
+}
+
+/** One entry of the permission catalog. */
+export interface PermissionInfo {
+	name: AdminPermission;
+	module: 'identity' | 'drive' | 'system';
+	label: string;
+}
+
+/** A named bundle of permissions; the built-in one has them all. */
+export interface Role {
+	id: string;
+	name: string;
+	description: string;
+	permissions: AdminPermission[];
+	builtin: boolean;
+	/** Given directly to these users (id and display name). */
+	users: GroupRef[];
+	/** Given to these groups. */
+	groups: GroupRef[];
 }
 
 export interface AuditEntry extends AuditEvent {
@@ -437,16 +474,25 @@ export const parseUser: Validator<User> = (v) => {
 		id: str(o, 'id'),
 		username: str(o, 'username'),
 		display_name: str(o, 'display_name'),
-		is_admin: bool(o, 'is_admin'),
 		email: str(o, 'email')
 	};
+};
+
+const parseSessionUser: Validator<SessionUser> = (v) => ({
+	...parseUser(v),
+	permissions: strList(record(v, 'user'), 'permissions')
+});
+
+const parseRoleRef: Validator<RoleRef> = (v) => {
+	const r = record(v, 'role');
+	return { id: str(r, 'id'), name: str(r, 'name'), group: r.group === undefined ? null : nullableStr(r, 'group') };
 };
 
 export const parseSession: Validator<Session> = (v) => {
 	const o = record(v, 'session');
 	const state = parseState(o);
 	// The server only sends user details for a fully authenticated session.
-	const user = state === 'authenticated' ? parseUser(o.user) : null;
+	const user = state === 'authenticated' ? parseSessionUser(o.user) : null;
 	return { state, user };
 };
 
@@ -559,7 +605,8 @@ const parseAdminUser: Validator<AdminUser> = (v) => {
 		has_totp: bool(r, 'has_totp'),
 		passkeys: num(r, 'passkeys'),
 		recovery_codes: num(r, 'recovery_codes'),
-		groups: list(r, 'groups', parseGroupRef)
+		groups: list(r, 'groups', parseGroupRef),
+		roles: list(r, 'roles', parseRoleRef)
 	};
 };
 
@@ -576,8 +623,30 @@ const parseGroup: Validator<Group> = (v) => {
 
 const parseGroupDetail: Validator<GroupDetail> = (v) => ({
 	...parseGroup(v),
-	members: list(record(v, 'group'), 'members', parseUser)
+	members: list(record(v, 'group'), 'members', parseUser),
+	roles: list(record(v, 'group'), 'roles', parseRoleRef)
 });
+
+export const parsePermissionCatalog: Validator<PermissionInfo[]> = (v) =>
+	list(record(v, 'catalog'), 'permissions', (p) => {
+		const r = record(p, 'permission');
+		const module = str(r, 'module');
+		if (!['identity', 'drive', 'system'].includes(module)) fail('module');
+		return { name: str(r, 'name'), module: module as PermissionInfo['module'], label: str(r, 'label') };
+	});
+
+export const parseRole: Validator<Role> = (v) => {
+	const r = record(v, 'role');
+	return {
+		id: str(r, 'id'),
+		name: str(r, 'name'),
+		description: str(r, 'description'),
+		permissions: strList(r, 'permissions'),
+		builtin: bool(r, 'builtin'),
+		users: list(r, 'users', parseGroupRef),
+		groups: list(r, 'groups', parseGroupRef)
+	};
+};
 
 const parseAuditEvent: Validator<AuditEvent> = (e) => {
 	const r = record(e, 'event');
@@ -1143,12 +1212,12 @@ export const api = {
 			get('/api/v1/admin/users', (v) => list(record(v, 'users'), 'users', parseAdminUser), f),
 		user: (id: string, f: typeof fetch = fetch) => get(`/api/v1/admin/users/${enc(id)}`, parseAdminUser, f),
 		invite: (
-			user: { username: string; display_name: string; is_admin: boolean; email: string },
+			user: { username: string; display_name: string; email: string },
 			f: typeof fetch = fetch
 		) => post('/api/v1/admin/users', parseActivation, user, f),
 		updateUser: (
 			id: string,
-			changes: { display_name?: string; is_admin?: boolean; email?: string },
+			changes: { display_name?: string; email?: string },
 			f: typeof fetch = fetch
 		) =>
 			request('PATCH', `/api/v1/admin/users/${enc(id)}`, noContent, changes, f),
@@ -1159,6 +1228,16 @@ export const api = {
 		userActivity: (id: string, f: typeof fetch = fetch) =>
 			get(`/api/v1/admin/users/${enc(id)}/activity`, parseActivity, f),
 
+		permissions: (f: typeof fetch = fetch) => get('/api/v1/admin/permissions', parsePermissionCatalog, f),
+		roles: (f: typeof fetch = fetch) => get('/api/v1/admin/roles', (v) => list(record(v, 'roles'), 'roles', parseRole), f),
+		createRole: (role: { name: string; description: string; permissions: AdminPermission[] }, f: typeof fetch = fetch) =>
+			post('/api/v1/admin/roles', parseRole, role, f),
+		updateRole: (id: string, role: { name: string; description: string; permissions: AdminPermission[] }, f: typeof fetch = fetch) =>
+			request('PATCH', `/api/v1/admin/roles/${enc(id)}`, noContent, role, f),
+		deleteRole: (id: string, f: typeof fetch = fetch) => request('DELETE', `/api/v1/admin/roles/${enc(id)}`, noContent, undefined, f),
+		/** Gives (on) or takes a role from a user or a group. */
+		setRole: (roleId: string, to: 'users' | 'groups', subjectId: string, on: boolean, f: typeof fetch = fetch) =>
+			request(on ? 'PUT' : 'DELETE', `/api/v1/admin/roles/${enc(roleId)}/${to}/${enc(subjectId)}`, noContent, undefined, f),
 		groups: (f: typeof fetch = fetch) =>
 			get('/api/v1/admin/groups', (v) => list(record(v, 'groups'), 'groups', parseGroup), f),
 		group: (id: string, f: typeof fetch = fetch) => get(`/api/v1/admin/groups/${enc(id)}`, parseGroupDetail, f),

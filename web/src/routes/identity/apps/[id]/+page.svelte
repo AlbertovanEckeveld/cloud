@@ -58,15 +58,15 @@
 		confirm(`App "${app?.name}" verwijderen? Gebruikers kunnen er dan niet meer mee inloggen.`) &&
 		act(async () => {
 			await api.admin.deleteApp(id);
-			await goto('/admin/apps');
+			await goto('/identity/apps');
 		});
 </script>
 
 <svelte:head>
-	<title>{app?.name ?? 'App'} · Beheer · Cloud</title>
+	<title>{app?.name ?? 'App'} · Identity · Cloud</title>
 </svelte:head>
 
-<p><a href="/admin/apps">← Apps</a></p>
+<p><a href="/identity/apps">← Apps</a></p>
 <ErrorNotice {error} />
 
 {#if app}

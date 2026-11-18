@@ -246,8 +246,10 @@ func serve(ctx context.Context) error {
 		avatars:        a.identity.AvatarHandler,
 		drive: func(r chi.Router) {
 			files.Routes(r, drive.Auth{
-				RequireUser:       a.identity.RequireUserOrDevice,
-				RequireAdmin:      identity.RequireAdmin,
+				RequireUser: a.identity.RequireUserOrDevice,
+				RequirePermission: func(p string) func(http.Handler) http.Handler {
+					return identity.RequirePermission(identity.Permission(p))
+				},
 				RequireRecentAuth: a.identity.RequireRecentAuth,
 				Audit:             a.identity.AuditRequest,
 				UserID: func(r *http.Request) uuid.UUID {
@@ -273,7 +275,7 @@ func serve(ctx context.Context) error {
 		},
 		identity:     a.identity.Routes,
 		requireUser:  a.identity.RequireUser,
-		requireAdmin: identity.RequireAdmin,
+		systemStatus: identity.RequirePermission(identity.PermSystemStatus),
 	})
 	return httpserver.Run(ctx, logger, ln, router, checker.Drain)
 }

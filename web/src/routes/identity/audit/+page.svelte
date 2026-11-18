@@ -32,7 +32,7 @@
 </script>
 
 <svelte:head>
-	<title>Audit-log · Beheer · Cloud</title>
+	<title>Audit-log · Identity · Cloud</title>
 </svelte:head>
 
 <h1>Audit-log</h1>

@@ -37,6 +37,8 @@ type AdminUser struct {
 	Passkeys      int           `json:"passkeys"`
 	RecoveryCodes int           `json:"recovery_codes"`
 	Groups        []GroupRef    `json:"groups"`
+	// Roles the user has, directly or through a group.
+	Roles []RoleRef `json:"roles"`
 }
 
 // GroupRef names a group.
@@ -48,13 +50,12 @@ type GroupRef struct {
 // UserUpdate holds the editable fields of an account; nil means unchanged.
 type UserUpdate struct {
 	DisplayName *string
-	IsAdmin     *bool
 	// Email: nil leaves it unchanged, "" removes it.
 	Email *string
 }
 
 const adminUserQuery = `
-	SELECT u.id, u.username, u.display_name, u.is_admin, COALESCE(u.email, ''), u.created_at, u.last_login_at,
+	SELECT u.id, u.username, u.display_name, COALESCE(u.email, ''), u.created_at, u.last_login_at,
 	       CASE WHEN u.disabled_at IS NOT NULL THEN 'disabled'
 	            WHEN t.confirmed_at IS NULL THEN 'pending'
 	            ELSE 'active' END,
@@ -63,14 +64,19 @@ const adminUserQuery = `
 	       (SELECT count(*) FROM identity.recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL),
 	       COALESCE((SELECT json_agg(json_build_object('id', g.id, 'name', g.name) ORDER BY g.name)
 	                 FROM identity.group_members m JOIN identity.groups g ON g.id = m.group_id
-	                 WHERE m.user_id = u.id), '[]')
+	                 WHERE m.user_id = u.id), '[]'),
+	       COALESCE((SELECT json_agg(json_build_object('id', r.id, 'name', r.name, 'group', g.name) ORDER BY r.name, g.name NULLS FIRST)
+	                 FROM identity.role_assignments a JOIN identity.roles r ON r.id = a.role_id
+	                 LEFT JOIN identity.groups g ON g.id = a.group_id
+	                 WHERE a.user_id = u.id
+	                    OR a.group_id IN (SELECT group_id FROM identity.group_members WHERE user_id = u.id)), '[]')
 	FROM identity.users u
 	LEFT JOIN identity.totp_credentials t ON t.user_id = u.id`
 
 func scanAdminUser(row pgx.CollectableRow) (AdminUser, error) {
 	var u AdminUser
-	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.IsAdmin, &u.Email, &u.CreatedAt, &u.LastLoginAt,
-		&u.Status, &u.HasTOTP, &u.Passkeys, &u.RecoveryCodes, &u.Groups)
+	err := row.Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.CreatedAt, &u.LastLoginAt,
+		&u.Status, &u.HasTOTP, &u.Passkeys, &u.RecoveryCodes, &u.Groups, &u.Roles)
 	u.CreatedAt = u.CreatedAt.UTC()
 	if u.LastLoginAt != nil {
 		*u.LastLoginAt = u.LastLoginAt.UTC()
@@ -122,12 +128,17 @@ func (s *Service) InviteUser(ctx context.Context, c Client, actor Session, in Ne
 }
 
 // ResetUser revokes an account's credentials and returns a new activation link.
-func (s *Service) ResetUser(ctx context.Context, c Client, actor Session, id uuid.UUID) (Activation, error) {
-	if err := s.requireRecentAuth(actor); err != nil {
+// It is refused for accounts with permissions the actor lacks: the new link
+// would otherwise be a way into a stronger account.
+func (s *Service) ResetUser(ctx context.Context, c Client, actor Principal, id uuid.UUID) (Activation, error) {
+	if err := s.requireRecentAuth(actor.Session); err != nil {
 		return Activation{}, err
 	}
-	if id == actor.UserID {
+	if id == actor.Session.UserID {
 		return Activation{}, ErrSelf
+	}
+	if err := s.requireOutranks(ctx, s.db, actor, id); err != nil {
+		return Activation{}, err
 	}
 	var username string
 	if err := s.db.QueryRow(ctx, `SELECT username FROM identity.users WHERE id = $1`, id).Scan(&username); err != nil {
@@ -136,32 +147,14 @@ func (s *Service) ResetUser(ctx context.Context, c Client, actor Session, id uui
 		}
 		return Activation{}, fmt.Errorf("load user: %w", err)
 	}
-	return s.issueActivation(ctx, c, &actor.UserID, username)
+	return s.issueActivation(ctx, c, &actor.Session.UserID, username)
 }
 
-// lockAdmins locks every active administrator row, so concurrent changes to
-// administrators are serialised, and returns how many there are besides id.
-func lockAdmins(ctx context.Context, tx pgx.Tx, id uuid.UUID) (int, error) {
-	rows, err := tx.Query(ctx, `SELECT id FROM identity.users WHERE is_admin AND disabled_at IS NULL FOR UPDATE`)
-	if err != nil {
-		return 0, fmt.Errorf("lock administrators: %w", err)
-	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-	if err != nil {
-		return 0, fmt.Errorf("lock administrators: %w", err)
-	}
-	others := 0
-	for _, a := range ids {
-		if a != id {
-			others++
-		}
-	}
-	return others, nil
-}
-
-// UpdateUser changes the display name or administrator flag of an account.
-func (s *Service) UpdateUser(ctx context.Context, c Client, actor Session, id uuid.UUID, upd UserUpdate) error {
-	if err := s.requireRecentAuth(actor); err != nil {
+// UpdateUser changes the display name or e-mail address of an account,
+// but never of an account with permissions the actor lacks (a new address
+// would let them receive its reset links). Roles are changed with SetRole.
+func (s *Service) UpdateUser(ctx context.Context, c Client, actor Principal, id uuid.UUID, upd UserUpdate) error {
+	if err := s.requireRecentAuth(actor.Session); err != nil {
 		return err
 	}
 	if upd.DisplayName != nil {
@@ -171,9 +164,6 @@ func (s *Service) UpdateUser(ctx context.Context, c Client, actor Session, id uu
 		}
 		upd.DisplayName = &name
 	}
-	if upd.IsAdmin != nil && !*upd.IsAdmin && id == actor.UserID {
-		return ErrSelf
-	}
 	var email *string
 	if upd.Email != nil {
 		var err error
@@ -182,20 +172,14 @@ func (s *Service) UpdateUser(ctx context.Context, c Client, actor Session, id uu
 		}
 	}
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if upd.IsAdmin != nil && !*upd.IsAdmin {
-			others, err := lockAdmins(ctx, tx, id)
-			if err != nil {
-				return err
-			}
-			if others == 0 {
-				return ErrLastAdmin
-			}
+		if err := s.requireOutranks(ctx, tx, actor, id); err != nil {
+			return err
 		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE identity.users
-			SET display_name = COALESCE($2, display_name), is_admin = COALESCE($3, is_admin),
-			    email = CASE WHEN $5 THEN $6 ELSE email END, updated_at = $4
-			WHERE id = $1`, id, upd.DisplayName, upd.IsAdmin, s.now(), upd.Email != nil, email)
+			SET display_name = COALESCE($2, display_name),
+			    email = CASE WHEN $4 THEN $5 ELSE email END, updated_at = $3
+			WHERE id = $1`, id, upd.DisplayName, s.now(), upd.Email != nil, email)
 		if conflict := userConflict(err); conflict != nil {
 			return conflict
 		}
@@ -209,35 +193,31 @@ func (s *Service) UpdateUser(ctx context.Context, c Client, actor Session, id uu
 		if upd.DisplayName != nil {
 			details["display_name"] = *upd.DisplayName
 		}
-		if upd.IsAdmin != nil {
-			details["is_admin"] = *upd.IsAdmin
-		}
 		if upd.Email != nil {
 			details["email_changed"] = true // the address itself stays out of the log
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventUserUpdated, actor: &actor.UserID, subject: &id, details: details})
+		return s.audit(ctx, tx, c, auditEntry{event: EventUserUpdated, actor: &actor.Session.UserID, subject: &id, details: details})
 	})
 }
 
 // SetUserDisabled disables or re-enables an account. Disabling signs the
 // user out everywhere and voids open activation links and ceremonies.
-func (s *Service) SetUserDisabled(ctx context.Context, c Client, actor Session, id uuid.UUID, disabled bool) error {
-	if err := s.requireRecentAuth(actor); err != nil {
+// Only accounts without permissions the actor lacks; never the last
+// administrator.
+func (s *Service) SetUserDisabled(ctx context.Context, c Client, actor Principal, id uuid.UUID, disabled bool) error {
+	if err := s.requireRecentAuth(actor.Session); err != nil {
 		return err
 	}
-	if id == actor.UserID {
+	if id == actor.Session.UserID {
 		return ErrSelf
 	}
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		now := s.now()
-		if disabled {
-			others, err := lockAdmins(ctx, tx, id)
-			if err != nil {
-				return err
-			}
-			if others == 0 {
-				return ErrLastAdmin
-			}
+		if err := lockRoles(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.requireOutranks(ctx, tx, actor, id); err != nil {
+			return err
 		}
 		var disabledAt *time.Time
 		if disabled {
@@ -270,6 +250,9 @@ func (s *Service) SetUserDisabled(ctx context.Context, c Client, actor Session, 
 				return err
 			}
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: event, actor: &actor.UserID, subject: &id})
+		if err := ensureAdminRemains(ctx, tx); err != nil {
+			return err
+		}
+		return s.audit(ctx, tx, c, auditEntry{event: event, actor: &actor.Session.UserID, subject: &id})
 	})
 }

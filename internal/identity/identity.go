@@ -69,7 +69,6 @@ type User struct {
 	ID          uuid.UUID `json:"id"`
 	Username    string    `json:"username"`
 	DisplayName string    `json:"display_name"`
-	IsAdmin     bool      `json:"is_admin"`
 	Email       string    `json:"email"` // empty when unknown
 }
 

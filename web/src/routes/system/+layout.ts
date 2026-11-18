@@ -1,9 +1,9 @@
 import { redirect } from '@sveltejs/kit';
+import { can } from '#lib/permissions.ts';
 import type { LayoutLoad } from './$types';
 
-// Hides the admin area from non-administrators. The API enforces this
-// independently; this only keeps the UI tidy.
+// Only for users who may see the system status; the API checks it too.
 export const load: LayoutLoad = async ({ parent }) => {
 	const { user } = await parent();
-	if (!user?.is_admin) redirect(307, '/');
+	if (!can(user, 'system.status.view')) redirect(307, '/');
 };

@@ -68,10 +68,10 @@ func (s *Service) authenticateDevice(ctx context.Context, token string) (User, u
 	var device *uuid.UUID
 	now := s.now()
 	err = s.db.QueryRow(ctx, `
-		SELECT u.id, u.username, u.display_name, u.is_admin, COALESCE(u.email, ''), t.refresh_token_id
+		SELECT u.id, u.username, u.display_name, COALESCE(u.email, ''), t.refresh_token_id
 		FROM identity.oidc_access_tokens t JOIN identity.users u ON u.id = t.user_id
 		WHERE t.id = $1 AND t.user_id = $2 AND t.client_id = $3 AND t.expires_at > $4 AND u.disabled_at IS NULL`,
-		id, sub, DesktopClientID, now).Scan(&u.ID, &u.Username, &u.DisplayName, &u.IsAdmin, &u.Email, &device)
+		id, sub, DesktopClientID, now).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &device)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, uuid.Nil, ErrNoSession
 	}
