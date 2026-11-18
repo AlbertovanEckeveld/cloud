@@ -240,3 +240,11 @@ export function remaining(done: number, total: number, startedMs: number, nowMs:
 	const m = Math.round((seconds % 3600) / 60);
 	return m ? `nog ~${h} u ${m} min` : `nog ~${h} u`;
 }
+
+/** How a change arrived, as shown next to it. */
+export const viaLabels = {
+	web: 'via de webapp',
+	desktop: 'via de desktop-app',
+	webdav: 'via WebDAV',
+	editor: 'via de documenteditor'
+} as const;

@@ -12,7 +12,7 @@
 	import ErrorNotice from '../ErrorNotice.svelte';
 	import MoveDialog from './MoveDialog.svelte';
 	import ShareDialog from './ShareDialog.svelte';
-	import VersionsDialog from './VersionsDialog.svelte';
+	import VersionsPanel from './VersionsPanel.svelte';
 	import PreviewDialog from './PreviewDialog.svelte';
 	import { dismissible } from '#lib/dismiss.ts';
 
@@ -299,7 +299,7 @@
 	<PreviewDialog files={previewable} start={previewing} onClose={() => (previewing = null)} />
 {/if}
 {#if history}
-	<VersionsDialog node={history} onChanged={load} onClose={() => (history = null)} />
+	<VersionsPanel node={history} onChanged={() => Promise.all([load(), refreshDrive()])} onClose={() => (history = null)} />
 {/if}
 
 <style>

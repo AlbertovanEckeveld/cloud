@@ -77,6 +77,9 @@
 				{:else}
 					<span class="muted">{formatBytes(drive.usage.used_bytes)} gebruikt</span>
 				{/if}
+				{#if drive.usage.old_versions_bytes > 0}
+					<span class="muted">waarvan {formatBytes(drive.usage.old_versions_bytes)} in oude versies</span>
+				{/if}
 			</div>
 		{/if}
 		{#if drive.error}<p class="small muted">{drive.error}</p>{/if}

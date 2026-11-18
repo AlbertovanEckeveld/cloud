@@ -210,8 +210,9 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   (technologie nog te kiezen); zoeken op inhoud groeit mee (2.3c, uitgebreid zodra er
   tekstextractie is).
 - Drive-verbeteringen (2026-11-17/18): A smalle schermen (container queries, ⋯-menu per rij) en
-  B accountpagina (pagineren, gekoppelde computers, ADR 0021) gebouwd en getest; C versiebeheer
-  en D rechten/instellingen/identity-pagina volgen, E AI alleen als ADR.
+  B accountpagina (pagineren, gekoppelde computers, ADR 0021) en C versiebeheer (zijpaneel,
+  bekijken, naam geven, opruimen; geen automatisch uitdunnen) gebouwd en getest; D
+  rechten/instellingen/identity-pagina volgt, E AI alleen als ADR.
 - Fase 2.6 desktop-sync: Go + Wails v2, eerst Linux en macOS, volledige kopie van gekozen mappen,
   inloggen via browser (OIDC + PKCE, loopback). 2.6a server, 2.6b sync-engine en 2.6c app
   (module `desktop/`, ADR 0016) gebouwd en getest, ook tegen de echte server; wacht op mijn test. Desktop-deps: wails v2.17.1, fsnotify, go-keyring, fyne.io/systray,

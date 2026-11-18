@@ -315,3 +315,29 @@ describe('api.devices', () => {
 		await expect(api.drive.syncDevices(respond({ devices: [{ device_id: 'd1' }] }))).rejects.toBeInstanceOf(ApiError);
 	});
 });
+
+describe('api.drive.versions', () => {
+	const version = {
+		id: 'v1',
+		size: 3,
+		content_type: 'text/plain',
+		created_at: '2026-11-18T09:00:00Z',
+		created_by_name: 'Ann',
+		created_via: 'desktop',
+		label: 'ingeleverd',
+		current: false
+	};
+
+	it('returns how a version arrived and its name, both optional', async () => {
+		const old = { ...version, id: 'v0', created_via: null, label: null };
+		await expect(api.drive.versions('f', respond({ versions: [version, old] }))).resolves.toEqual([version, old]);
+	});
+
+	it('rejects an unknown channel', async () => {
+		await expect(api.drive.versions('f', respond({ versions: [{ ...version, created_via: 'fax' }] }))).rejects.toBeInstanceOf(ApiError);
+	});
+
+	it('reports what a clean-up freed', async () => {
+		await expect(api.drive.pruneVersions('f', respond({ versions: 2, bytes: 1024 }))).resolves.toEqual({ versions: 2, bytes: 1024 });
+	});
+});

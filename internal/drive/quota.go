@@ -11,6 +11,9 @@ import (
 type Usage struct {
 	UsedBytes  int64  `json:"used_bytes"`
 	LimitBytes *int64 `json:"limit_bytes"` // nil: unlimited
+	// OldVersionsBytes is the part of UsedBytes taken by versions that are
+	// not current: what cleaning up old versions could free at most.
+	OldVersionsBytes int64 `json:"old_versions_bytes"`
 }
 
 // usage counts every stored version, including those in the trash: they
@@ -31,7 +34,16 @@ func (s *Service) usage(ctx context.Context, q dbtx, userID uuid.UUID) (int64, *
 // Usage returns a user's storage use and limit.
 func (s *Service) Usage(ctx context.Context, userID uuid.UUID) (Usage, error) {
 	used, limit, err := s.usage(ctx, s.db, userID)
-	return Usage{UsedBytes: used, LimitBytes: limit}, err
+	if err != nil {
+		return Usage{}, err
+	}
+	var old int64
+	if err := s.db.QueryRow(ctx, `
+		SELECT COALESCE(sum(v.size), 0) FROM drive.versions v JOIN drive.nodes n ON n.id = v.node_id
+		WHERE n.owner_id = $1 AND v.id IS DISTINCT FROM n.current_version_id`, userID).Scan(&old); err != nil {
+		return Usage{}, fmt.Errorf("load old version usage: %w", err)
+	}
+	return Usage{UsedBytes: used, LimitBytes: limit, OldVersionsBytes: old}, nil
 }
 
 // SetQuota sets a user's limit; nil removes it.
