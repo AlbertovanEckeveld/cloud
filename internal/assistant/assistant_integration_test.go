@@ -42,6 +42,7 @@ type fakeFiles struct {
 type fakeFile struct {
 	name    string
 	version uuid.UUID
+	readAt  time.Time
 	text    string
 	viewers []uuid.UUID
 }
@@ -52,7 +53,7 @@ func (f *fakeFiles) TextIndex(_ context.Context, after uuid.UUID, limit int) ([]
 	var out []drive.TextRef
 	for id, file := range f.files {
 		if id.String() > after.String() {
-			out = append(out, drive.TextRef{NodeID: id, VersionID: file.version})
+			out = append(out, drive.TextRef{NodeID: id, VersionID: file.version, ReadAt: file.readAt})
 		}
 	}
 	slices.SortFunc(out, func(a, b drive.TextRef) int { return strings.Compare(a.NodeID.String(), b.NodeID.String()) })
@@ -75,7 +76,7 @@ func (f *fakeFiles) Text(_ context.Context, id uuid.UUID) (drive.TextRef, string
 	if !ok {
 		return drive.TextRef{}, "", drive.ErrNotFound
 	}
-	return drive.TextRef{NodeID: id, VersionID: file.version}, file.text, nil
+	return drive.TextRef{NodeID: id, VersionID: file.version, ReadAt: file.readAt}, file.text, nil
 }
 
 func (f *fakeFiles) result(id uuid.UUID, file *fakeFile) drive.SearchResult {
@@ -339,6 +340,17 @@ func TestAssistant(t *testing.T) {
 	_ = e.pool.QueryRow(ctx, `SELECT count(*) FROM assistant.chunks WHERE node_id = $1`, salary).Scan(&n)
 	if n != 0 {
 		t.Errorf("a removed file still has %d chunks", n)
+	}
+
+	// The same version read again (new file types): indexed again too.
+	e.files.files[quote].text = "Offerte voor de dakkapel: 5000 euro. Bijlage met tekeningen."
+	e.files.files[quote].readAt = time.Now().UTC().Truncate(time.Microsecond)
+	before = e.prov.embedded
+	if err := e.svc.sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if e.prov.embedded-before != 1 {
+		t.Errorf("a re-read file: %d chunks embedded, want 1", e.prov.embedded-before)
 	}
 
 	// Another embedding model: everything is indexed again under it.

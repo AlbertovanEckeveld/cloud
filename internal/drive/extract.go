@@ -41,32 +41,67 @@ const (
 // errNotIndexable means the file type has no text to search.
 var errNotIndexable = errors.New("not indexable")
 
-// textFiles are extensions read as plain text.
+// textFiles are extensions read as plain text: documents, data, notes,
+// subtitles, calendars and contacts, and source code.
 var textFiles = map[string]bool{
-	"txt": true, "md": true, "markdown": true, "csv": true, "tsv": true, "json": true, "xml": true,
-	"yaml": true, "yml": true, "toml": true, "ini": true, "log": true, "sql": true, "html": true, "htm": true,
-	"go": true, "py": true, "js": true, "ts": true, "java": true, "c": true, "h": true, "cpp": true,
-	"rs": true, "sh": true, "css": true, "svelte": true, "php": true, "rb": true, "tex": true,
+	"txt": true, "text": true, "md": true, "markdown": true, "rst": true, "adoc": true, "asciidoc": true, "org": true,
+	"csv": true, "tsv": true, "json": true, "jsonl": true, "ndjson": true, "geojson": true,
+	"yaml": true, "yml": true, "toml": true, "ini": true, "conf": true, "cfg": true, "properties": true, "log": true,
+	"sql": true, "tex": true, "bib": true, "srt": true, "vtt": true, "ics": true, "vcf": true, "diff": true, "patch": true,
+	"go": true, "py": true, "js": true, "mjs": true, "cjs": true, "jsx": true, "ts": true, "tsx": true, "java": true,
+	"kt": true, "kts": true, "swift": true, "c": true, "h": true, "cc": true, "cpp": true, "cxx": true, "hpp": true,
+	"cs": true, "fs": true, "vb": true, "scala": true, "rs": true, "dart": true, "lua": true, "pl": true, "pm": true,
+	"r": true, "jl": true, "m": true, "php": true, "rb": true, "ex": true, "exs": true, "erl": true, "hs": true,
+	"clj": true, "elm": true, "zig": true, "sol": true, "sh": true, "bash": true, "zsh": true, "fish": true,
+	"bat": true, "cmd": true, "ps1": true, "css": true, "scss": true, "sass": true, "less": true, "svelte": true,
+	"vue": true, "graphql": true, "proto": true, "tf": true, "hcl": true, "nix": true, "gradle": true, "cmake": true,
 }
 
-// officeParts are the XML parts holding a document's text.
+// officeParts are the XML parts holding a document's text: for Word also
+// headers, footers, notes and comments; for PowerPoint the speaker notes.
+// Excel is read cell by cell (xlsxText).
 var officeParts = map[string]func(name string) bool{
-	"docx": func(n string) bool { return n == "word/document.xml" },
-	"xlsx": func(n string) bool { return n == "xl/sharedStrings.xml" },
-	"pptx": func(n string) bool { return strings.HasPrefix(n, "ppt/slides/slide") && strings.HasSuffix(n, ".xml") },
-	"odt":  func(n string) bool { return n == "content.xml" },
-	"ods":  func(n string) bool { return n == "content.xml" },
-	"odp":  func(n string) bool { return n == "content.xml" },
+	"docx": func(n string) bool {
+		return n == "word/document.xml" || n == "word/footnotes.xml" || n == "word/endnotes.xml" || n == "word/comments.xml" ||
+			(strings.HasPrefix(n, "word/header") || strings.HasPrefix(n, "word/footer")) && strings.HasSuffix(n, ".xml")
+	},
+	"pptx": func(n string) bool {
+		return (strings.HasPrefix(n, "ppt/slides/slide") || strings.HasPrefix(n, "ppt/notesSlides/notesSlide")) && strings.HasSuffix(n, ".xml")
+	},
+	"odt": func(n string) bool { return n == "content.xml" },
+	"ods": func(n string) bool { return n == "content.xml" },
+	"odp": func(n string) bool { return n == "content.xml" },
 }
 
 // extractText returns the searchable text of a file, or errNotIndexable.
 func (s *Service) extractText(ctx context.Context, name string, data []byte) (string, error) {
 	ext := strings.TrimPrefix(strings.ToLower(path.Ext(name)), ".")
+	base := strings.ToLower(path.Base(name))
 	var text string
 	var err error
 	switch {
-	case textFiles[ext]:
-		text = string(data)
+	case secretFiles[ext] || strings.HasPrefix(base, ".env"):
+		return "", errNotIndexable
+	case textFiles[ext] || (ext == "" && plainNames[base]):
+		text = decodeText(data)
+	case markupFiles[ext]:
+		var out strings.Builder
+		htmlText(decodeText(data), &out)
+		text = out.String()
+	case xmlFiles[ext]:
+		var out strings.Builder
+		err = xmlText(strings.NewReader(decodeText(data)), &out)
+		text = out.String()
+	case ext == "rtf":
+		text = rtfText(decodeText(data))
+	case ext == "eml":
+		text, err = emailText(data)
+	case ext == "xlsx":
+		text, err = xlsxText(data)
+	case ext == "epub":
+		text, err = epubText(data)
+	case ext == "zip":
+		text, err = zipNames(data)
 	case officeParts[ext] != nil:
 		text, err = officeText(data, officeParts[ext])
 	case ext == "pdf":

@@ -4,15 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
-// TextRef names the extracted text of one file version.
+// TextRef names the extracted text of one file version, and when it was
+// read: a file is read again (same version, new text) when extraction
+// learns new file types.
 type TextRef struct {
 	NodeID    uuid.UUID
 	VersionID uuid.UUID
+	ReadAt    time.Time
 }
 
 // TextIndex lists which files have extracted text, and of which version,
@@ -21,13 +25,15 @@ type TextRef struct {
 // new or changed it indexes, anything missing it forgets.
 func (s *Service) TextIndex(ctx context.Context, after uuid.UUID, limit int) ([]TextRef, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT node_id, version_id FROM drive.contents WHERE node_id > $1 ORDER BY node_id LIMIT $2`, after, limit)
+		SELECT node_id, version_id, indexed_at FROM drive.contents WHERE node_id > $1 ORDER BY node_id LIMIT $2`, after, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list texts: %w", err)
 	}
 	refs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (TextRef, error) {
 		var r TextRef
-		return r, row.Scan(&r.NodeID, &r.VersionID)
+		err := row.Scan(&r.NodeID, &r.VersionID, &r.ReadAt)
+		r.ReadAt = r.ReadAt.UTC()
+		return r, err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list texts: %w", err)
@@ -41,7 +47,8 @@ func (s *Service) TextIndex(ctx context.Context, after uuid.UUID, limit int) ([]
 func (s *Service) Text(ctx context.Context, nodeID uuid.UUID) (TextRef, string, error) {
 	ref := TextRef{NodeID: nodeID}
 	var body string
-	err := s.db.QueryRow(ctx, `SELECT version_id, body FROM drive.contents WHERE node_id = $1`, nodeID).Scan(&ref.VersionID, &body)
+	err := s.db.QueryRow(ctx, `SELECT version_id, indexed_at, body FROM drive.contents WHERE node_id = $1`, nodeID).Scan(&ref.VersionID, &ref.ReadAt, &body)
+	ref.ReadAt = ref.ReadAt.UTC()
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TextRef{}, "", ErrNotFound
 	}

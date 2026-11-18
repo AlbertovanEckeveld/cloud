@@ -122,6 +122,7 @@ func (s *Service) sync(ctx context.Context) error {
 	}
 	type state struct {
 		version uuid.UUID
+		readAt  *time.Time
 		model   string
 		failed  *time.Time
 	}
@@ -138,7 +139,7 @@ func (s *Service) sync(ctx context.Context) error {
 			last = refs[len(refs)-1].NodeID
 		}
 		rows, err := s.db.Query(ctx, `
-			SELECT node_id, version_id, model, CASE WHEN error IS NULL THEN NULL ELSE indexed_at END
+			SELECT node_id, version_id, text_at, model, CASE WHEN error IS NULL THEN NULL ELSE indexed_at END
 			FROM assistant.documents WHERE node_id > $1 AND node_id <= $2`, after, last)
 		if err != nil {
 			return fmt.Errorf("load index state: %w", err)
@@ -146,7 +147,7 @@ func (s *Service) sync(ctx context.Context) error {
 		known := map[uuid.UUID]state{}
 		var id uuid.UUID
 		var st state
-		if _, err := pgx.ForEachRow(rows, []any{&id, &st.version, &st.model, &st.failed}, func() error {
+		if _, err := pgx.ForEachRow(rows, []any{&id, &st.version, &st.readAt, &st.model, &st.failed}, func() error {
 			known[id] = st
 			return nil
 		}); err != nil {
@@ -156,7 +157,7 @@ func (s *Service) sync(ctx context.Context) error {
 		for _, r := range refs {
 			present[r.NodeID] = true
 			k, ok := known[r.NodeID]
-			current := ok && k.version == r.VersionID && k.model == modelID
+			current := ok && k.version == r.VersionID && k.model == modelID && k.readAt != nil && k.readAt.Equal(r.ReadAt)
 			if current && (k.failed == nil || s.now().Sub(*k.failed) < retryFailed) {
 				continue
 			}
@@ -239,11 +240,11 @@ func (s *Service) indexFile(ctx context.Context, c *client, model, modelID strin
 			}
 		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO assistant.documents (node_id, version_id, model, chunks, indexed_at, error)
-			VALUES ($1, $2, $3, $4, $5, NULL)
-			ON CONFLICT (node_id) DO UPDATE SET version_id = EXCLUDED.version_id, model = EXCLUDED.model,
+			INSERT INTO assistant.documents (node_id, version_id, text_at, model, chunks, indexed_at, error)
+			VALUES ($1, $2, $3, $4, $5, $6, NULL)
+			ON CONFLICT (node_id) DO UPDATE SET version_id = EXCLUDED.version_id, text_at = EXCLUDED.text_at, model = EXCLUDED.model,
 				chunks = EXCLUDED.chunks, indexed_at = EXCLUDED.indexed_at, error = NULL`,
-			ref.NodeID, got.VersionID, modelID, len(spans), s.now())
+			ref.NodeID, got.VersionID, got.ReadAt, modelID, len(spans), s.now())
 		if err != nil {
 			return fmt.Errorf("store index state: %w", err)
 		}
@@ -253,11 +254,11 @@ func (s *Service) indexFile(ctx context.Context, c *client, model, modelID strin
 
 func (s *Service) recordFailure(ctx context.Context, ref drive.TextRef, modelID, reason string) error {
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO assistant.documents (node_id, version_id, model, chunks, indexed_at, error)
-		VALUES ($1, $2, $3, 0, $4, $5)
-		ON CONFLICT (node_id) DO UPDATE SET version_id = EXCLUDED.version_id, model = EXCLUDED.model,
+		INSERT INTO assistant.documents (node_id, version_id, text_at, model, chunks, indexed_at, error)
+		VALUES ($1, $2, $3, $4, 0, $5, $6)
+		ON CONFLICT (node_id) DO UPDATE SET version_id = EXCLUDED.version_id, text_at = EXCLUDED.text_at, model = EXCLUDED.model,
 			chunks = 0, indexed_at = EXCLUDED.indexed_at, error = EXCLUDED.error`,
-		ref.NodeID, ref.VersionID, modelID, s.now(), reason)
+		ref.NodeID, ref.VersionID, ref.ReadAt, modelID, s.now(), reason)
 	if err != nil {
 		return fmt.Errorf("record index failure: %w", err)
 	}

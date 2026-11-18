@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -30,7 +31,14 @@ type hit struct {
 	start    int
 	end      int
 	version  uuid.UUID
+	readAt   *time.Time // the reading of the text the positions belong to
 	distance float64
+}
+
+// matches reports whether the text drive has now is the reading the hit's
+// positions were taken from.
+func (h hit) matches(ref drive.TextRef) bool {
+	return ref.VersionID == h.version && h.readAt != nil && h.readAt.Equal(ref.ReadAt)
 }
 
 // nearest returns the chunks closest to a question, nearest first, at most
@@ -47,16 +55,16 @@ func (s *Service) nearest(ctx context.Context, question string, perFile int) ([]
 	// Exact search: fast enough for a home's files without an approximate
 	// index, and right for any model's vector size.
 	rows, err := s.db.Query(ctx, `
-		SELECT c.node_id, c.chunk_no, c.start_at, c.end_at, d.version_id, c.embedding <=> $1::vector
+		SELECT c.node_id, c.chunk_no, c.start_at, c.end_at, d.version_id, d.text_at, c.embedding <=> $1::vector
 		FROM assistant.chunks c JOIN assistant.documents d ON d.node_id = c.node_id
 		WHERE c.model = $2 AND d.model = $2
-		ORDER BY 6 LIMIT $3`, vectorLiteral(v[0]), modelID, semanticCandidates)
+		ORDER BY 7 LIMIT $3`, vectorLiteral(v[0]), modelID, semanticCandidates)
 	if err != nil {
 		return nil, fmt.Errorf("semantic search: %w", err)
 	}
 	all, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (hit, error) {
 		var h hit
-		return h, row.Scan(&h.node, &h.chunk, &h.start, &h.end, &h.version, &h.distance)
+		return h, row.Scan(&h.node, &h.chunk, &h.start, &h.end, &h.version, &h.readAt, &h.distance)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("semantic search: %w", err)
@@ -140,7 +148,7 @@ func (s *Service) Search(ctx context.Context, userID uuid.UUID, query string) ([
 		rank++
 		score[h.node] += 1.0 / float64(rrfK+rank)
 		if _, found := byID[h.node]; !found {
-			if ref, body, err := s.source.Text(ctx, h.node); err == nil && ref.VersionID == h.version && h.end <= len(body) {
+			if ref, body, err := s.source.Text(ctx, h.node); err == nil && h.matches(ref) && h.end <= len(body) {
 				r.Snippet = excerpt(body[h.start:h.end])
 			}
 			byID[h.node] = r

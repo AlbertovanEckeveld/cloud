@@ -237,7 +237,7 @@ func (s *Service) retrieve(ctx context.Context, userID uuid.UUID, question strin
 			body, ok := texts[h.node]
 			if !ok {
 				ref, b, err := s.source.Text(ctx, h.node)
-				if err != nil || ref.VersionID != h.version {
+				if err != nil || !h.matches(ref) {
 					continue // changed since it was indexed: skip until re-indexed
 				}
 				body, texts[h.node] = b, b
