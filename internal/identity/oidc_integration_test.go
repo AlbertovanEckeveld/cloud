@@ -251,7 +251,7 @@ func TestOIDCCodeFlow(t *testing.T) {
 	_, admin := o.newAdmin(t)
 	g := o.newGroup(t, admin)
 	u, email := o.newMailUser(t)
-	if err := o.svc.SetGroupMember(context.Background(), o.client, admin, g.ID, u.ID, true); err != nil {
+	if err := o.svc.SetGroupMember(context.Background(), o.client, o.as(t, admin), g.ID, u.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	o.signIn(t, u)
@@ -338,7 +338,7 @@ func TestOIDCCodeFlow(t *testing.T) {
 	}
 
 	// Disabling the user revokes every app token.
-	if err := o.svc.SetUserDisabled(context.Background(), o.client, admin, u.ID, true); err != nil {
+	if err := o.svc.SetUserDisabled(context.Background(), o.client, o.as(t, admin), u.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, after := o.token(t, client.ID, secret, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rotated.RefreshToken}}); after.Error == "" {
@@ -416,7 +416,7 @@ func TestOIDCGroupRestriction(t *testing.T) {
 		t.Fatalf("non-member approve: %d %s", status, code)
 	}
 
-	if err := o.svc.SetGroupMember(context.Background(), o.client, admin, g.ID, u.ID, true); err != nil {
+	if err := o.svc.SetGroupMember(context.Background(), o.client, o.as(t, admin), g.ID, u.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	f := newFlow(client.ID)
@@ -430,7 +430,7 @@ func TestOIDCGroupRestriction(t *testing.T) {
 	}
 
 	// Leaving the group ends access at the next refresh.
-	if err := o.svc.SetGroupMember(context.Background(), o.client, admin, g.ID, u.ID, false); err != nil {
+	if err := o.svc.SetGroupMember(context.Background(), o.client, o.as(t, admin), g.ID, u.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, after := o.token(t, client.ID, secret, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {tk.RefreshToken}}); after.Error == "" {
@@ -438,7 +438,7 @@ func TestOIDCGroupRestriction(t *testing.T) {
 	}
 
 	// A group that guards an app cannot be deleted.
-	if err := o.svc.DeleteGroup(context.Background(), o.client, admin, g.ID); err != ErrGroupInUse {
+	if err := o.svc.DeleteGroup(context.Background(), o.client, o.as(t, admin), g.ID); err != ErrGroupInUse {
 		t.Errorf("delete guarding group: err = %v", err)
 	}
 }

@@ -12,7 +12,6 @@
 	let username = $state('');
 	let displayName = $state('');
 	let email = $state('');
-	let isAdmin = $state(false);
 	let busy = $state(false);
 	let issued = $state<{ username: string; email: string; activation: Activation } | null>(null);
 
@@ -36,10 +35,10 @@
 		busy = true;
 		error = null;
 		try {
-			const activation = await api.admin.invite({ username, display_name: displayName, is_admin: isAdmin, email });
+			const activation = await api.admin.invite({ username, display_name: displayName, email });
 			issued = { username: username.trim().toLowerCase(), email: email.trim(), activation };
 			username = displayName = email = '';
-			isAdmin = inviting = false;
+			inviting = false;
 			await load();
 		} catch (err) {
 			error = err;
@@ -79,9 +78,6 @@
 			<input type="email" bind:value={email} autocomplete="off" maxlength="254" />
 			<p class="field__hint">De activatielink en beveiligingsmeldingen gaan naar dit adres.</p>
 		</label>
-		<label class="check">
-			<input type="checkbox" bind:checked={isAdmin} /> Beheerder
-		</label>
 		<div><button class="button button--primary" disabled={busy}>{busy ? 'Bezig…' : 'Uitnodigen'}</button></div>
 	</form>
 {/if}
@@ -90,14 +86,14 @@
 	<div class="panel table-wrap">
 		<table class="table">
 			<thead>
-				<tr><th>Naam</th><th>Gebruikersnaam</th><th>Rol</th><th>Status</th><th>Laatst ingelogd</th></tr>
+				<tr><th>Naam</th><th>Gebruikersnaam</th><th>Rollen</th><th>Status</th><th>Laatst ingelogd</th></tr>
 			</thead>
 			<tbody>
 				{#each users as u (u.id)}
 					<tr>
 						<td><a href="/admin/users/{u.id}">{u.display_name}</a></td>
 						<td><code>{u.username}</code></td>
-						<td>{u.is_admin ? 'Beheerder' : 'Gebruiker'}</td>
+						<td>{[...new Set(u.roles.map((r) => r.name))].join(', ') || '—'}</td>
 						<td>
 							<span class="badge" class:badge--ok={u.status === 'active'} class:badge--error={u.status === 'disabled'}>
 								{statusLabels[u.status]}

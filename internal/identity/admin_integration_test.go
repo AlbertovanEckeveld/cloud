@@ -51,7 +51,7 @@ func TestInviteUser(t *testing.T) {
 		t.Fatalf("activation = %+v", link)
 	}
 	got, err := e.svc.GetUser(ctx, u.ID)
-	if err != nil || got.Status != StatusPending || got.IsAdmin {
+	if err != nil || got.Status != StatusPending || len(got.Roles) != 0 {
 		t.Fatalf("invited user = %+v, %v", got, err)
 	}
 	// The audit log records which administrator did it.
@@ -74,9 +74,9 @@ func TestAdminChangesNeedRecentAuth(t *testing.T) {
 			_, _, err := e.svc.InviteUser(ctx, e.client, actor, NewUser{Username: "it-never", DisplayName: "x"})
 			return err
 		}(),
-		"update":  e.svc.UpdateUser(ctx, e.client, actor, target.ID, UserUpdate{IsAdmin: new(true)}),
-		"disable": e.svc.SetUserDisabled(ctx, e.client, actor, target.ID, true),
-		"reset":   func() error { _, err := e.svc.ResetUser(ctx, e.client, actor, target.ID); return err }(),
+		"update":  e.svc.UpdateUser(ctx, e.client, e.as(t, actor), target.ID, UserUpdate{DisplayName: new("x")}),
+		"disable": e.svc.SetUserDisabled(ctx, e.client, e.as(t, actor), target.ID, true),
+		"reset":   func() error { _, err := e.svc.ResetUser(ctx, e.client, e.as(t, actor), target.ID); return err }(),
 		"group": func() error {
 			_, err := e.svc.CreateGroup(ctx, e.client, actor, GroupInput{Name: "it-never"})
 			return err
@@ -94,9 +94,8 @@ func TestAdminCannotLockThemselvesOut(t *testing.T) {
 	admin, actor := e.newAdmin(t)
 	ctx := context.Background()
 	for name, err := range map[string]error{
-		"demote":  e.svc.UpdateUser(ctx, e.client, actor, admin.ID, UserUpdate{IsAdmin: new(false)}),
-		"disable": e.svc.SetUserDisabled(ctx, e.client, actor, admin.ID, true),
-		"reset":   func() error { _, err := e.svc.ResetUser(ctx, e.client, actor, admin.ID); return err }(),
+		"disable": e.svc.SetUserDisabled(ctx, e.client, e.as(t, actor), admin.ID, true),
+		"reset":   func() error { _, err := e.svc.ResetUser(ctx, e.client, e.as(t, actor), admin.ID); return err }(),
 	} {
 		if !errors.Is(err, ErrSelf) {
 			t.Errorf("%s self: err = %v, want ErrSelf", name, err)
@@ -107,7 +106,11 @@ func TestAdminCannotLockThemselvesOut(t *testing.T) {
 func activeAdmins(t *testing.T, e *testEnv) int {
 	t.Helper()
 	var n int
-	if err := e.pool.QueryRow(context.Background(), `SELECT count(*) FROM identity.users WHERE is_admin AND disabled_at IS NULL`).Scan(&n); err != nil {
+	if err := e.pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM identity.users u WHERE u.disabled_at IS NULL AND u.id IN (
+			SELECT user_id FROM identity.role_assignments WHERE role_id = $1 AND user_id IS NOT NULL
+			UNION SELECT m.user_id FROM identity.role_assignments a JOIN identity.group_members m ON m.group_id = a.group_id
+			WHERE a.role_id = $1)`, AdminRoleID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -122,8 +125,9 @@ func TestConcurrentMutualDemotionKeepsAnAdmin(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
-	wg.Go(func() { errs[0] = e.svc.UpdateUser(ctx, e.client, sessA, b.ID, UserUpdate{IsAdmin: new(false)}) })
-	wg.Go(func() { errs[1] = e.svc.UpdateUser(ctx, e.client, sessB, a.ID, UserUpdate{IsAdmin: new(false)}) })
+	asA, asB := e.as(t, sessA), e.as(t, sessB)
+	wg.Go(func() { errs[0] = e.svc.SetRole(ctx, e.client, asA, AdminRoleID, RoleSubject{User: &b.ID}, false) })
+	wg.Go(func() { errs[1] = e.svc.SetRole(ctx, e.client, asB, AdminRoleID, RoleSubject{User: &a.ID}, false) })
 	wg.Wait()
 
 	if activeAdmins(t, e) < 1 {
@@ -151,7 +155,7 @@ func TestDisableAndEnableUser(t *testing.T) {
 	secret, token := e.activate(t, u)
 	ctx := context.Background()
 
-	if err := e.svc.SetUserDisabled(ctx, e.client, actor, u.ID, true); err != nil {
+	if err := e.svc.SetUserDisabled(ctx, e.client, e.as(t, actor), u.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.svc.Authenticate(ctx, token); !errors.Is(err, ErrNoSession) {
@@ -167,7 +171,7 @@ func TestDisableAndEnableUser(t *testing.T) {
 		t.Errorf("disabled user = %+v", got)
 	}
 
-	if err := e.svc.SetUserDisabled(ctx, e.client, actor, u.ID, false); err != nil {
+	if err := e.svc.SetUserDisabled(ctx, e.client, e.as(t, actor), u.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	e.login(t, u, testPassword, secret)
@@ -182,17 +186,17 @@ func TestUpdateUser(t *testing.T) {
 	u := e.newUser(t)
 	ctx := context.Background()
 
-	if err := e.svc.UpdateUser(ctx, e.client, actor, u.ID, UserUpdate{DisplayName: new("  Nieuwe Naam  "), IsAdmin: new(true)}); err != nil {
+	if err := e.svc.UpdateUser(ctx, e.client, e.as(t, actor), u.ID, UserUpdate{DisplayName: new("  Nieuwe Naam  ")}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := e.svc.GetUser(ctx, u.ID)
-	if got.DisplayName != "Nieuwe Naam" || !got.IsAdmin {
+	if got.DisplayName != "Nieuwe Naam" {
 		t.Fatalf("after update: %+v", got)
 	}
-	if err := e.svc.UpdateUser(ctx, e.client, actor, u.ID, UserUpdate{DisplayName: new("")}); err == nil {
+	if err := e.svc.UpdateUser(ctx, e.client, e.as(t, actor), u.ID, UserUpdate{DisplayName: new("")}); err == nil {
 		t.Error("empty display name accepted")
 	}
-	if err := e.svc.UpdateUser(ctx, e.client, actor, uuid.New(), UserUpdate{DisplayName: new("x")}); !errors.Is(err, ErrNotFound) {
+	if err := e.svc.UpdateUser(ctx, e.client, e.as(t, actor), uuid.New(), UserUpdate{DisplayName: new("x")}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown user: err = %v", err)
 	}
 }
@@ -213,7 +217,7 @@ func TestGroups(t *testing.T) {
 
 	// Membership changes are idempotent.
 	for range 2 {
-		if err := e.svc.SetGroupMember(ctx, e.client, actor, g.ID, u.ID, true); err != nil {
+		if err := e.svc.SetGroupMember(ctx, e.client, e.as(t, actor), g.ID, u.ID, true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -224,7 +228,7 @@ func TestGroups(t *testing.T) {
 	if refs, _ := e.svc.UserGroups(ctx, u.ID); len(refs) != 1 || refs[0].Name != g.Name {
 		t.Errorf("user groups = %+v", refs)
 	}
-	if err := e.svc.SetGroupMember(ctx, e.client, actor, g.ID, uuid.New(), true); !errors.Is(err, ErrNotFound) {
+	if err := e.svc.SetGroupMember(ctx, e.client, e.as(t, actor), g.ID, uuid.New(), true); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown user: err = %v", err)
 	}
 
@@ -233,14 +237,14 @@ func TestGroups(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := e.svc.SetGroupMember(ctx, e.client, actor, g.ID, u.ID, false); err != nil {
+		if err := e.svc.SetGroupMember(ctx, e.client, e.as(t, actor), g.ID, u.ID, false); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if refs, _ := e.svc.UserGroups(ctx, u.ID); len(refs) != 0 {
 		t.Errorf("still member: %+v", refs)
 	}
-	if err := e.svc.DeleteGroup(ctx, e.client, actor, g.ID); err != nil {
+	if err := e.svc.DeleteGroup(ctx, e.client, e.as(t, actor), g.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.GetGroup(ctx, g.ID); !errors.Is(err, ErrNotFound) {

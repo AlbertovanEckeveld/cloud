@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { administers } from '#lib/permissions.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -21,7 +22,7 @@
 			<h2>Account</h2>
 			<p class="muted">Wachtwoord wijzigen en je recente activiteit bekijken.</p>
 		</a>
-		{#if data.user.is_admin}
+		{#if administers(data.user)}
 			<a class="panel card" href="/admin">
 				<h2>Beheer</h2>
 				<p class="muted">Gebruikers, groepen, audit-log en systeemstatus.</p>

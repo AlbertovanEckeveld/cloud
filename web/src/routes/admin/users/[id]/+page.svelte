@@ -21,7 +21,6 @@
 
 	let displayName = $state('');
 	let email = $state('');
-	let isAdmin = $state(false);
 
 	const id = $derived(page.params.id ?? '');
 	const self = $derived(user?.id === data.user?.id);
@@ -38,7 +37,6 @@
 			quotaGB = usage.limit_bytes === null ? '' : String(usage.limit_bytes / 1024 ** 3);
 			displayName = user.display_name;
 			email = user.email;
-			isAdmin = user.is_admin;
 		} catch (e) {
 			error = e;
 		}
@@ -65,10 +63,9 @@
 	function save(e: SubmitEvent) {
 		e.preventDefault();
 		if (!user) return;
-		const changes: { display_name?: string; is_admin?: boolean; email?: string } = {};
+		const changes: { display_name?: string; email?: string } = {};
 		if (displayName !== user.display_name) changes.display_name = displayName;
 		if (email.trim() !== user.email) changes.email = email.trim();
-		if (isAdmin !== user.is_admin) changes.is_admin = isAdmin;
 		return act(async () => {
 			await api.admin.updateUser(id, changes);
 			saved = true;
@@ -138,9 +135,6 @@
 				<label class="field">
 					<span>E-mailadres</span>
 					<input type="email" bind:value={email} maxlength="254" placeholder="Geen" />
-				</label>
-				<label class="check">
-					<input type="checkbox" bind:checked={isAdmin} disabled={self} /> Beheerder
 				</label>
 				<div><button class="button button--primary" disabled={busy}>Opslaan</button></div>
 			</form>

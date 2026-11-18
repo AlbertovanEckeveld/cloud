@@ -39,9 +39,10 @@ type routerDeps struct {
 	wopi func(chi.Router)
 
 	// identity mounts the identity module's routes under /api/v1.
-	identity     func(chi.Router)
-	requireUser  func(http.Handler) http.Handler
-	requireAdmin func(http.Handler) http.Handler
+	identity    func(chi.Router)
+	requireUser func(http.Handler) http.Handler
+	// systemStatus guards the system status pages (system.status.view).
+	systemStatus func(http.Handler) http.Handler
 }
 
 type healthReporter interface {
@@ -84,7 +85,7 @@ func newRouter(d routerDeps) http.Handler {
 		d.identity(r)
 		r.Route("/drive", d.drive)
 		r.Group(func(r chi.Router) {
-			r.Use(d.requireUser, d.requireAdmin)
+			r.Use(d.requireUser, d.systemStatus)
 			r.Get("/status", statusHandler(d))
 			r.Get("/sites", sitesHandler(d))
 		})

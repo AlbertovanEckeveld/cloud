@@ -109,8 +109,8 @@
 						{#if data.user.email}{data.user.email}{:else}<span class="muted">Geen</span>{/if}
 						<span class="muted small block">Wijzigen kan via een beheerder.</span>
 					</dd>
-					<dt>Rol</dt>
-					<dd>{data.user.is_admin ? 'Beheerder' : 'Gebruiker'}</dd>
+					<dt>Beheerrechten</dt>
+					<dd>{data.user.permissions.length === 0 ? 'Geen' : `${data.user.permissions.length} rechten`}</dd>
 					<dt>Groepen</dt>
 					<dd>
 						{#if groupsFailed}<span class="muted">Kon niet worden geladen</span>{:else if groups === null}…{:else if groups.length === 0}<span class="muted">Geen</span>{:else}

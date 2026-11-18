@@ -50,7 +50,7 @@ func (e *testEnv) newMailUser(t *testing.T) (User, string) {
 	u := e.newUser(t)
 	email := fmt.Sprintf("%s@example.test", u.Username)
 	_, actor := e.newAdmin(t)
-	if err := e.svc.UpdateUser(context.Background(), e.client, actor, u.ID, UserUpdate{Email: &email}); err != nil {
+	if err := e.svc.UpdateUser(context.Background(), e.client, e.as(t, actor), u.ID, UserUpdate{Email: &email}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -98,7 +98,7 @@ func TestInviteAndResetAreMailed(t *testing.T) {
 	if err != nil || tokenSession == "" {
 		t.Fatal(err)
 	}
-	reset, err := e.svc.ResetUser(ctx, e.client, actor, u.ID)
+	reset, err := e.svc.ResetUser(ctx, e.client, e.as(t, actor), u.ID)
 	if err != nil || !reset.Emailed {
 		t.Fatalf("reset: %+v, %v", reset, err)
 	}
@@ -158,23 +158,23 @@ func TestEmailValidation(t *testing.T) {
 	ctx := context.Background()
 
 	upper := strings.ToUpper(email)
-	if err := e.svc.UpdateUser(ctx, e.client, actor, other.ID, UserUpdate{Email: &upper}); !errors.Is(err, ErrEmailExists) {
+	if err := e.svc.UpdateUser(ctx, e.client, e.as(t, actor), other.ID, UserUpdate{Email: &upper}); !errors.Is(err, ErrEmailExists) {
 		t.Errorf("duplicate (other case): err = %v", err)
 	}
 	for _, bad := range []string{"no-at-sign", "Name <a@example.test>", "a@example.test\r\nBcc: x@y", "a@b@c"} {
-		if err := e.svc.UpdateUser(ctx, e.client, actor, other.ID, UserUpdate{Email: &bad}); err == nil {
+		if err := e.svc.UpdateUser(ctx, e.client, e.as(t, actor), other.ID, UserUpdate{Email: &bad}); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
 	}
 	empty := ""
-	if err := e.svc.UpdateUser(ctx, e.client, actor, u.ID, UserUpdate{Email: &empty}); err != nil {
+	if err := e.svc.UpdateUser(ctx, e.client, e.as(t, actor), u.ID, UserUpdate{Email: &empty}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := e.svc.GetUser(ctx, u.ID); got.Email != "" {
 		t.Errorf("email not removed: %q", got.Email)
 	}
 	// Without an address there is no mail, and that is not an error.
-	if a, err := e.svc.ResetUser(ctx, e.client, actor, u.ID); err != nil || a.Emailed {
+	if a, err := e.svc.ResetUser(ctx, e.client, e.as(t, actor), u.ID); err != nil || a.Emailed {
 		t.Errorf("reset without email: %+v, %v", a, err)
 	}
 }

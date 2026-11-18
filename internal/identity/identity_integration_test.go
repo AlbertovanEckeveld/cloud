@@ -120,10 +120,21 @@ func (e *testEnv) newAdmin(t *testing.T) (User, Session) {
 	return u, e.session(t, token)
 }
 
+// as is the principal of a session: the user with their permissions, as
+// RequireUser would load them.
+func (e *testEnv) as(t *testing.T, sess Session) Principal {
+	t.Helper()
+	perms, err := e.svc.permissionsOf(context.Background(), e.pool, sess.UserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Principal{Session: sess, Permissions: perms}
+}
+
 func (e *testEnv) newUserWith(t *testing.T, admin bool) User {
 	t.Helper()
 	name := fmt.Sprintf("it-%d-%d", time.Now().UnixNano()%1e9, testSeq.Add(1))
-	u, err := e.svc.CreateUser(context.Background(), e.client, NewUser{Username: name, DisplayName: "Test User", IsAdmin: admin})
+	u, err := e.svc.CreateUser(context.Background(), e.client, NewUser{Username: name, DisplayName: "Test User", Admin: admin})
 	if err != nil {
 		t.Fatal(err)
 	}

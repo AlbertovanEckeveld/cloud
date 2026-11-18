@@ -44,9 +44,23 @@ export interface User {
 	id: string;
 	username: string;
 	display_name: string;
-	is_admin: boolean;
 	/** Empty when the user has no e-mail address. */
 	email: string;
+}
+
+/** An administrative permission (ADR 0022), such as "drive.teamfolders.create". */
+export type AdminPermission = string;
+
+/** The signed-in user, with what they may administer. */
+export interface SessionUser extends User {
+	permissions: AdminPermission[];
+}
+
+/** A role a user has, and the group it comes through (null: given directly). */
+export interface RoleRef {
+	id: string;
+	name: string;
+	group: string | null;
 }
 
 export interface Activation {
@@ -59,7 +73,7 @@ export type SessionState = 'mfa_required' | 'mfa_enrollment_required' | 'authent
 
 export interface Session {
 	state: SessionState;
-	user: User | null;
+	user: SessionUser | null;
 }
 
 export interface TotpEnrollment {
@@ -108,6 +122,7 @@ export interface AdminUser extends User {
 	passkeys: number;
 	recovery_codes: number;
 	groups: GroupRef[];
+	roles: RoleRef[];
 }
 
 export interface Group {
@@ -437,16 +452,25 @@ export const parseUser: Validator<User> = (v) => {
 		id: str(o, 'id'),
 		username: str(o, 'username'),
 		display_name: str(o, 'display_name'),
-		is_admin: bool(o, 'is_admin'),
 		email: str(o, 'email')
 	};
+};
+
+const parseSessionUser: Validator<SessionUser> = (v) => ({
+	...parseUser(v),
+	permissions: strList(record(v, 'user'), 'permissions')
+});
+
+const parseRoleRef: Validator<RoleRef> = (v) => {
+	const r = record(v, 'role');
+	return { id: str(r, 'id'), name: str(r, 'name'), group: r.group === undefined ? null : nullableStr(r, 'group') };
 };
 
 export const parseSession: Validator<Session> = (v) => {
 	const o = record(v, 'session');
 	const state = parseState(o);
 	// The server only sends user details for a fully authenticated session.
-	const user = state === 'authenticated' ? parseUser(o.user) : null;
+	const user = state === 'authenticated' ? parseSessionUser(o.user) : null;
 	return { state, user };
 };
 
@@ -559,7 +583,8 @@ const parseAdminUser: Validator<AdminUser> = (v) => {
 		has_totp: bool(r, 'has_totp'),
 		passkeys: num(r, 'passkeys'),
 		recovery_codes: num(r, 'recovery_codes'),
-		groups: list(r, 'groups', parseGroupRef)
+		groups: list(r, 'groups', parseGroupRef),
+		roles: list(r, 'roles', parseRoleRef)
 	};
 };
 
@@ -1143,12 +1168,12 @@ export const api = {
 			get('/api/v1/admin/users', (v) => list(record(v, 'users'), 'users', parseAdminUser), f),
 		user: (id: string, f: typeof fetch = fetch) => get(`/api/v1/admin/users/${enc(id)}`, parseAdminUser, f),
 		invite: (
-			user: { username: string; display_name: string; is_admin: boolean; email: string },
+			user: { username: string; display_name: string; email: string },
 			f: typeof fetch = fetch
 		) => post('/api/v1/admin/users', parseActivation, user, f),
 		updateUser: (
 			id: string,
-			changes: { display_name?: string; is_admin?: boolean; email?: string },
+			changes: { display_name?: string; email?: string },
 			f: typeof fetch = fetch
 		) =>
 			request('PATCH', `/api/v1/admin/users/${enc(id)}`, noContent, changes, f),

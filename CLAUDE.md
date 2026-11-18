@@ -212,7 +212,8 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - Drive-verbeteringen (2026-11-17/18): A smalle schermen (container queries, ⋯-menu per rij) en
   B accountpagina (pagineren, gekoppelde computers, ADR 0021) en C versiebeheer (zijpaneel,
   bekijken, naam geven, opruimen; geen automatisch uitdunnen) gebouwd en getest; D
-  rechten/instellingen/identity-pagina volgt, E AI alleen als ADR.
+  rechten/instellingen/identity-pagina (ADR 0022): D1 backend (rollen, rechten, escalatieregels)
+  gebouwd en getest, D2 Identity-pagina en D3 drive-tandwiel volgen; E AI alleen als ADR.
 - Fase 2.6 desktop-sync: Go + Wails v2, eerst Linux en macOS, volledige kopie van gekozen mappen,
   inloggen via browser (OIDC + PKCE, loopback). 2.6a server, 2.6b sync-engine en 2.6c app
   (module `desktop/`, ADR 0016) gebouwd en getest, ook tegen de echte server; wacht op mijn test. Desktop-deps: wails v2.17.1, fsnotify, go-keyring, fyne.io/systray,
@@ -246,6 +247,9 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - CI: GitHub Actions. Uitrollen alleen pull-based: de VM start alleen images die cosign
   (keyless) als gebouwd door `release.yml` op `main` herkent; GitHub krijgt geen toegang tot de
   VM (ADR 0020). Actions vastgezet op commit-SHA.
+- Beheer via rollen en vaste rechten (`module.onderwerp.actie`), toegekend aan gebruikers of groepen;
+  ingebouwde rol Beheerder heeft alles. Nooit meer uitdelen dan je zelf hebt, geen ingrepen bij
+  zwaardere accounts, altijd minstens één Beheerder (ADR 0022). `is_admin` bestaat niet meer.
 - Inloggen: passkey als hoofdroute; wachtwoord alleen samen met een tweede factor (TOTP of passkey); herstelcodes.
 - Eerste admin via CLI (`platform user create --admin`), die een eenmalige activatielink geeft.
 - OIDC-provider op basis van `zitadel/oidc` (OpenID-gecertificeerd).

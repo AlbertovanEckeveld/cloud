@@ -52,7 +52,7 @@ func TestDesktopSignIn(t *testing.T) {
 		t.Fatalf("device token: %d %+v", code, seen)
 	}
 	// ...but never for administration, even for an administrator.
-	admin := o.svc.RequireUserOrDevice(RequireAdmin(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
+	admin := o.svc.RequireUserOrDevice(RequirePermission(PermUsersView)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 	if code := call(admin, tk.AccessToken); code != http.StatusForbidden {
 		t.Errorf("device token on admin route: %d", code)
 	}

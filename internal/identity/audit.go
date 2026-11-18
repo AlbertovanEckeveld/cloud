@@ -44,6 +44,11 @@ const (
 	EventLogoutEverywhere = "auth.logout_everywhere"
 	EventAppRevoked       = "oidc.app_revoked"
 	EventDeviceUnlinked   = "device.unlinked"
+	EventRoleCreated      = "role.created"
+	EventRoleUpdated      = "role.updated"
+	EventRoleDeleted      = "role.deleted"
+	EventRoleAssigned     = "role.assigned"
+	EventRoleRevoked      = "role.revoked"
 
 	EventOIDCLogin               = "oidc.login"
 	EventOIDCDenied              = "oidc.denied"

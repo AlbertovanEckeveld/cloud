@@ -480,11 +480,11 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Session, User
 	var authenticatedAt *time.Time
 	err := s.db.QueryRow(ctx, `
 		SELECT s.id, s.user_id, s.state, s.expires_at, s.last_seen_at, s.activation_token_hash, s.authenticated_at, s.amr, s.acr,
-		       u.username, u.display_name, u.is_admin, COALESCE(u.email, '')
+		       u.username, u.display_name, COALESCE(u.email, '')
 		FROM identity.sessions s JOIN identity.users u ON u.id = s.user_id
 		WHERE s.token_hash = $1 AND u.disabled_at IS NULL`, hashToken(token)).Scan(
 		&sess.ID, &sess.UserID, &sess.State, &sess.ExpiresAt, &lastSeen, &sess.activationTokenHash, &authenticatedAt, &sess.AMR, &sess.ACR,
-		&u.Username, &u.DisplayName, &u.IsAdmin, &u.Email)
+		&u.Username, &u.DisplayName, &u.Email)
 	if authenticatedAt != nil {
 		sess.AuthenticatedAt = *authenticatedAt
 	}

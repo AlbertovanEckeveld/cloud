@@ -3,6 +3,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api } from '#lib/api.ts';
+	import { administers } from '#lib/permissions.ts';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -28,7 +29,7 @@
 			<nav class="nav" aria-label="Hoofdmenu">
 				<a href="/" aria-current={current('/')}>Start</a>
 				<a href="/files" aria-current={page.url.pathname.startsWith('/files') ? 'page' : undefined}>Bestanden</a>
-				{#if data.user.is_admin}
+				{#if administers(data.user)}
 					<a href="/admin" aria-current={page.url.pathname.startsWith('/admin') ? 'page' : undefined}>Beheer</a>
 				{/if}
 			</nav>

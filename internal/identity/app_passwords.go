@@ -130,10 +130,10 @@ func (s *Service) AuthenticateAppPassword(ctx context.Context, c Client, usernam
 	var id uuid.UUID
 	var lastUsed *time.Time
 	err := s.db.QueryRow(ctx, `
-		SELECT a.id, a.last_used_at, u.id, u.username, u.display_name, u.is_admin, COALESCE(u.email, '')
+		SELECT a.id, a.last_used_at, u.id, u.username, u.display_name, COALESCE(u.email, '')
 		FROM identity.app_passwords a JOIN identity.users u ON u.id = a.user_id
 		WHERE a.token_hash = $1 AND u.username = $2 AND u.disabled_at IS NULL`,
-		appPasswordHash(password), username).Scan(&id, &lastUsed, &u.ID, &u.Username, &u.DisplayName, &u.IsAdmin, &u.Email)
+		appPasswordHash(password), username).Scan(&id, &lastUsed, &u.ID, &u.Username, &u.DisplayName, &u.Email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		s.recordFailures(ctx, map[string]throttleRule{userKey: throttleUser, ipKey: throttleIP})
 		s.auditBestEffort(ctx, c, auditEntry{event: EventAppPasswordFailed, details: map[string]any{"username": username[:min(len(username), 64)]}})
