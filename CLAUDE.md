@@ -237,6 +237,14 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   bouwt na een groene CI op `main` een cosign-ondertekend image in GHCR; de VM haalt het op
   via `deploy/update.sh` + systemd-timer. Release en VM-kant nog niet end-to-end getest (pas na
   de eerste merge naar `main`).
+- Fase 5 assistant (op mijn verzoek naar voren gehaald, 2026-11-18; ADR 0023 met wijzigingen):
+  module `internal/assistant` gebouwd en getest: aanbieders en modellen instelbaar in de webapp
+  (`/assistant/settings`, recht `assistant.provider.manage`, SSRF-bescherming, sleutels versleuteld),
+  index van embeddings (pgvector, exact zoeken) bijgehouden door drive's tekstlijst te vergelijken,
+  slim zoeken (tekst + betekenis, RRF) in de zoekbalk van Bestanden, chat met bronnen op `/assistant`.
+  Rechten via `drive.Visible` vóór pagina of model. Geen NATS, geen Python-worker nodig. Testen
+  tijdelijk met Gemini (extern, opt-in); later een lokaal model (Ollama). pgvector moet een
+  superuser eenmalig installeren (ook op de VM).
 - Open vragen: definitieve keuze Go vs. Rust (huidige keuze: Go)
 
 ## 12. Beslissingen

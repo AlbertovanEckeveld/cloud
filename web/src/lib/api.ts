@@ -142,7 +142,7 @@ export interface GroupDetail extends Group {
 /** One entry of the permission catalog. */
 export interface PermissionInfo {
 	name: AdminPermission;
-	module: 'identity' | 'drive' | 'system';
+	module: 'identity' | 'drive' | 'system' | 'assistant';
 	label: string;
 }
 
@@ -274,6 +274,67 @@ export interface ActivityItem {
 	actor_name: string;
 	via: '' | 'web' | 'desktop' | 'webdav' | 'editor';
 	present: boolean;
+}
+
+/** What the assistant offers right now (ADR 0023). */
+export interface AssistantStatus {
+	/** Search by meaning is configured. */
+	search: boolean;
+	/** Chat is configured. */
+	chat: boolean;
+	/** Host questions go to when the chat model is outside the home network; "" when local. */
+	external_chat: string;
+}
+
+/** A file an answer used, numbered as the answer cites it ([1], [2], …). */
+export interface AnswerSource extends SearchResult {
+	n: number;
+}
+
+export interface ChatMessage {
+	id: string;
+	role: 'user' | 'assistant';
+	content: string;
+	sources: AnswerSource[];
+	created_at: string;
+}
+
+export interface Conversation {
+	id: string;
+	title: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ConversationDetail extends Conversation {
+	messages: ChatMessage[];
+}
+
+/** An AI provider as administrators see it; the API key is never returned. */
+export interface AIProvider {
+	id: string;
+	name: string;
+	base_url: string;
+	has_key: boolean;
+	/** Outside the home network: content goes there, with consent. */
+	external: boolean;
+	consent_at: string | null;
+	updated_at: string;
+}
+
+export interface AISettings {
+	chat_provider: string | null;
+	chat_model: string;
+	embed_provider: string | null;
+	embed_model: string;
+}
+
+export interface AIIndexStatus {
+	configured: boolean;
+	files: number;
+	indexed: number;
+	failed: number;
+	last_error: string;
 }
 
 export interface SearchResult extends DriveNode {
@@ -631,7 +692,7 @@ export const parsePermissionCatalog: Validator<PermissionInfo[]> = (v) =>
 	list(record(v, 'catalog'), 'permissions', (p) => {
 		const r = record(p, 'permission');
 		const module = str(r, 'module');
-		if (!['identity', 'drive', 'system'].includes(module)) fail('module');
+		if (!['identity', 'drive', 'system', 'assistant'].includes(module)) fail('module');
 		return { name: str(r, 'name'), module: module as PermissionInfo['module'], label: str(r, 'label') };
 	});
 
@@ -894,6 +955,69 @@ const parseUsage: Validator<Usage> = (v) => {
 		old_versions_bytes: r.old_versions_bytes === undefined ? 0 : num(r, 'old_versions_bytes')
 	};
 };
+
+const parseConversation: Validator<Conversation> = (v) => {
+	const r = record(v, 'conversation');
+	return { id: str(r, 'id'), title: str(r, 'title'), created_at: str(r, 'created_at'), updated_at: str(r, 'updated_at') };
+};
+
+export const parseChatMessage: Validator<ChatMessage> = (v) => {
+	const r = record(v, 'message');
+	const role = str(r, 'role');
+	if (role !== 'user' && role !== 'assistant') fail('role');
+	return {
+		id: str(r, 'id'),
+		role,
+		content: str(r, 'content'),
+		sources: list(r, 'sources', (x) => ({ ...parseSearchResult(x), n: num(record(x, 'source'), 'n') })),
+		created_at: str(r, 'created_at')
+	};
+};
+
+const parseAIProvider: Validator<AIProvider> = (v) => {
+	const r = record(v, 'provider');
+	return {
+		id: str(r, 'id'),
+		name: str(r, 'name'),
+		base_url: str(r, 'base_url'),
+		has_key: bool(r, 'has_key'),
+		external: bool(r, 'external'),
+		consent_at: nullableStr(r, 'consent_at'),
+		updated_at: str(r, 'updated_at')
+	};
+};
+
+/**
+ * Reads a server-sent event stream: calls on(event, data) for each event.
+ * Data is JSON and still has to be validated by the caller.
+ */
+async function readEvents(res: Response, on: (event: string, data: unknown) => void): Promise<void> {
+	if (!res.body) throw new ApiError(res.status, 'invalid_response', 'Onverwacht antwoord van de server');
+	const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+	let buffer = '';
+	for (;;) {
+		const { value, done } = await reader.read();
+		if (done) break;
+		buffer += value;
+		let end: number;
+		while ((end = buffer.indexOf('\n\n')) >= 0) {
+			const block = buffer.slice(0, end);
+			buffer = buffer.slice(end + 2);
+			let event = 'message';
+			let data = '';
+			for (const line of block.split('\n')) {
+				if (line.startsWith('event:')) event = line.slice(6).trim();
+				else if (line.startsWith('data:')) data += line.slice(5).trim();
+			}
+			try {
+				on(event, JSON.parse(data));
+			} catch (e) {
+				if (e instanceof ApiError) throw e;
+				throw new ApiError(res.status, 'invalid_response', 'Onverwacht antwoord van de server');
+			}
+		}
+	}
+}
 
 const parseRemaining: Validator<number> = (v) => num(record(v, 'recovery'), 'remaining');
 const parseRevoked: Validator<number> = (v) => num(record(v, 'revoked'), 'revoked');
@@ -1304,7 +1428,104 @@ export const api = {
 			noContent,
 			{ current_password: currentPassword, new_password: newPassword },
 			f
-		)
+		),
+	assistant: {
+		status: (f: typeof fetch = fetch) =>
+			get('/api/v1/assistant/status', (v) => {
+				const r = record(v, 'status');
+				return { search: bool(r, 'search'), chat: bool(r, 'chat'), external_chat: str(r, 'external_chat') } as AssistantStatus;
+			}, f),
+		/** Search by name, words and meaning; every result is one the user may open. */
+		search: (query: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/assistant/search?q=${enc(query)}`, (v) => list(record(v, 'search'), 'results', parseSearchResult), f),
+		conversations: (f: typeof fetch = fetch) =>
+			get('/api/v1/assistant/conversations', (v) => list(record(v, 'list'), 'conversations', parseConversation), f),
+		conversation: (id: string, f: typeof fetch = fetch) =>
+			get(`/api/v1/assistant/conversations/${enc(id)}`, (v) => ({
+				...parseConversation(v),
+				messages: list(record(v, 'conversation'), 'messages', parseChatMessage)
+			}) as ConversationDetail, f),
+		createConversation: (f: typeof fetch = fetch) => post('/api/v1/assistant/conversations', parseConversation, undefined, f),
+		deleteConversation: (id: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/assistant/conversations/${enc(id)}`, noContent, undefined, f),
+		/**
+		 * Asks a question; onDelta gets the answer as it is written. Resolves
+		 * with the stored answer. Abort with signal to stop.
+		 */
+		ask: async (id: string, content: string, onDelta: (text: string) => void, signal?: AbortSignal): Promise<ChatMessage> => {
+			let res: Response;
+			try {
+				res = await fetch(`/api/v1/assistant/conversations/${enc(id)}/messages`, {
+					method: 'POST',
+					headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
+					body: JSON.stringify({ content }),
+					credentials: 'same-origin',
+					signal
+				});
+			} catch (e) {
+				if (signal?.aborted) throw e;
+				throw new ApiError(0, 'network', 'De server is niet bereikbaar');
+			}
+			if (!res.ok) {
+				// Not streamed yet: an ordinary JSON error.
+				let data: unknown = null;
+				try {
+					data = await res.json();
+				} catch {
+					/* fall through to the generic message */
+				}
+				const err = data && typeof data === 'object' ? (data as { error?: { code?: unknown; message?: unknown } }).error : undefined;
+				throw new ApiError(
+					res.status,
+					typeof err?.code === 'string' ? err.code : 'http_error',
+					typeof err?.message === 'string' ? err.message : `Serverfout (${res.status})`
+				);
+			}
+			let done: ChatMessage | null = null;
+			await readEvents(res, (event, data) => {
+				if (event === 'delta') onDelta(str(record(data, 'delta'), 'text'));
+				else if (event === 'done') done = parseChatMessage(data);
+				else if (event === 'error') throw new ApiError(502, 'provider', str(record(data, 'error'), 'message'));
+			});
+			if (!done) throw new ApiError(502, 'invalid_response', 'Het antwoord is afgebroken.');
+			return done;
+		},
+		providers: (f: typeof fetch = fetch) =>
+			get('/api/v1/assistant/providers', (v) => list(record(v, 'providers'), 'providers', parseAIProvider), f),
+		/** Adds (id null) or changes a provider. api_key: omit to keep, "" to remove. */
+		saveProvider: (
+			id: string | null,
+			p: { name: string; base_url: string; api_key?: string; consent_external: boolean },
+			f: typeof fetch = fetch
+		) => (id ? request('PATCH', `/api/v1/assistant/providers/${enc(id)}`, parseAIProvider, p, f) : post('/api/v1/assistant/providers', parseAIProvider, p, f)),
+		deleteProvider: (id: string, f: typeof fetch = fetch) =>
+			request('DELETE', `/api/v1/assistant/providers/${enc(id)}`, noContent, undefined, f),
+		/** Connects and returns the models the provider offers. */
+		testProvider: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/assistant/providers/${enc(id)}/test`, (v) => strList(record(v, 'test'), 'models'), undefined, f),
+		settings: (f: typeof fetch = fetch) =>
+			get('/api/v1/assistant/settings', (v) => {
+				const r = record(v, 'settings');
+				return {
+					chat_provider: nullableStr(r, 'chat_provider'),
+					chat_model: str(r, 'chat_model'),
+					embed_provider: nullableStr(r, 'embed_provider'),
+					embed_model: str(r, 'embed_model')
+				} as AISettings;
+			}, f),
+		saveSettings: (s: AISettings, f: typeof fetch = fetch) => request('PUT', '/api/v1/assistant/settings', noContent, s, f),
+		index: (f: typeof fetch = fetch) =>
+			get('/api/v1/assistant/index', (v) => {
+				const r = record(v, 'index');
+				return {
+					configured: bool(r, 'configured'),
+					files: num(r, 'files'),
+					indexed: num(r, 'indexed'),
+					failed: num(r, 'failed'),
+					last_error: typeof r.last_error === 'string' ? r.last_error : ''
+				} as AIIndexStatus;
+			}, f)
+	}
 };
 
 /** The message to show for a failed API call. */

@@ -33,6 +33,8 @@ type routerDeps struct {
 	avatars http.HandlerFunc
 	// drive mounts the drive module's routes under /api/v1/drive.
 	drive func(chi.Router)
+	// assistant mounts the assistant's routes under /api/v1/assistant.
+	assistant func(chi.Router)
 	// dav mounts WebDAV for desktop and mobile clients under /dav.
 	dav func(chi.Router)
 	// wopi mounts the WOPI host endpoints Collabora Online calls.
@@ -84,6 +86,9 @@ func newRouter(d routerDeps) http.Handler {
 		r.Use(httpserver.NoStore)
 		d.identity(r)
 		r.Route("/drive", d.drive)
+		if d.assistant != nil {
+			r.Route("/assistant", d.assistant)
+		}
 		r.Group(func(r chi.Router) {
 			r.Use(d.requireUser, d.systemStatus)
 			r.Get("/status", statusHandler(d))

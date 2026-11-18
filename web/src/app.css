@@ -229,7 +229,8 @@ code {
 	font-size: 0.8rem;
 	margin: 0;
 }
-input {
+input,
+textarea {
 	font: inherit;
 	color: var(--text-strong);
 	background: var(--bg);

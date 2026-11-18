@@ -346,3 +346,57 @@ describe('api.drive.versions', () => {
 		await expect(api.drive.pruneVersions('f', respond({ versions: 2, bytes: 1024 }))).resolves.toEqual({ versions: 2, bytes: 1024 });
 	});
 });
+
+describe('api.assistant.ask', () => {
+	const done = {
+		id: 'm1',
+		role: 'assistant',
+		content: 'Het kost 5000 euro [1].',
+		created_at: '2026-11-18T10:00:00Z',
+		sources: [
+			{
+				n: 1, id: 'f1', parent_id: null, kind: 'file', name: 'offerte.pdf', size: 3, content_type: 'application/pdf',
+				created_at: '2026-11-18T09:00:00Z', updated_at: '2026-11-18T09:00:00Z', updated_by: null, updated_by_name: '',
+				trashed_at: null, permission: 'manage', shared: false, location: 'Mijn bestanden', location_id: null
+			}
+		]
+	};
+
+	// A response that arrives in pieces, cut in awkward places.
+	function stream(...pieces: string[]): typeof fetch {
+		return async () =>
+			new Response(new ReadableStream({
+				start(c) {
+					for (const p of pieces) c.enqueue(new TextEncoder().encode(p));
+					c.close();
+				}
+			}), { headers: { 'Content-Type': 'text/event-stream' } });
+	}
+
+	function withFetch(f: typeof fetch, run: () => Promise<void>) {
+		const real = globalThis.fetch;
+		globalThis.fetch = f;
+		return run().finally(() => (globalThis.fetch = real));
+	}
+
+	it('streams the answer and returns the stored message', () =>
+		withFetch(
+			stream('event: delta\ndata: {"text":"Het kost "}\n\nevent: del', 'ta\ndata: {"text":"5000 euro [1]."}\n\n', `event: done\ndata: ${JSON.stringify(done)}\n\n`),
+			async () => {
+				let text = '';
+				const msg = await api.assistant.ask('c1', 'Wat kost het?', (t) => (text += t));
+				expect(text).toBe('Het kost 5000 euro [1].');
+				expect(msg.sources[0]).toMatchObject({ n: 1, name: 'offerte.pdf' });
+			}
+		));
+
+	it('reports a provider failure in the middle of the stream', () =>
+		withFetch(stream('event: delta\ndata: {"text":"Het"}\n\nevent: error\ndata: {"message":"De aanbieder is niet bereikbaar."}\n\n'), async () => {
+			await expect(api.assistant.ask('c1', '?', () => {})).rejects.toThrow('De aanbieder is niet bereikbaar.');
+		}));
+
+	it('fails when the stream ends without an answer', () =>
+		withFetch(stream('event: delta\ndata: {"text":"Het"}\n\n'), async () => {
+			await expect(api.assistant.ask('c1', '?', () => {})).rejects.toBeInstanceOf(ApiError);
+		}));
+});

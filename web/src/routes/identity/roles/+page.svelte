@@ -22,7 +22,7 @@
 	const me = $derived(page.data.user);
 	const mayManage = $derived(can(me, 'identity.roles.manage'));
 	const mayAssign = $derived(can(me, 'identity.roles.assign'));
-	const modules = { identity: 'Identity', drive: 'Drive', system: 'Systeem' } as const;
+	const modules = { identity: 'Identity', drive: 'Drive', system: 'Systeem', assistant: 'Assistent' } as const;
 	const byModule = $derived(
 		(Object.keys(modules) as (keyof typeof modules)[]).map((m) => ({ module: m, items: catalog.filter((p) => p.module === m) }))
 	);

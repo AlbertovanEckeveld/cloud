@@ -29,6 +29,7 @@
 			<nav class="nav" aria-label="Hoofdmenu">
 				<a href="/" aria-current={current('/')}>Start</a>
 				<a href="/files" aria-current={page.url.pathname.startsWith('/files') ? 'page' : undefined}>Bestanden</a>
+				<a href="/assistant" aria-current={page.url.pathname.startsWith('/assistant') ? 'page' : undefined}>Assistent</a>
 				{#if canAnyIn(data.user, 'identity')}
 					<a href="/identity" aria-current={page.url.pathname.startsWith('/identity') ? 'page' : undefined}>Identity</a>
 				{/if}

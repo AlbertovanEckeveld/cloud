@@ -18,6 +18,10 @@
 			<h2>Bestanden</h2>
 			<p class="muted">Je bestanden en mappen: uploaden, ordenen en downloaden.</p>
 		</a>
+		<a class="panel card" href="/assistant">
+			<h2>Assistent</h2>
+			<p class="muted">Vragen over je bestanden, met antwoorden en bronnen.</p>
+		</a>
 		<a class="panel card" href="/account">
 			<h2>Account</h2>
 			<p class="muted">Wachtwoord wijzigen en je recente activiteit bekijken.</p>

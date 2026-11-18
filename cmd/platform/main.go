@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -27,6 +28,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/AlbertovanEckeveld/cloud/internal/assistant"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/config"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/database"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/health"
@@ -46,7 +48,7 @@ import (
 var version = "dev"
 
 // modules lists every module with migrations, in dependency order.
-var modules = []string{"core", "identity", "drive"}
+var modules = []string{"core", "identity", "drive", "assistant"}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -78,6 +80,7 @@ type app struct {
 	store    *storage.Client
 	mailer   *mailer.Mailer
 	identity *identity.Service
+	sealer   *sealer.Sealer
 }
 
 // setup loads configuration, connects to the database and migrates it.
@@ -142,7 +145,7 @@ func setup(ctx context.Context, logOutput io.Writer) (*app, error) {
 		pool.Close()
 		return nil, err
 	}
-	return &app{cfg: cfg, logger: logger, pool: pool, store: store, mailer: mail, identity: id}, nil
+	return &app{cfg: cfg, logger: logger, pool: pool, store: store, mailer: mail, identity: id, sealer: sl}, nil
 }
 
 func serve(ctx context.Context) error {
@@ -188,9 +191,11 @@ func serve(ctx context.Context) error {
 		frameOrigins = append(frameOrigins, cfg.Collabora.String())
 	}
 	files := drive.New(a.pool, store, opts)
+	ai := assistant.New(a.pool, a.sealer, files, assistant.Options{Logger: logger, Services: serviceAddrs(cfg)})
 	go registry.Run(ctx)
 	go a.identity.Run(ctx)
 	go files.Run(ctx)
+	go ai.Run(ctx)
 	if a.mailer.Enabled() {
 		// A wrong password or unreachable server should show up in the log
 		// right away, but must neither stop nor delay startup: mail is queued
@@ -266,6 +271,20 @@ func serve(ctx context.Context) error {
 				},
 			})
 		},
+		assistant: func(r chi.Router) {
+			ai.Routes(r, assistant.Auth{
+				RequireUser: a.identity.RequireUser,
+				RequirePermission: func(p string) func(http.Handler) http.Handler {
+					return identity.RequirePermission(identity.Permission(p))
+				},
+				RequireRecentAuth: a.identity.RequireRecentAuth,
+				Audit:             a.identity.AuditRequest,
+				UserID: func(r *http.Request) uuid.UUID {
+					p, _ := identity.PrincipalFrom(r.Context())
+					return p.User.ID
+				},
+			})
+		},
 		wopi: files.WOPIRoutes,
 		dav: func(r chi.Router) {
 			files.DAVRoutes(r, a.identity.RequireAppPassword("Cloud"), func(r *http.Request) uuid.UUID {
@@ -306,4 +325,27 @@ func healthcheck(addr string) int {
 		return 1
 	}
 	return 0
+}
+
+// serviceAddrs are the platform's own backends (host:port), which an AI
+// provider's address may never point at (ADR 0023, SSRF).
+func serviceAddrs(cfg config.Config) []string {
+	var out []string
+	if u, err := url.Parse(cfg.Database.URL.Reveal()); err == nil && u.Hostname() != "" {
+		port := u.Port()
+		if port == "" {
+			port = "5432"
+		}
+		out = append(out, net.JoinHostPort(u.Hostname(), port))
+	}
+	if host, port, err := net.SplitHostPort(cfg.Storage.Endpoint); err == nil {
+		out = append(out, net.JoinHostPort(host, port))
+	} else if cfg.Storage.Endpoint != "" {
+		port := "80"
+		if cfg.Storage.UseTLS {
+			port = "443"
+		}
+		out = append(out, net.JoinHostPort(cfg.Storage.Endpoint, port))
+	}
+	return out
 }

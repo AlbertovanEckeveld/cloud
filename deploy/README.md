@@ -61,7 +61,12 @@ docker exec -it <postgres-container> psql -U <superuser> -c "CREATE ROLE cloud_s
 docker exec -it <postgres-container> psql -U <superuser> -c "CREATE DATABASE ave_cloud_staging OWNER cloud_staging"
 ```
 
-Het platform maakt de schema's zelf aan (de rol is eigenaar van de database). In de
+Het platform maakt de schema's zelf aan (de rol is eigenaar van de database). De assistent (ADR 0023) gebruikt
+pgvector; die extensie moet een superuser eenmalig installeren:
+
+```sh
+docker exec -it <postgres-container> psql -U <superuser> -d <database> -c "CREATE EXTENSION IF NOT EXISTS vector"
+``` In de
 RustFS-console (poort 9001) maak je de bucket `ave-cloud-staging` en een toegangssleutel die
 alleen die bucket mag gebruiken.
 

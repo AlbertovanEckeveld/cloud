@@ -35,6 +35,7 @@ const (
 	PermTeamFolderDel  Permission = "drive.teamfolders.delete"
 	PermQuotaManage    Permission = "drive.quota.manage"
 	PermSystemStatus   Permission = "system.status.view"
+	PermAIProviders    Permission = "assistant.provider.manage"
 )
 
 // PermissionInfo describes a permission for the administration pages.
@@ -64,6 +65,7 @@ var Catalog = []PermissionInfo{
 	{PermTeamFolderDel, "drive", "Teammappen opheffen, terugzetten en definitief verwijderen"},
 	{PermQuotaManage, "drive", "Opslaggebruik en quotum per gebruiker beheren"},
 	{PermSystemStatus, "system", "Systeemstatus en sites zien"},
+	{PermAIProviders, "assistant", "AI-aanbieders en -modellen instellen (bepaalt waar inhoud naartoe gaat)"},
 }
 
 // AdminRoleID is the built-in role "Beheerder": every permission, also

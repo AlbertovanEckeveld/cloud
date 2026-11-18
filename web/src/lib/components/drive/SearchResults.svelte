@@ -20,7 +20,8 @@
 		// Wait until the user stops typing instead of searching every key.
 		const timer = setTimeout(async () => {
 			try {
-				const found = await api.drive.search(q);
+				// Name, words and, when a model is set up, meaning (ADR 0023).
+				const found = await api.assistant.search(q);
 				if (query.trim() === q) results = found;
 			} catch (e) {
 				error = errorMessage(e);
