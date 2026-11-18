@@ -11,8 +11,3 @@ export function can(user: SessionUser | null | undefined, permission: AdminPermi
 export function canAnyIn(user: SessionUser | null | undefined, module: string): boolean {
 	return !!user?.permissions.some((p) => p.startsWith(`${module}.`));
 }
-
-/** True when the user has any administrative permission at all. */
-export function administers(user: SessionUser | null | undefined): boolean {
-	return !!user && user.permissions.length > 0;
-}

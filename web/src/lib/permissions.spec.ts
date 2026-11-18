@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionUser } from './api.ts';
-import { administers, can, canAnyIn } from './permissions.ts';
+import { can, canAnyIn } from './permissions.ts';
 
 const user = (permissions: string[]): SessionUser => ({ id: 'u', username: 'ann', display_name: 'Ann', email: '', permissions });
 
@@ -17,11 +17,5 @@ describe('permissions', () => {
 		expect(canAnyIn(desk, 'drive')).toBe(true);
 		expect(canAnyIn(desk, 'system')).toBe(false);
 		expect(canAnyIn(user(['identityx.users.view']), 'identity')).toBe(false);
-	});
-
-	it('knows whether a user administers anything', () => {
-		expect(administers(desk)).toBe(true);
-		expect(administers(user([]))).toBe(false);
-		expect(administers(undefined)).toBe(false);
 	});
 });

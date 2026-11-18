@@ -3,7 +3,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api } from '#lib/api.ts';
-	import { administers } from '#lib/permissions.ts';
+	import { can, canAnyIn } from '#lib/permissions.ts';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -29,8 +29,11 @@
 			<nav class="nav" aria-label="Hoofdmenu">
 				<a href="/" aria-current={current('/')}>Start</a>
 				<a href="/files" aria-current={page.url.pathname.startsWith('/files') ? 'page' : undefined}>Bestanden</a>
-				{#if administers(data.user)}
-					<a href="/admin" aria-current={page.url.pathname.startsWith('/admin') ? 'page' : undefined}>Beheer</a>
+				{#if canAnyIn(data.user, 'identity')}
+					<a href="/identity" aria-current={page.url.pathname.startsWith('/identity') ? 'page' : undefined}>Identity</a>
+				{/if}
+				{#if can(data.user, 'system.status.view')}
+					<a href="/system" aria-current={current('/system')}>Systeem</a>
 				{/if}
 			</nav>
 			<div class="site-header__actions">

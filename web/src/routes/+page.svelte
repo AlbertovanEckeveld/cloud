@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { administers } from '#lib/permissions.ts';
+	import { can, canAnyIn } from '#lib/permissions.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -22,10 +22,22 @@
 			<h2>Account</h2>
 			<p class="muted">Wachtwoord wijzigen en je recente activiteit bekijken.</p>
 		</a>
-		{#if administers(data.user)}
-			<a class="panel card" href="/admin">
-				<h2>Beheer</h2>
-				<p class="muted">Gebruikers, groepen, audit-log en systeemstatus.</p>
+		{#if canAnyIn(data.user, 'identity')}
+			<a class="panel card" href="/identity">
+				<h2>Identity</h2>
+				<p class="muted">Gebruikers, groepen, rollen en rechten, apps en de audit-log.</p>
+			</a>
+		{/if}
+		{#if canAnyIn(data.user, 'drive')}
+			<a class="panel card" href="/files/settings">
+				<h2>Drive-instellingen</h2>
+				<p class="muted">Teammappen en opslag per gebruiker.</p>
+			</a>
+		{/if}
+		{#if can(data.user, 'system.status.view')}
+			<a class="panel card" href="/system">
+				<h2>Systeem</h2>
+				<p class="muted">Status van database, opslag en sites.</p>
 			</a>
 		{/if}
 	</div>

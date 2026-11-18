@@ -1,27 +1,16 @@
 <script lang="ts">
+	// A row of tabs that are links; the one matching the current page is marked.
 	import { page } from '$app/state';
-	import type { LayoutProps } from './$types';
 
-	let { children }: LayoutProps = $props();
-
-	const tabs = [
-		{ href: '/admin/users', label: 'Gebruikers' },
-		{ href: '/admin/groups', label: 'Groepen' },
-		{ href: '/admin/team-folders', label: 'Teammappen' },
-		{ href: '/admin/apps', label: 'Apps' },
-		{ href: '/admin/audit', label: 'Audit-log' },
-		{ href: '/admin/system', label: 'Systeem' }
-	];
+	let { tabs, label }: { tabs: { href: string; label: string }[]; label: string } = $props();
 	const current = (href: string) => (page.url.pathname.startsWith(href) ? 'page' : undefined);
 </script>
 
-<nav class="tabs" aria-label="Beheer">
+<nav class="tabs" aria-label={label}>
 	{#each tabs as tab (tab.href)}
 		<a href={tab.href} aria-current={current(tab.href)}>{tab.label}</a>
 	{/each}
 </nav>
-
-{@render children()}
 
 <style>
 	.tabs {

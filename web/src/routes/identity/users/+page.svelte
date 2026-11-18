@@ -4,6 +4,8 @@
 	import { dateTime, timeAgo } from '#lib/format.ts';
 	import ActivationLink from '#lib/components/ActivationLink.svelte';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
+	import { page } from '$app/state';
+	import { can } from '#lib/permissions.ts';
 
 	let users = $state<AdminUser[] | null>(null);
 	let error = $state<unknown>(null);
@@ -49,14 +51,16 @@
 </script>
 
 <svelte:head>
-	<title>Gebruikers · Beheer · Cloud</title>
+	<title>Gebruikers · Identity · Cloud</title>
 </svelte:head>
 
 <div class="page-header">
 	<h1>Gebruikers</h1>
-	<button class="button button--primary" onclick={() => ((inviting = !inviting), (issued = null))}>
-		{inviting ? 'Annuleren' : 'Gebruiker uitnodigen'}
-	</button>
+	{#if can(page.data.user, 'identity.users.invite')}
+		<button class="button button--primary" onclick={() => ((inviting = !inviting), (issued = null))}>
+			{inviting ? 'Annuleren' : 'Gebruiker uitnodigen'}
+		</button>
+	{/if}
 </div>
 
 <ErrorNotice {error} />
@@ -91,7 +95,7 @@
 			<tbody>
 				{#each users as u (u.id)}
 					<tr>
-						<td><a href="/admin/users/{u.id}">{u.display_name}</a></td>
+						<td><a href="/identity/users/{u.id}">{u.display_name}</a></td>
 						<td><code>{u.username}</code></td>
 						<td>{[...new Set(u.roles.map((r) => r.name))].join(', ') || '—'}</td>
 						<td>

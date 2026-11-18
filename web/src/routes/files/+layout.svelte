@@ -7,6 +7,8 @@
 	import { formatBytes } from '#lib/format.ts';
 	import SearchResults from '#lib/components/drive/SearchResults.svelte';
 	import { afterNavigate } from '$app/navigation';
+	import { page } from '$app/state';
+	import { driveSettingsTabs } from '#lib/drive-settings-tabs.ts';
 
 	let { children } = $props();
 	let menu: HTMLDetailsElement;
@@ -29,7 +31,8 @@
 
 	const is = (s: Section) =>
 		typeof s === 'string' ? drive.section === s : typeof drive.section === 'object' && drive.section.team === s.team;
-	const current = (s: Section) => (is(s) ? 'page' : undefined);
+	// On the settings pages no section is current; the gear is.
+	const current = (s: Section) => (is(s) && !page.url.pathname.startsWith('/files/settings') ? 'page' : undefined);
 
 	function run(action: () => void) {
 		menu.open = false;
@@ -66,6 +69,11 @@
 			{/if}
 			<a class="nav__trash" href="/files/activity" aria-current={current('activity')}><Icon name="history" />Activiteit</a>
 			<a href="/files/trash" aria-current={current('trash')}><Icon name="trash" />Prullenbak</a>
+			{#if driveSettingsTabs(page.data.user).length > 0}
+				<a href="/files/settings" aria-current={page.url.pathname.startsWith('/files/settings') ? 'page' : undefined}>
+					<Icon name="settings" />Instellingen
+				</a>
+			{/if}
 		</nav>
 
 		{#if drive.usage}

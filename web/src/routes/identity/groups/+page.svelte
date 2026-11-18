@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { api, type Group } from '#lib/api.ts';
 	import ErrorNotice from '#lib/components/ErrorNotice.svelte';
+	import { page } from '$app/state';
+	import { can } from '#lib/permissions.ts';
 
 	let groups = $state<Group[] | null>(null);
 	let error = $state<unknown>(null);
@@ -35,7 +37,7 @@
 </script>
 
 <svelte:head>
-	<title>Groepen · Beheer · Cloud</title>
+	<title>Groepen · Identity · Cloud</title>
 </svelte:head>
 
 <h1>Groepen</h1>
@@ -53,7 +55,7 @@
 				{#each groups as g (g.id)}
 					<li>
 						<div>
-							<a class="list__title" href="/admin/groups/{g.id}">{g.name}</a>
+							<a class="list__title" href="/identity/groups/{g.id}">{g.name}</a>
 							{#if g.description}<span class="muted small block">{g.description}</span>{/if}
 						</div>
 						<span class="badge">{g.member_count} {g.member_count === 1 ? 'lid' : 'leden'}</span>
@@ -65,6 +67,7 @@
 		{/if}
 	</section>
 
+{#if can(page.data.user, 'identity.groups.manage')}
 	<form class="panel form" onsubmit={create}>
 		<h2>Nieuwe groep</h2>
 		<label class="field">
@@ -78,4 +81,5 @@
 		</label>
 		<div><button class="button button--primary" disabled={busy}>Aanmaken</button></div>
 	</form>
+{/if}
 </div>

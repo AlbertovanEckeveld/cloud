@@ -41,7 +41,7 @@
 </script>
 
 <svelte:head>
-	<title>Apps · Beheer · Cloud</title>
+	<title>Apps · Identity · Cloud</title>
 </svelte:head>
 
 <div class="page-header">
@@ -78,7 +78,7 @@
 			<tbody>
 				{#each apps as a (a.id)}
 					<tr>
-						<td><a href="/admin/apps/{a.id}">{a.name}</a></td>
+						<td><a href="/identity/apps/{a.id}">{a.name}</a></td>
 						<td>{a.confidential ? 'Server-app' : 'Publiek (PKCE)'}</td>
 						<td>{a.allowed_group ? `Groep ${a.allowed_group.name}` : 'Alle gebruikers'}</td>
 						<td><code>{a.id}</code></td>
