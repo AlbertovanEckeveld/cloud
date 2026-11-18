@@ -18,7 +18,7 @@ import (
 // What the provider said exactly goes to the log, never to the page: it
 // can contain internal details (ADR 0023).
 type ProviderError struct {
-	Kind   string // unreachable, blocked, unauthorized, incompatible, rate_limited, failed
+	Kind   string // unreachable, blocked, unauthorized, incompatible, rate_limited, unavailable, failed
 	detail error
 }
 
@@ -33,7 +33,9 @@ func (e *ProviderError) Error() string {
 	case "incompatible":
 		return "Dit is geen OpenAI-compatibele API, of het model bestaat niet."
 	case "rate_limited":
-		return "De aanbieder weigert tijdelijk: te veel verzoeken."
+		return "De aanbieder weigert tijdelijk: te veel verzoeken. Probeer het zo opnieuw."
+	case "unavailable":
+		return "De aanbieder is tijdelijk overbelast of niet beschikbaar. Probeer het zo opnieuw, of kies een ander model."
 	}
 	return "De aanbieder gaf een fout."
 }
@@ -72,14 +74,39 @@ func newClient(g *guard, base *url.URL, key string, external bool) *client {
 	}}
 }
 
+// retryWaits are the pauses before trying again when a provider is busy
+// (429) or temporarily unavailable (503), which usually passes quickly.
+var retryWaits = []time.Duration{time.Second, 3 * time.Second}
+
+// do sends a request; a busy or unavailable provider is asked again a
+// couple of times. Nothing has reached the user yet at that point.
 func (c *client) do(ctx context.Context, method, path string, body any) (*http.Response, error) {
-	var r io.Reader
+	var payload []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		r = bytes.NewReader(b)
+		payload = b
+	}
+	for attempt := 0; ; attempt++ {
+		resp, err := c.once(ctx, method, path, payload)
+		var pe *ProviderError
+		if err == nil || !errors.As(err, &pe) || (pe.Kind != "rate_limited" && pe.Kind != "unavailable") || attempt >= len(retryWaits) {
+			return resp, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(retryWaits[attempt]):
+		}
+	}
+}
+
+func (c *client) once(ctx context.Context, method, path string, payload []byte) (*http.Response, error) {
+	var r io.Reader
+	if payload != nil {
+		r = bytes.NewReader(payload)
 	}
 	u := *c.base
 	u.Path += path
@@ -87,7 +114,7 @@ func (c *client) do(ctx context.Context, method, path string, body any) (*http.R
 	if err != nil {
 		return nil, &ProviderError{Kind: "failed", detail: err}
 	}
-	if body != nil {
+	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if c.key != "" {
@@ -109,6 +136,9 @@ func (c *client) do(ctx context.Context, method, path string, body any) (*http.R
 			return nil, &ProviderError{Kind: "unauthorized", detail: err}
 		case resp.StatusCode == http.StatusTooManyRequests:
 			return nil, &ProviderError{Kind: "rate_limited", detail: err}
+		case resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusBadGateway ||
+			resp.StatusCode == http.StatusGatewayTimeout:
+			return nil, &ProviderError{Kind: "unavailable", detail: err}
 		case resp.StatusCode == http.StatusNotFound || resp.StatusCode/100 == 3:
 			return nil, &ProviderError{Kind: "incompatible", detail: err}
 		}

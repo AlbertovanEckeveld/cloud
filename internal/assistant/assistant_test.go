@@ -10,7 +10,9 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -188,5 +190,35 @@ func TestClient(t *testing.T) {
 	}
 	if !strings.Contains(pe.Detail().Error(), "/srv/x") {
 		t.Error("the detail for the log is lost")
+	}
+}
+
+func TestClientRetriesABusyProvider(t *testing.T) {
+	waits := retryWaits
+	retryWaits = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { retryWaits = waits })
+
+	var calls atomic.Int32
+	failFirst := int32(2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) <= failFirst {
+			http.Error(w, `{"error":{"message":"This model is currently experiencing high demand."}}`, http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprint(w, `{"data":[{"id":"m"}]}`)
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL+"/v1")
+
+	if models, err := c.Models(context.Background()); err != nil || len(models) != 1 || calls.Load() != 3 {
+		t.Fatalf("after two busy answers: %v %v (%d calls)", models, err, calls.Load())
+	}
+
+	calls.Store(0)
+	failFirst = 100 // keeps failing
+	_, err := c.Models(context.Background())
+	var pe *ProviderError
+	if !errors.As(err, &pe) || pe.Kind != "unavailable" || calls.Load() != 3 || !strings.Contains(err.Error(), "overbelast") {
+		t.Fatalf("keeps failing: %v (%d calls)", err, calls.Load())
 	}
 }
