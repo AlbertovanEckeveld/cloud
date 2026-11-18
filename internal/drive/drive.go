@@ -83,8 +83,9 @@ type Service struct {
 	indexKick chan struct{}
 	// userID identifies the signed-in user and audit records administrative
 	// actions; both set by Routes.
-	userID func(*http.Request) uuid.UUID
-	audit  func(r *http.Request, event string, details map[string]any)
+	userID   func(*http.Request) uuid.UUID
+	audit    func(r *http.Request, event string, details map[string]any)
+	deviceID func(*http.Request) uuid.UUID
 }
 
 // New returns the drive service.
@@ -523,6 +524,9 @@ func (s *Service) Run(ctx context.Context) {
 			}
 			if err := s.pruneChanges(ctx); err != nil && ctx.Err() == nil {
 				s.log.Warn("prune sync changes", "error", err)
+			}
+			if err := s.pruneSyncDevices(ctx); err != nil && ctx.Err() == nil {
+				s.log.Warn("prune sync devices", "error", err)
 			}
 			lastPurge = s.now()
 		}

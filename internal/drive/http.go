@@ -29,13 +29,15 @@ type Auth struct {
 	UserID func(*http.Request) uuid.UUID
 	// Desktop reports whether the request comes from the desktop app.
 	Desktop func(*http.Request) bool
+	// DeviceID returns that app's device (uuid.Nil for a browser).
+	DeviceID func(*http.Request) uuid.UUID
 	// Audit records an administrative action in the central audit log.
 	Audit func(r *http.Request, event string, details map[string]any)
 }
 
 // Routes mounts the drive API.
 func (s *Service) Routes(r chi.Router, auth Auth) {
-	s.userID, s.audit = auth.UserID, auth.Audit
+	s.userID, s.audit, s.deviceID = auth.UserID, auth.Audit, auth.DeviceID
 	// Public share links: no account needed. The token travels in the body,
 	// never in the URL, so it does not end up in logs or browser history.
 	r.Post("/public/links/open", s.handleOpenLink)
@@ -72,6 +74,8 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 		r.Get("/sync/roots", s.handleSyncRoots)
 		r.Get("/sync/tree", s.handleSyncTree)
 		r.Get("/sync/changes", s.handleSyncChanges)
+		r.Put("/sync/device", s.handleReportSync)
+		r.Get("/sync/devices", s.handleSyncDevices)
 		r.Post("/files/{id}/office", s.handleOpenInOffice)
 		r.Get("/nodes/{id}/links", s.handleLinks)
 		r.Post("/nodes/{id}/links", s.handleCreateLink)

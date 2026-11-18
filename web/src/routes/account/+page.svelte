@@ -4,6 +4,8 @@
 	import ActivityList from '#lib/components/ActivityList.svelte';
 	import AppsPanel from '#lib/components/account/AppsPanel.svelte';
 	import AppPasswordsPanel from '#lib/components/account/AppPasswordsPanel.svelte';
+	import DevicesPanel from '#lib/components/account/DevicesPanel.svelte';
+	import Pager from '#lib/components/Pager.svelte';
 	import ProfileForm from '#lib/components/account/ProfileForm.svelte';
 	import PasskeysPanel from '#lib/components/account/PasskeysPanel.svelte';
 	import RecoveryPanel from '#lib/components/account/RecoveryPanel.svelte';
@@ -12,7 +14,12 @@
 
 	let { data }: PageProps = $props();
 
+	// Activity pages come from the server, 5 at a time. "before" is the ID of
+	// the last event of the page before; going back pops it again.
+	const activityPageSize = 5;
 	let events = $state<AuditEvent[] | null>(null);
+	let hasMore = $state(false);
+	let cursors = $state<(string | null)[]>([null]);
 	let groups = $state<GroupRef[] | null>(null);
 	let groupsFailed = $state(false);
 	let activityError = $state<string | null>(null);
@@ -26,11 +33,24 @@
 
 	async function loadActivity() {
 		try {
-			events = await api.activity();
+			const page = await api.activity(cursors[cursors.length - 1], activityPageSize);
+			events = page.events;
+			hasMore = page.has_more;
 			activityError = null;
 		} catch (err) {
 			activityError = errorMessage(err);
 		}
+	}
+
+	function olderActivity() {
+		if (!events?.length) return;
+		cursors = [...cursors, events[events.length - 1].id];
+		loadActivity();
+	}
+
+	function newerActivity() {
+		cursors = cursors.slice(0, -1);
+		loadActivity();
 	}
 
 	onMount(async () => {
@@ -55,6 +75,7 @@
 			await api.changePassword(current, next);
 			passwordSaved = true;
 			current = next = confirmation = '';
+			cursors = [null];
 			await loadActivity();
 		} catch (err) {
 			passwordError = errorMessage(err);
@@ -134,6 +155,7 @@
 
 	<div class="stack">
 		<SessionsPanel />
+		<DevicesPanel />
 		<AppsPanel />
 		<AppPasswordsPanel />
 
@@ -146,6 +168,8 @@
 				<p class="muted">Laden…</p>
 			{:else}
 				<ActivityList {events} />
+				<Pager label="Pagina {cursors.length}" canPrev={cursors.length > 1} canNext={hasMore}
+					onprev={newerActivity} onnext={olderActivity} />
 			{/if}
 		</section>
 	</div>

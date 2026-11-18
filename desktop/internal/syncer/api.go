@@ -201,3 +201,28 @@ func (c *Client) Trash(ctx context.Context, id string) error {
 	resp.Body.Close()
 	return nil
 }
+
+// ReportDevice tells the server this computer's name and platform, shown in
+// the user's list of linked devices.
+func (c *Client) ReportDevice(ctx context.Context, name, platform string) error {
+	return c.putJSON(ctx, "/api/v1/device", map[string]string{"name": name, "platform": platform})
+}
+
+// ReportSync tells the server which roots this computer keeps in sync, after
+// a round over all of them.
+func (c *Client) ReportSync(ctx context.Context, roots []string) error {
+	return c.putJSON(ctx, "/api/v1/drive/sync/device", map[string][]string{"roots": roots})
+}
+
+func (c *Client) putJSON(ctx context.Context, path string, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(ctx, http.MethodPut, path, nil, bytes.NewReader(b), int64(len(b)), "application/json")
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}

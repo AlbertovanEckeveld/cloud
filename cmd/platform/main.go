@@ -258,6 +258,10 @@ func serve(ctx context.Context) error {
 					p, _ := identity.PrincipalFrom(r.Context())
 					return p.Device
 				},
+				DeviceID: func(r *http.Request) uuid.UUID {
+					p, _ := identity.PrincipalFrom(r.Context())
+					return p.DeviceID
+				},
 			})
 		},
 		wopi: files.WOPIRoutes,

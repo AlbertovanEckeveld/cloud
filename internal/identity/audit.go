@@ -43,6 +43,7 @@ const (
 	EventShareRevoked     = "share.revoked"
 	EventLogoutEverywhere = "auth.logout_everywhere"
 	EventAppRevoked       = "oidc.app_revoked"
+	EventDeviceUnlinked   = "device.unlinked"
 
 	EventOIDCLogin               = "oidc.login"
 	EventOIDCDenied              = "oidc.denied"
@@ -97,14 +98,17 @@ func (s *Service) auditBestEffort(ctx context.Context, c Client, e auditEntry) {
 	}
 }
 
-// Activity returns the most recent events done by or concerning a user.
-func (s *Service) Activity(ctx context.Context, userID uuid.UUID, limit int) ([]AuditEvent, error) {
+// Activity returns events done by or concerning a user, newest first, at
+// most limit. Pass the ID of the last event of the previous page as before
+// to continue (keyset pagination: UUIDv7 IDs are ordered by creation time,
+// so new events never shift a page the way an offset would).
+func (s *Service) Activity(ctx context.Context, userID uuid.UUID, before *uuid.UUID, limit int) ([]AuditEvent, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, occurred_at, event, site_id, ip, user_agent
 		FROM identity.audit_events
-		WHERE actor_id = $1 OR subject_id = $1
-		ORDER BY occurred_at DESC, id DESC -- UUIDv7 is time-ordered: a stable tiebreak
-		LIMIT $2`, userID, limit)
+		WHERE (actor_id = $1 OR subject_id = $1) AND ($2::uuid IS NULL OR id < $2)
+		ORDER BY id DESC
+		LIMIT $3`, userID, before, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query activity: %w", err)
 	}

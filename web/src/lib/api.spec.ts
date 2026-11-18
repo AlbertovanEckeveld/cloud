@@ -280,3 +280,38 @@ describe('search', () => {
 		await expect(api.drive.search('rapp', respond({ results: [{ ...r, location: 3 }] }))).rejects.toMatchObject({ code: 'invalid_response' });
 	});
 });
+
+describe('api.activity', () => {
+	it('asks for a page and returns whether more follow', async () => {
+		let asked = '';
+		const f: typeof fetch = async (input) => {
+			asked = String(input);
+			return new Response(JSON.stringify({ events: [], has_more: true }), { headers: { 'Content-Type': 'application/json' } });
+		};
+		await expect(api.activity('0193-last', 5, f)).resolves.toEqual({ events: [], has_more: true });
+		expect(asked).toBe('/api/v1/account/activity?limit=5&before=0193-last');
+	});
+
+	it('rejects a page without has_more', async () => {
+		await expect(api.activity(null, 5, respond({ events: [] }))).rejects.toBeInstanceOf(ApiError);
+	});
+});
+
+describe('api.devices', () => {
+	const device = { id: 'd1', name: 'werk-laptop', platform: 'linux', linked_at: '2026-11-17T10:00:00Z', last_seen_at: null };
+
+	it('returns validated devices, name and platform optional', async () => {
+		const unnamed = { ...device, id: 'd2', name: null, platform: null };
+		await expect(api.devices(respond({ devices: [device, unnamed] }))).resolves.toEqual([device, unnamed]);
+	});
+
+	it('rejects an unknown platform', async () => {
+		await expect(api.devices(respond({ devices: [{ ...device, platform: 'amiga' }] }))).rejects.toBeInstanceOf(ApiError);
+	});
+
+	it('returns what devices synchronise', async () => {
+		const sync = { device_id: 'd1', last_sync_at: '2026-11-17T10:05:00Z', folders: [{ id: 'mine', name: 'Mijn bestanden', kind: 'mine' }] };
+		await expect(api.drive.syncDevices(respond({ devices: [sync] }))).resolves.toEqual([sync]);
+		await expect(api.drive.syncDevices(respond({ devices: [{ device_id: 'd1' }] }))).rejects.toBeInstanceOf(ApiError);
+	});
+});

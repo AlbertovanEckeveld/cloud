@@ -69,6 +69,7 @@ const eventLabels: Record<string, string> = {
 	'oidc.client.deleted': 'App verwijderd',
 	'oidc.client.secret_rotated': 'Client-secret van app vernieuwd',
 	'oidc.app_revoked': 'Toegang van app ingetrokken',
+	'device.unlinked': 'Computer ontkoppeld',
 	'auth.logout_everywhere': 'Overal uitgelogd, ook bij apps',
 	'user.profile_updated': 'Profiel gewijzigd',
 	'share.granted': 'Gedeeld',
