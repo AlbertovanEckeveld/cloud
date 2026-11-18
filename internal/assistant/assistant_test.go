@@ -222,3 +222,16 @@ func TestClientRetriesABusyProvider(t *testing.T) {
 		t.Fatalf("keeps failing: %v (%d calls)", err, calls.Load())
 	}
 }
+
+func TestKeywordQuery(t *testing.T) {
+	for in, want := range map[string]string{
+		"Wat kost de dakkapel?":                "kost or dakkapel",
+		"Waar staat het huurcontract van 2025": "staat or huurcontract or 2025",
+		"hoe?":                                 "hoe?",
+		"Kost kost KOST":                       "kost",
+	} {
+		if got := keywordQuery(in); got != want {
+			t.Errorf("keywordQuery(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

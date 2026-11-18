@@ -146,8 +146,15 @@ func newProvider(t *testing.T) *provider {
 		case "/v1/models":
 			fmt.Fprint(w, `{"data":[{"id":"chat-m"},{"id":"embed-m"},{"id":"embed-2"}]}`)
 		case "/v1/embeddings":
-			var in struct{ Input []string }
+			var in struct {
+				Model string
+				Input []string
+			}
 			_ = json.Unmarshal(body, &in)
+			if in.Model == "chat-m" {
+				http.Error(w, `{"error":{"message":"models/chat-m is not supported for embedContent"}}`, http.StatusNotFound)
+				return
+			}
 			type item struct {
 				Index     int       `json:"index"`
 				Embedding []float32 `json:"embedding"`
@@ -399,6 +406,14 @@ func TestProviderRules(t *testing.T) {
 	}
 	if _, err := e.svc.SaveProvider(ctx, admin, nil, ProviderInput{Name: "it-bad-key", BaseURL: e.prov.srv.URL + "/v1", Key: new("met spatie")}); !errors.As(err, &input) {
 		t.Errorf("key with a space: %v", err)
+	}
+
+	// A chat model as embedding model, or a model the provider does not have, is refused at once.
+	if err := e.svc.SaveSettings(ctx, Settings{EmbedProvider: &p.ID, EmbedModel: "chat-m"}); !errors.As(err, &input) || !strings.Contains(err.Error(), "maakt geen embeddings") {
+		t.Errorf("chat model for embeddings: %v", err)
+	}
+	if err := e.svc.SaveSettings(ctx, Settings{ChatProvider: &p.ID, ChatModel: "bestaat-niet"}); !errors.As(err, &input) {
+		t.Errorf("unknown model: %v", err)
 	}
 
 	// Settings need a model with each provider; questions need a chat model.

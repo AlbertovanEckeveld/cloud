@@ -252,6 +252,18 @@ func (s *Service) SaveSettings(ctx context.Context, st Settings) error {
 	if (st.ChatProvider == nil) != (chat == nil) || (st.EmbedProvider == nil) != (embed == nil) {
 		return &InputError{"Kies bij elke aanbieder ook een model."}
 	}
+	// Catch a wrong choice now rather than in every search: the models must
+	// exist, and the embedding model must actually make embeddings.
+	if st.ChatProvider != nil {
+		if err := s.checkModel(ctx, *st.ChatProvider, *chat, false); err != nil {
+			return err
+		}
+	}
+	if st.EmbedProvider != nil {
+		if err := s.checkModel(ctx, *st.EmbedProvider, *embed, true); err != nil {
+			return err
+		}
+	}
 	_, err = s.db.Exec(ctx, `
 		UPDATE assistant.settings SET chat_provider = $1, chat_model = $2, embed_provider = $3, embed_model = $4, updated_at = $5`,
 		st.ChatProvider, chat, st.EmbedProvider, embed, s.now())
@@ -285,4 +297,40 @@ func (s *Service) embedder(ctx context.Context) (*client, string, string, error)
 		return nil, "", "", err
 	}
 	return c, st.EmbedModel, embedModelID(*st.EmbedProvider, st.EmbedModel), nil
+}
+
+// checkModel verifies that a provider offers model and, for embeddings,
+// that it really makes them. The provider's own message stays in the log.
+func (s *Service) checkModel(ctx context.Context, provider uuid.UUID, model string, embeddings bool) error {
+	c, p, err := s.clientFor(ctx, s.db, provider)
+	if err != nil {
+		return err
+	}
+	models, err := c.Models(ctx)
+	if err != nil {
+		return err
+	}
+	// Some providers name models "models/x"; accept either spelling.
+	known := false
+	for _, m := range models {
+		if m == model || strings.TrimPrefix(m, "models/") == strings.TrimPrefix(model, "models/") {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return &InputError{"Het model \"" + model + "\" staat niet in de lijst van " + p.Name + "."}
+	}
+	if !embeddings {
+		return nil
+	}
+	if _, err := c.Embed(ctx, model, []string{"proef"}); err != nil {
+		var pe *ProviderError
+		if errors.As(err, &pe) && (pe.Kind == "incompatible" || pe.Kind == "failed") {
+			s.log.Warn("assistant embedding model refused", "model", model, "error", pe.Detail())
+			return &InputError{"\"" + model + "\" maakt geen embeddings bij " + p.Name + ". Kies een embedding-model, meestal met \"embed\" in de naam."}
+		}
+		return err
+	}
+	return nil
 }

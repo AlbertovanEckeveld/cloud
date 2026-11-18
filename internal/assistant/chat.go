@@ -249,8 +249,10 @@ func (s *Service) retrieve(ctx context.Context, userID uuid.UUID, question strin
 	}
 
 	// Files found by name or words: their name helps "where is my …", and
-	// the start of their text helps when meaning search missed them.
-	found, err := s.source.Search(ctx, userID, question)
+	// the start of their text helps when meaning search missed them. A
+	// question as a whole rarely matches word for word, so its main words
+	// are searched with "or".
+	found, err := s.source.Search(ctx, userID, keywordQuery(question))
 	if err != nil {
 		return nil, err
 	}
@@ -397,4 +399,28 @@ func (s *Service) Ask(ctx context.Context, userID, conversationID uuid.UUID, que
 		return Message{}, err
 	}
 	return reply, nil
+}
+
+// keywordQuery turns a question into a word search for its main words:
+// "Wat kost de dakkapel?" becomes "kost or dakkapel". Short words (de, het,
+// wat) carry little meaning and are left out.
+func keywordQuery(question string) string {
+	seen := map[string]bool{}
+	var words []string
+	for _, w := range strings.FieldsFunc(strings.ToLower(question), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if utf8.RuneCountInString(w) < 4 || seen[w] || w == "welke" || w == "waar" || w == "hoeveel" {
+			continue
+		}
+		seen[w] = true
+		words = append(words, w)
+		if len(words) == 8 {
+			break
+		}
+	}
+	if len(words) == 0 {
+		return question
+	}
+	return strings.Join(words, " or ")
 }

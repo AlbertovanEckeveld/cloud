@@ -22,6 +22,11 @@
 	let draft = $state<Draft | null>(null);
 
 	const nameOf = (id: string | null) => providers.find((p) => p.id === id)?.name ?? '';
+	// Embedding models usually say so in their name: offer those for
+	// embeddings (first) and the others for the chat.
+	const looksEmbedding = (m: string) => /embed/i.test(m);
+	const chatModels = (id: string) => (models[id] ?? []).filter((m) => !looksEmbedding(m));
+	const embedModels = (id: string) => [...(models[id] ?? [])].sort((a, b) => Number(looksEmbedding(b)) - Number(looksEmbedding(a)));
 	const external = (id: string | null) => providers.find((p) => p.id === id)?.external ?? false;
 
 	async function load() {
@@ -194,7 +199,7 @@
 			</select>
 			{#if settings.chat_provider}
 				<input bind:value={settings.chat_model} list="models-chat" placeholder="Model, bijv. qwen2.5:3b" aria-label="Chatmodel" required />
-				<datalist id="models-chat">{#each models[settings.chat_provider] ?? [] as m (m)}<option value={m}></option>{/each}</datalist>
+				<datalist id="models-chat">{#each chatModels(settings.chat_provider) as m (m)}<option value={m}></option>{/each}</datalist>
 			{/if}
 		</fieldset>
 		<fieldset>
@@ -205,8 +210,11 @@
 			</select>
 			{#if settings.embed_provider}
 				<input bind:value={settings.embed_model} list="models-embed" placeholder="Model, bijv. bge-m3" aria-label="Embedding-model" required />
-				<datalist id="models-embed">{#each models[settings.embed_provider] ?? [] as m (m)}<option value={m}></option>{/each}</datalist>
-				<p class="field__hint">Een ander embedding-model kiezen betekent alle bestanden opnieuw indexeren.</p>
+				<datalist id="models-embed">{#each embedModels(settings.embed_provider) as m (m)}<option value={m}></option>{/each}</datalist>
+				<p class="field__hint">
+					Kies een embedding-model (meestal met "embed" in de naam); een chatmodel werkt hier niet. Een ander model kiezen
+					betekent alle bestanden opnieuw indexeren.
+				</p>
 			{/if}
 		</fieldset>
 		<div><button class="button button--primary" disabled={busy}>Opslaan</button></div>
