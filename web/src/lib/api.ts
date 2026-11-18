@@ -270,18 +270,26 @@ export interface DirectoryEntry extends Subject {
 	picture: string;
 }
 
+export type Via = 'web' | 'desktop' | 'webdav' | 'editor';
+
 export interface FileVersion {
 	id: string;
 	size: number;
 	content_type: string;
 	created_at: string;
 	created_by_name: string;
+	/** How it arrived; null for versions from before this was recorded. */
+	created_via: Via | null;
+	/** The user's name for this version; named versions survive a clean-up. */
+	label: string | null;
 	current: boolean;
 }
 
 export interface Usage {
 	used_bytes: number;
 	limit_bytes: number | null;
+	/** Part of used_bytes in versions that are not current. */
+	old_versions_bytes: number;
 }
 
 export interface OidcRequest {
@@ -765,9 +773,17 @@ const parseVersion: Validator<FileVersion> = (v) => {
 		content_type: str(r, 'content_type'),
 		created_at: str(r, 'created_at'),
 		created_by_name: str(r, 'created_by_name'),
+		created_via: parseVia(r, 'created_via'),
+		label: nullableStr(r, 'label'),
 		current: bool(r, 'current')
 	};
 };
+
+function parseVia(o: Record<string, unknown>, key: string): Via | null {
+	const v = nullableStr(o, key);
+	if (v !== null && !['web', 'desktop', 'webdav', 'editor'].includes(v)) fail(key);
+	return v as Via | null;
+}
 
 const parseFolderView: Validator<FolderView> = (v) => {
 	const r = record(v, 'folder');
@@ -803,7 +819,11 @@ const parseTeamFolder: Validator<TeamFolder> = (v) => {
 
 const parseUsage: Validator<Usage> = (v) => {
 	const r = record(v, 'usage');
-	return { used_bytes: num(r, 'used_bytes'), limit_bytes: r.limit_bytes === null ? null : num(r, 'limit_bytes') };
+	return {
+		used_bytes: num(r, 'used_bytes'),
+		limit_bytes: r.limit_bytes === null ? null : num(r, 'limit_bytes'),
+		old_versions_bytes: r.old_versions_bytes === undefined ? 0 : num(r, 'old_versions_bytes')
+	};
 };
 
 const parseRemaining: Validator<number> = (v) => num(record(v, 'recovery'), 'remaining');
@@ -1053,6 +1073,15 @@ export const api = {
 			post(`/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}/restore`, parseNode, undefined, f),
 		deleteVersion: (id: string, versionId: string, f: typeof fetch = fetch) =>
 			request('DELETE', `/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}`, noContent, undefined, f),
+		/** Names a version (null removes the name). */
+		labelVersion: (id: string, versionId: string, label: string | null, f: typeof fetch = fetch) =>
+			request('PATCH', `/api/v1/drive/files/${enc(id)}/versions/${enc(versionId)}`, noContent, { label }, f),
+		/** Deletes every old version without a name; returns what was freed. */
+		pruneVersions: (id: string, f: typeof fetch = fetch) =>
+			post(`/api/v1/drive/files/${enc(id)}/versions/prune`, (v) => {
+				const r = record(v, 'pruned');
+				return { versions: num(r, 'versions'), bytes: num(r, 'bytes') };
+			}, undefined, f),
 		userUsage: (userId: string, f: typeof fetch = fetch) =>
 			get(`/api/v1/drive/admin/users/${enc(userId)}/usage`, parseUsage, f),
 		setQuota: (userId: string, limitBytes: number | null, f: typeof fetch = fetch) =>

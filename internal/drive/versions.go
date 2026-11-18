@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -22,7 +25,13 @@ type Version struct {
 	CreatedAt     time.Time `json:"created_at"`
 	CreatedBy     uuid.UUID `json:"created_by"`
 	CreatedByName string    `json:"created_by_name"`
-	Current       bool      `json:"current"`
+	// CreatedVia is web, desktop, webdav or editor; nil for versions from
+	// before this was recorded.
+	CreatedVia *string `json:"created_via"`
+	// Label is the user's name for a version; named versions are kept when
+	// old versions are cleaned up.
+	Label   *string `json:"label"`
+	Current bool    `json:"current"`
 }
 
 // file loads a live file the user holds at least need on.
@@ -44,14 +53,14 @@ func (s *Service) Versions(ctx context.Context, userID, nodeID uuid.UUID) ([]Ver
 		return nil, err
 	}
 	rows, err := s.db.Query(ctx, `
-		SELECT id, size, content_type, created_at, created_by FROM drive.versions
+		SELECT id, size, content_type, created_at, created_by, created_via, label FROM drive.versions
 		WHERE node_id = $1 ORDER BY created_at DESC, id DESC`, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("list versions: %w", err)
 	}
 	versions, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Version, error) {
 		var v Version
-		err := row.Scan(&v.ID, &v.Size, &v.ContentType, &v.CreatedAt, &v.CreatedBy)
+		err := row.Scan(&v.ID, &v.Size, &v.ContentType, &v.CreatedAt, &v.CreatedBy, &v.CreatedVia, &v.Label)
 		v.CreatedAt = v.CreatedAt.UTC()
 		v.Current = v.ID == *n.currentVersionID
 		return v, err
@@ -179,4 +188,84 @@ func (s *Service) DeleteVersion(ctx context.Context, userID, nodeID, versionID u
 		s.deleteObjectsSoon(ctx)
 	}
 	return err
+}
+
+const maxVersionLabel = 80
+
+// LabelVersion names a version, or removes its name (label nil). Named
+// versions survive PruneVersions. Naming changes no content, so edit is
+// enough.
+func (s *Service) LabelVersion(ctx context.Context, userID, nodeID, versionID uuid.UUID, label *string) error {
+	if label != nil {
+		l := strings.TrimSpace(*label)
+		if n := utf8.RuneCountInString(l); n == 0 || n > maxVersionLabel || strings.IndexFunc(l, unicode.IsControl) >= 0 {
+			return &InputError{"Geef de versie een naam van 1 tot 80 tekens."}
+		}
+		label = &l
+	}
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := s.file(ctx, tx, userID, nodeID, authz.Edit); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `UPDATE drive.versions SET label = $3 WHERE id = $1 AND node_id = $2`, versionID, nodeID, label)
+		if err != nil {
+			return fmt.Errorf("label version: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+// Pruned says what PruneVersions removed.
+type Pruned struct {
+	Versions int   `json:"versions"`
+	Bytes    int64 `json:"bytes"`
+}
+
+// PruneVersions deletes every old version of a file that has no name: the
+// current version and named ones stay. Like DeleteVersion it needs manage.
+func (s *Service) PruneVersions(ctx context.Context, userID, nodeID uuid.UUID) (Pruned, error) {
+	var out Pruned
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if err := s.lockNode(ctx, tx, nodeID); err != nil {
+			return err
+		}
+		n, err := s.file(ctx, tx, userID, nodeID, authz.Manage)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `
+			DELETE FROM drive.versions WHERE node_id = $1 AND id <> $2 AND label IS NULL
+			RETURNING object_key, size`, nodeID, *n.currentVersionID)
+		if err != nil {
+			return fmt.Errorf("prune versions: %w", err)
+		}
+		type gone struct {
+			key  string
+			size int64
+		}
+		removed, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (gone, error) {
+			var g gone
+			return g, row.Scan(&g.key, &g.size)
+		})
+		if err != nil {
+			return fmt.Errorf("prune versions: %w", err)
+		}
+		for _, g := range removed {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO drive.object_deletions (object_key, next_attempt_at) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+				g.key, s.now()); err != nil {
+				return fmt.Errorf("schedule object deletion: %w", err)
+			}
+			out.Versions++
+			out.Bytes += g.size
+		}
+		return nil
+	})
+	if err == nil && out.Versions > 0 {
+		s.deleteObjectsSoon(ctx)
+	}
+	return out, err
 }

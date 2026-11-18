@@ -65,6 +65,8 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 		r.Get("/files/{id}/versions/{version}/content", s.handleDownloadVersion)
 		r.Post("/files/{id}/versions/{version}/restore", s.handleRestoreVersion)
 		r.Delete("/files/{id}/versions/{version}", s.handleDeleteVersion)
+		r.Patch("/files/{id}/versions/{version}", s.handleLabelVersion)
+		r.Post("/files/{id}/versions/prune", s.handlePruneVersions)
 		r.Get("/nodes/{id}/shares", s.handleShares)
 		r.Put("/nodes/{id}/shares", s.handleShare)
 		r.Delete("/nodes/{id}/shares/{type}/{subject}", s.handleUnshare)
@@ -277,7 +279,16 @@ func (s *Service) handleDownloadVersion(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer obj.Close()
-	serveFile(w, r, n.Name, v.ID, v.CreatedAt, obj, "")
+	// ?inline=1: an old version in the viewer, under the same rules as the
+	// current one (whitelisted types only, sandboxed).
+	var show string
+	if r.URL.Query().Get("inline") == "1" {
+		if show = previewType(v.ContentType); show == "" {
+			httpserver.WriteError(w, http.StatusUnsupportedMediaType, "no_preview", "Van dit bestand is geen voorbeeld beschikbaar.")
+			return
+		}
+	}
+	serveFile(w, r, n.Name, v.ID, v.CreatedAt, obj, show)
 }
 
 // serveFile sends content as an attachment, or, with inlineType (a type
@@ -474,6 +485,42 @@ func (s *Service) handleDeleteVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleLabelVersion(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	var version uuid.UUID
+	if err == nil {
+		version, err = pathUUID(r, "version")
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	var in struct {
+		Label *string `json:"label"` // null removes the name
+	}
+	if !httpserver.DecodeJSON(w, r, &in) {
+		return
+	}
+	if err := s.LabelVersion(r.Context(), s.userID(r), id, version, in.Label); err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handlePruneVersions(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	var pruned Pruned
+	if err == nil {
+		pruned, err = s.PruneVersions(r.Context(), s.userID(r), id)
+	}
+	if err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, pruned)
 }
 
 func (s *Service) handleShares(w http.ResponseWriter, r *http.Request) {
