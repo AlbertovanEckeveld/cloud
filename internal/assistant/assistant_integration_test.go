@@ -211,17 +211,35 @@ func newProvider(t *testing.T) *provider {
 			refuse := p.refuseTools
 			p.mu.Unlock()
 			var in struct {
-				Messages []struct{ Role, Content string }
-				Tools    []any
+				Messages []struct {
+					Role, Content string
+					ToolCalls     []struct {
+						ExtraContent struct {
+							Google struct {
+								ThoughtSignature string `json:"thought_signature"`
+							} `json:"google"`
+						} `json:"extra_content"`
+					} `json:"tool_calls"`
+				}
+				Tools []any
 			}
 			_ = json.Unmarshal(body, &in)
 			if refuse && len(in.Tools) > 0 {
 				http.Error(w, `{"error":{"message":"tools are not supported"}}`, http.StatusBadRequest)
 				return
 			}
+			// Like Gemini: a tool call must come back with the signature it was sent with.
+			for _, m := range in.Messages {
+				for _, c := range m.ToolCalls {
+					if c.ExtraContent.Google.ThoughtSignature != "sig-1" {
+						http.Error(w, `{"error":{"message":"Function call is missing a thought_signature"}}`, http.StatusBadRequest)
+						return
+					}
+				}
+			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			call := func(name, args string) {
-				fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":%q,\"arguments\":\"\"}}]}}]}\n\n", name)
+				fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"extra_content\":{\"google\":{\"thought_signature\":\"sig-1\"}},\"function\":{\"name\":%q,\"arguments\":\"\"}}]}}]}\n\n", name)
 				fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":%q}}]}}]}\n\n", args)
 				fmt.Fprint(w, "data: [DONE]\n\n")
 			}

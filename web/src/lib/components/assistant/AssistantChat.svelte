@@ -49,6 +49,7 @@
 	let error = $state('');
 	let stop: AbortController | null = null;
 	let log = $state<HTMLElement>();
+	let input = $state<HTMLTextAreaElement>();
 	let viewing = $state<SearchResult | null>(null);
 
 	const mayManage = $derived(can(page.data.user, 'assistant.provider.manage'));
@@ -139,6 +140,9 @@
 			pending = null;
 			stop = null;
 			await scrollDown();
+			// The box was disabled while answering, which dropped the focus;
+			// take it back unless the user went on elsewhere.
+			if (!document.activeElement || document.activeElement === document.body) input?.focus();
 		}
 	}
 
@@ -242,7 +246,7 @@
 		{/if}
 		<form class="ask" onsubmit={ask}>
 			<label class="visually-hidden" for="question-{compact ? 'panel' : 'page'}">Je vraag</label>
-			<textarea id="question-{compact ? 'panel' : 'page'}" bind:value={question} onkeydown={keys} rows="2" maxlength="4000"
+			<textarea id="question-{compact ? 'panel' : 'page'}" bind:this={input} bind:value={question} onkeydown={keys} rows="2" maxlength="4000"
 				placeholder={focus.length ? 'Stel een vraag hierover…' : 'Stel een vraag over je bestanden…'} disabled={!!pending}></textarea>
 			{#if pending}
 				<button type="button" class="button" onclick={() => stop?.abort()}>Stoppen</button>

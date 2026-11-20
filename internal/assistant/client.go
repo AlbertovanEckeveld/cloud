@@ -241,9 +241,15 @@ type toolCall struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	} `json:"function"`
+	// ExtraContent is what a provider adds to a call and wants back with
+	// it unchanged, such as Gemini's thought_signature. Opaque to us.
+	ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 }
 
-const maxToolArguments = 4 << 10
+const (
+	maxToolArguments = 4 << 10
+	maxExtraContent  = 64 << 10
+)
 
 // Chat streams one turn (POST /chat/completions with stream), calling delta
 // for each piece of text as it arrives. With tools, the model may instead
@@ -280,9 +286,10 @@ func (c *client) Chat(ctx context.Context, model string, messages []message, too
 				Delta struct {
 					Content   string `json:"content"`
 					ToolCalls []struct {
-						Index    int    `json:"index"`
-						ID       string `json:"id"`
-						Function struct {
+						Index        int             `json:"index"`
+						ID           string          `json:"id"`
+						ExtraContent json.RawMessage `json:"extra_content"`
+						Function     struct {
 							Name      string `json:"name"`
 							Arguments string `json:"arguments"`
 						} `json:"function"`
@@ -305,6 +312,12 @@ func (c *client) Chat(ctx context.Context, model string, messages []message, too
 				call := &calls[tc.Index]
 				if tc.ID != "" {
 					call.ID = tc.ID
+				}
+				if len(tc.ExtraContent) > 0 && string(tc.ExtraContent) != "null" {
+					if len(tc.ExtraContent) > maxExtraContent {
+						return answer.String(), nil, &ProviderError{Kind: "incompatible", detail: errors.New("tool call extra content too long")}
+					}
+					call.ExtraContent = tc.ExtraContent
 				}
 				call.Function.Name += tc.Function.Name
 				call.Function.Arguments += tc.Function.Arguments

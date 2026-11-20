@@ -17,6 +17,8 @@
 	--error-bg: #3a1214;
 	--error-text: #ffb4b4;
 	--radius: 16px;
+	/* Width of the assistant panel; the file viewer makes room for it. */
+	--assistant-width: min(460px, 100vw);
 	--font: 'Inter', 'SF Pro Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
 	--mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
 	color-scheme: dark;

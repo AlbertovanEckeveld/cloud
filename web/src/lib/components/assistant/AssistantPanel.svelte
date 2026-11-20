@@ -55,7 +55,7 @@
 		right: 0;
 		bottom: 0;
 		z-index: 40;
-		width: min(460px, 100vw);
+		width: var(--assistant-width);
 		display: flex;
 		flex-direction: column;
 		background: var(--surface);
