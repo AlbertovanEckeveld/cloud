@@ -192,8 +192,10 @@ func (s *Service) handleAsk(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
 		_ = rc.Flush()
 	}
-	msg, err := s.Ask(r.Context(), s.userID(r), id, in.Content, in.Focus, func(text string) {
-		send("delta", map[string]string{"text": text})
+	msg, err := s.Ask(r.Context(), s.userID(r), id, in.Content, in.Focus, Stream{
+		Delta: func(text string) { send("delta", map[string]string{"text": text}) },
+		Step:  func(text string) { send("step", map[string]string{"text": text}) },
+		Reset: func() { send("reset", map[string]string{}) },
 	})
 	if err != nil {
 		if !started {

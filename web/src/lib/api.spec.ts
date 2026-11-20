@@ -378,20 +378,34 @@ describe('api.assistant.ask', () => {
 			stream('event: delta\ndata: {"text":"Het kost "}\n\nevent: del', 'ta\ndata: {"text":"5000 euro [1]."}\n\n', `event: done\ndata: ${JSON.stringify(done)}\n\n`),
 			async () => {
 				let text = '';
-				const msg = await api.assistant.ask('c1', 'Wat kost het?', (t) => (text += t));
+				const msg = await api.assistant.ask('c1', 'Wat kost het?', { delta: (t) => (text += t) });
 				expect(text).toBe('Het kost 5000 euro [1].');
 				expect(msg.sources[0]).toMatchObject({ n: 1, title: 'offerte.pdf', source: 'drive' });
 			}
 		));
 
+	it('passes on steps, and forgets text when the assistant goes on searching', () =>
+		withFetch(
+			stream('event: delta\ndata: {"text":"Even kijken"}\n\nevent: reset\ndata: {}\n\nevent: step\ndata: {"text":"Zocht naar dakkapel"}\n\n',
+				`event: delta\ndata: {"text":"Het kost 5000 euro [1]."}\n\nevent: done\ndata: ${JSON.stringify({ ...done, steps: ['Zocht naar dakkapel'] })}\n\n`),
+			async () => {
+				let text = '';
+				const steps: string[] = [];
+				const msg = await api.assistant.ask('c1', '?', { delta: (t) => (text += t), step: (s) => steps.push(s), reset: () => (text = '') });
+				expect(text).toBe('Het kost 5000 euro [1].');
+				expect(steps).toEqual(['Zocht naar dakkapel']);
+				expect(msg.steps).toEqual(['Zocht naar dakkapel']);
+			}
+		));
+
 	it('reports a provider failure in the middle of the stream', () =>
 		withFetch(stream('event: delta\ndata: {"text":"Het"}\n\nevent: error\ndata: {"message":"De aanbieder is niet bereikbaar."}\n\n'), async () => {
-			await expect(api.assistant.ask('c1', '?', () => {})).rejects.toThrow('De aanbieder is niet bereikbaar.');
+			await expect(api.assistant.ask('c1', '?', { delta: () => {} })).rejects.toThrow('De aanbieder is niet bereikbaar.');
 		}));
 
 	it('fails when the stream ends without an answer', () =>
 		withFetch(stream('event: delta\ndata: {"text":"Het"}\n\n'), async () => {
-			await expect(api.assistant.ask('c1', '?', () => {})).rejects.toBeInstanceOf(ApiError);
+			await expect(api.assistant.ask('c1', '?', { delta: () => {} })).rejects.toBeInstanceOf(ApiError);
 		}));
 });
 

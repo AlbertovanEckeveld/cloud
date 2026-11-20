@@ -45,7 +45,7 @@
 	let messages = $state<ChatMessage[]>([]);
 	let loaded = $state<string | null>(null);
 	let question = $state('');
-	let pending = $state<{ question: string; answer: string } | null>(null);
+	let pending = $state<{ question: string; answer: string; steps: string[] } | null>(null);
 	let error = $state('');
 	let stop: AbortController | null = null;
 	let log = $state<HTMLElement>();
@@ -100,7 +100,7 @@
 		const q = question.trim();
 		if (!q || pending) return;
 		error = '';
-		pending = { question: q, answer: '' };
+		pending = { question: q, answer: '', steps: [] };
 		question = '';
 		stop = new AbortController();
 		await scrollDown();
@@ -114,14 +114,23 @@
 			const reply = await api.assistant.ask(
 				conversation,
 				q,
-				(text) => {
-					if (pending) pending.answer += text;
-					scrollDown();
+				{
+					delta: (text) => {
+						if (pending) pending.answer += text;
+						scrollDown();
+					},
+					step: (text) => {
+						pending?.steps.push(text);
+						scrollDown();
+					},
+					reset: () => {
+						if (pending) pending.answer = '';
+					}
 				},
 				stop.signal,
 				focus
 			);
-			messages = [...messages, { id: `q-${reply.id}`, role: 'user', content: q, sources: [], created_at: reply.created_at }, reply];
+			messages = [...messages, { id: `q-${reply.id}`, role: 'user', content: q, sources: [], steps: [], created_at: reply.created_at }, reply];
 			onConversation?.({ id: conversation, title: '', created_at: reply.created_at, updated_at: reply.created_at });
 		} catch (err) {
 			if (!stop?.signal.aborted) error = errorMessage(err);
@@ -183,6 +192,12 @@
 			{#each messages as m (m.id)}
 				<article class="msg msg--{m.role}">
 					{#if m.role === 'assistant'}
+						{#if m.steps.length > 0}
+							<details class="steps">
+								<summary class="muted small">{m.steps.length} {m.steps.length === 1 ? 'stap' : 'stappen'}</summary>
+								<ul>{#each m.steps as step, i (i)}<li class="muted small">{step}</li>{/each}</ul>
+							</details>
+						{/if}
 						<Markdown source={m.content} />
 						{#if m.sources.length > 0}
 							<ol class="sources" aria-label="Bronnen">
@@ -207,6 +222,9 @@
 			{#if pending}
 				<article class="msg msg--user"><p>{pending.question}</p></article>
 				<article class="msg msg--assistant">
+					{#if pending.steps.length > 0}
+						<ul class="steps live">{#each pending.steps as step, i (i)}<li class="muted small with-icon"><Icon name="search" size={14} />{step}</li>{/each}</ul>
+					{/if}
 					{#if pending.answer}<Markdown source={pending.answer} />{:else}<p class="muted">Zoeken in je bestanden…</p>{/if}
 				</article>
 			{/if}
@@ -308,6 +326,18 @@
 	}
 	.sources span {
 		margin-left: 0.4rem;
+	}
+	.steps {
+		margin: 0 0 0.6rem;
+	}
+	.steps ul,
+	ul.steps {
+		list-style: none;
+		padding: 0;
+		margin: 0.3rem 0 0;
+	}
+	.steps summary {
+		cursor: pointer;
 	}
 	.focus {
 		display: flex;

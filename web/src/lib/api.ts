@@ -313,7 +313,19 @@ export interface ChatMessage {
 	role: 'user' | 'assistant';
 	content: string;
 	sources: AnswerSource[];
+	/** What the assistant did for this answer: "Zocht naar …", "Las …". */
+	steps: string[];
 	created_at: string;
+}
+
+/** What arrives while an answer is made. */
+export interface AnswerEvents {
+	/** A piece of the answer. */
+	delta: (text: string) => void;
+	/** Something the assistant did, such as a search. */
+	step?: (text: string) => void;
+	/** Forget the text so far: the assistant went on searching. */
+	reset?: () => void;
 }
 
 export interface Conversation {
@@ -1014,6 +1026,7 @@ export const parseChatMessage: Validator<ChatMessage> = (v) => {
 		role,
 		content: str(r, 'content'),
 		sources: list(r, 'sources', (x) => ({ ...parseKnowledgeItem(x), n: num(record(x, 'source'), 'n') })),
+		steps: r.steps === undefined ? [] : strList(r, 'steps'),
 		created_at: str(r, 'created_at')
 	};
 };
@@ -1506,7 +1519,7 @@ export const api = {
 		ask: async (
 			id: string,
 			content: string,
-			onDelta: (text: string) => void,
+			events: AnswerEvents,
 			signal?: AbortSignal,
 			focus: { source: string; id: string }[] = []
 		): Promise<ChatMessage> => {
@@ -1540,7 +1553,9 @@ export const api = {
 			}
 			let done: ChatMessage | null = null;
 			await readEvents(res, (event, data) => {
-				if (event === 'delta') onDelta(str(record(data, 'delta'), 'text'));
+				if (event === 'delta') events.delta(str(record(data, 'delta'), 'text'));
+				else if (event === 'step') events.step?.(str(record(data, 'step'), 'text'));
+				else if (event === 'reset') events.reset?.();
 				else if (event === 'done') done = parseChatMessage(data);
 				else if (event === 'error') throw new ApiError(502, 'provider', str(record(data, 'error'), 'message'));
 			});

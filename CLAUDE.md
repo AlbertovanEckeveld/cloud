@@ -245,6 +245,11 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   Rechten via `drive.Visible` vóór pagina of model. Geen NATS, geen Python-worker nodig. Testen
   tijdelijk met Gemini (extern, opt-in); later een lokaal model (Ollama). pgvector moet een
   superuser eenmalig installeren (ook op de VM).
+- Assistent overal (ADR 0024, 2026-11-20): F1 bronnen (`internal/core/knowledge`: elke module levert
+  een `Source`, drive is de eerste; registratie in `main.go`), F2 zijpaneel op elke pagina (Ctrl+J)
+  met context (bestand, map) en ingangen in bestandslijst, lezer, zoekresultaten en startpagina,
+  F3 hulpmiddelen alleen-lezen (zoeken, lezen, inhoud; op bronnummers, als de gebruiker; stappen
+  zichtbaar) gebouwd en getest. F4 (bronnen/acties met bevestiging) komt met pim, photos, mail.
 - Open vragen: definitieve keuze Go vs. Rust (huidige keuze: Go)
 
 ## 12. Beslissingen
@@ -257,6 +262,8 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - CI: GitHub Actions. Uitrollen alleen pull-based: de VM start alleen images die cosign
   (keyless) als gebouwd door `release.yml` op `main` herkent; GitHub krijgt geen toegang tot de
   VM (ADR 0020). Actions vastgezet op commit-SHA.
+- Elke module die inhoud heeft, levert de assistent een `knowledge.Source` (ADR 0024). Acties die
+  iets veranderen alleen als voorstel dat de gebruiker bevestigt; het model voert nooit zelf uit.
 - Beheer via rollen en vaste rechten (`module.onderwerp.actie`), toegekend aan gebruikers of groepen;
   ingebouwde rol Beheerder heeft alles. Nooit meer uitdelen dan je zelf hebt, geen ingrepen bij
   zwaardere accounts, altijd minstens één Beheerder (ADR 0022). `is_admin` bestaat niet meer.

@@ -212,25 +212,57 @@ func (c *client) Embed(ctx context.Context, model string, inputs []string) ([][]
 	return vectors, nil
 }
 
-// message is one turn sent to a chat model.
+// message is one turn sent to a chat model: from the user or the model, or
+// the result of a tool the model called.
 type message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
-// Chat streams an answer (POST /chat/completions with stream), calling
-// delta for each piece of text as it arrives. It returns the whole answer.
-func (c *client) Chat(ctx context.Context, model string, messages []message, delta func(string)) (string, error) {
+// tool describes a function the model may call (OpenAI "tools").
+type tool struct {
+	Type     string       `json:"type"` // always "function"
+	Function toolFunction `json:"function"`
+}
+
+type toolFunction struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+// toolCall is the model asking for a tool, with its arguments as JSON.
+type toolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+const maxToolArguments = 4 << 10
+
+// Chat streams one turn (POST /chat/completions with stream), calling delta
+// for each piece of text as it arrives. With tools, the model may instead
+// ask for tool calls; those are returned whole (they arrive in pieces).
+func (c *client) Chat(ctx context.Context, model string, messages []message, tools []tool, delta func(string)) (string, []toolCall, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	resp, err := c.do(ctx, http.MethodPost, "/chat/completions", map[string]any{
-		"model": model, "messages": messages, "stream": true, "temperature": 0.2,
-	})
+	body := map[string]any{"model": model, "messages": messages, "stream": true, "temperature": 0.2}
+	if len(tools) > 0 {
+		body["tools"] = tools
+		body["tool_choice"] = "auto"
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/chat/completions", body)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer resp.Body.Close()
 	var answer strings.Builder
+	var calls []toolCall
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), maxChatLine)
 	for sc.Scan() {
@@ -246,26 +278,57 @@ func (c *client) Chat(ctx context.Context, model string, messages []message, del
 		var ev struct {
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content   string `json:"content"`
+					ToolCalls []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
 				} `json:"delta"`
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
-			return answer.String(), &ProviderError{Kind: "incompatible", detail: err}
+			return answer.String(), nil, &ProviderError{Kind: "incompatible", detail: err}
 		}
 		for _, ch := range ev.Choices {
+			// Tool calls come in pieces, joined by their index.
+			for _, tc := range ch.Delta.ToolCalls {
+				if tc.Index < 0 || tc.Index > 15 {
+					return answer.String(), nil, &ProviderError{Kind: "incompatible", detail: fmt.Errorf("tool call index %d", tc.Index)}
+				}
+				for len(calls) <= tc.Index {
+					calls = append(calls, toolCall{Type: "function"})
+				}
+				call := &calls[tc.Index]
+				if tc.ID != "" {
+					call.ID = tc.ID
+				}
+				call.Function.Name += tc.Function.Name
+				call.Function.Arguments += tc.Function.Arguments
+				if len(call.Function.Arguments) > maxToolArguments {
+					return answer.String(), nil, &ProviderError{Kind: "incompatible", detail: errors.New("tool arguments too long")}
+				}
+			}
 			if ch.Delta.Content == "" {
 				continue
 			}
 			if answer.Len()+len(ch.Delta.Content) > maxAnswer {
-				return answer.String(), nil // long enough; stop rather than store unbounded text
+				return answer.String(), calls, nil // long enough; stop rather than store unbounded text
 			}
 			answer.WriteString(ch.Delta.Content)
 			delta(ch.Delta.Content)
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return answer.String(), &ProviderError{Kind: "unreachable", detail: err}
+		return answer.String(), nil, &ProviderError{Kind: "unreachable", detail: err}
 	}
-	return answer.String(), nil
+	for i := range calls {
+		if calls[i].ID == "" {
+			calls[i].ID = fmt.Sprintf("call_%d", i) // some providers leave it out
+		}
+	}
+	return answer.String(), calls, nil
 }

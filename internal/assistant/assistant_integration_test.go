@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -166,10 +167,11 @@ func embed(text string) []float32 {
 // provider is a fake OpenAI-compatible server that records what the chat
 // model was given.
 type provider struct {
-	srv      *httptest.Server
-	mu       sync.Mutex
-	prompts  []string
-	embedded int
+	srv         *httptest.Server
+	mu          sync.Mutex
+	prompts     []string
+	embedded    int
+	refuseTools bool // answer 400 to requests with tools
 }
 
 func newProvider(t *testing.T) *provider {
@@ -206,8 +208,45 @@ func newProvider(t *testing.T) *provider {
 		case "/v1/chat/completions":
 			p.mu.Lock()
 			p.prompts = append(p.prompts, string(body))
+			refuse := p.refuseTools
 			p.mu.Unlock()
+			var in struct {
+				Messages []struct{ Role, Content string }
+				Tools    []any
+			}
+			_ = json.Unmarshal(body, &in)
+			if refuse && len(in.Tools) > 0 {
+				http.Error(w, `{"error":{"message":"tools are not supported"}}`, http.StatusBadRequest)
+				return
+			}
 			w.Header().Set("Content-Type", "text/event-stream")
+			call := func(name, args string) {
+				fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":%q,\"arguments\":\"\"}}]}}]}\n\n", name)
+				fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":%q}}]}}]}\n\n", args)
+				fmt.Fprint(w, "data: [DONE]\n\n")
+			}
+			last := in.Messages[len(in.Messages)-1]
+			first := ""
+			for _, m := range in.Messages {
+				if m.Role == "user" {
+					first = m.Content
+				}
+			}
+			if len(in.Tools) > 0 {
+				switch {
+				case last.Role == "user" && strings.Contains(last.Content, "ZOEKTEST"):
+					call("zoeken", `{"zoekopdracht":"dakkapel"}`)
+					return
+				case last.Role == "user" && strings.Contains(last.Content, "ONGELDIG"):
+					call("lezen", `{"nummer":99}`)
+					return
+				case last.Role == "tool" && strings.Contains(last.Content, "<resultaat>") && strings.Contains(first, "ZOEKTEST"):
+					if m := regexp.MustCompile(`\[(\d+)\]`).FindStringSubmatch(last.Content); m != nil {
+						call("lezen", `{"nummer":`+m[1]+`}`)
+						return
+					}
+				}
+			}
 			for _, part := range []string{"Volgens ", "[1] kost ", "het 5000 euro."} {
 				fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", part)
 			}
@@ -347,7 +386,7 @@ func TestAssistant(t *testing.T) {
 		t.Fatal(err)
 	}
 	var streamed strings.Builder
-	msg, err := e.svc.Ask(ctx, ann, conv.ID, "Wat kost de dakkapel?", nil, func(s string) { streamed.WriteString(s) })
+	msg, err := e.svc.Ask(ctx, ann, conv.ID, "Wat kost de dakkapel?", nil, Stream{Delta: func(s string) { streamed.WriteString(s) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +406,7 @@ func TestAssistant(t *testing.T) {
 	if _, err := e.svc.GetConversation(ctx, bob, conv.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("bob reads ann's conversation: %v", err)
 	}
-	if _, err := e.svc.Ask(ctx, bob, conv.ID, "?", nil, func(string) {}); !errors.Is(err, ErrNotFound) {
+	if _, err := e.svc.Ask(ctx, bob, conv.ID, "?", nil, Stream{Delta: func(string) {}}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("bob asks in ann's conversation: %v", err)
 	}
 	// Losing access hides the source later too.
@@ -381,14 +420,14 @@ func TestAssistant(t *testing.T) {
 	// someone who may see it.
 	conv2, _ := e.svc.CreateConversation(ctx, ann)
 	about := []Focus{{Source: "notes", ID: note.String()}}
-	if _, err := e.svc.Ask(ctx, ann, conv2.ID, "Vat samen", about, func(string) {}); err != nil {
+	if _, err := e.svc.Ask(ctx, ann, conv2.ID, "Vat samen", about, Stream{Delta: func(string) {}}); err != nil {
 		t.Fatal(err)
 	}
 	if p := e.prov.prompts[len(e.prov.prompts)-1]; !strings.Contains(p, "aannemer belt volgende week") {
 		t.Errorf("the focused note is not in ann's prompt:\n%s", p)
 	}
 	bobConv, _ := e.svc.CreateConversation(ctx, bob)
-	if _, err := e.svc.Ask(ctx, bob, bobConv.ID, "Vat samen", about, func(string) {}); err != nil {
+	if _, err := e.svc.Ask(ctx, bob, bobConv.ID, "Vat samen", about, Stream{Delta: func(string) {}}); err != nil {
 		t.Fatal(err)
 	}
 	if p := e.prov.prompts[len(e.prov.prompts)-1]; strings.Contains(p, "aannemer") {
@@ -397,7 +436,7 @@ func TestAssistant(t *testing.T) {
 	// A folder: what it holds.
 	folder := newID()
 	e.files.folders[folder] = []uuid.UUID{quote, shared}
-	if _, err := e.svc.Ask(ctx, ann, conv2.ID, "Wat staat hier?", []Focus{{Source: "drive", ID: folder.String()}}, func(string) {}); err != nil {
+	if _, err := e.svc.Ask(ctx, ann, conv2.ID, "Wat staat hier?", []Focus{{Source: "drive", ID: folder.String()}}, Stream{Delta: func(string) {}}); err != nil {
 		t.Fatal(err)
 	}
 	// Ann lost access to the quote above: the folder shows only what she may see.
@@ -405,7 +444,7 @@ func TestAssistant(t *testing.T) {
 		t.Errorf("the folder's contents in the prompt:\n%s", p)
 	}
 	var input *InputError
-	if _, err := e.svc.Ask(ctx, ann, conv2.ID, "?", []Focus{{Source: "elders", ID: "x"}}, func(string) {}); !errors.As(err, &input) {
+	if _, err := e.svc.Ask(ctx, ann, conv2.ID, "?", []Focus{{Source: "elders", ID: "x"}}, Stream{Delta: func(string) {}}); !errors.As(err, &input) {
 		t.Errorf("focus on an unknown source: %v", err)
 	}
 
@@ -529,7 +568,7 @@ func TestProviderRules(t *testing.T) {
 	_ = e.svc.SaveSettings(ctx, Settings{})
 	user := e.user(t)
 	conv, _ := e.svc.CreateConversation(ctx, user)
-	if _, err := e.svc.Ask(ctx, user, conv.ID, "Hallo?", nil, func(string) {}); !errors.Is(err, ErrNotConfigured) {
+	if _, err := e.svc.Ask(ctx, user, conv.ID, "Hallo?", nil, Stream{Delta: func(string) {}}); !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("ask without a model: %v", err)
 	}
 }
@@ -586,5 +625,71 @@ func TestHTTP(t *testing.T) {
 		strings.NewReader(`{"content":"   "}`))
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("empty question: %d", resp.StatusCode)
+	}
+}
+
+func TestTools(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	ann, bob := e.user(t), e.user(t)
+	quote := newID()
+	e.files.files[quote] = &fakeFile{name: "offerte.pdf", version: newID(), viewers: []uuid.UUID{ann},
+		text: "Offerte voor de dakkapel. De dakkapel kost 5000 euro inclusief plaatsing."}
+	e.configure(t, "embed-m")
+	if err := e.svc.sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The model searches, reads the first result, then answers.
+	conv, _ := e.svc.CreateConversation(ctx, ann)
+	var steps []string
+	resets := 0
+	msg, err := e.svc.Ask(ctx, ann, conv.ID, "ZOEKTEST wat kost het?", nil, Stream{
+		Delta: func(string) {}, Step: func(s string) { steps = append(steps, s) }, Reset: func() { resets++ }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(steps, " | ") != "Zocht naar “dakkapel” | Las “offerte.pdf”" || strings.Join(msg.Steps, " | ") != strings.Join(steps, " | ") {
+		t.Fatalf("steps: %v / stored %v", steps, msg.Steps)
+	}
+	if last := e.prov.prompts[len(e.prov.prompts)-1]; !strings.Contains(last, "inclusief plaatsing") {
+		t.Errorf("the read text did not reach the model:\n%s", last)
+	}
+	if !slices.ContainsFunc(msg.Sources, func(s Source) bool { return s.ID == quote.String() }) {
+		t.Errorf("the file found by the tool is not among the sources: %+v", msg.Sources)
+	}
+	if got, _ := e.svc.GetConversation(ctx, ann, conv.ID); len(got.Messages[1].Steps) != 2 {
+		t.Errorf("steps not stored: %+v", got.Messages[1])
+	}
+
+	// Bob's search finds nothing of Ann's, so there is nothing to read.
+	bobConv, _ := e.svc.CreateConversation(ctx, bob)
+	if _, err := e.svc.Ask(ctx, bob, bobConv.ID, "ZOEKTEST wat kost het?", nil, Stream{Delta: func(string) {}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range e.prov.prompts[len(e.prov.prompts)-2:] {
+		if strings.Contains(p, "offerte.pdf") || strings.Contains(p, "5000 euro inclusief") {
+			t.Fatalf("ann's file reached bob through a tool:\n%s", p)
+		}
+	}
+
+	// A number the model made up reads nothing.
+	if _, err := e.svc.Ask(ctx, ann, conv.ID, "ONGELDIG", nil, Stream{Delta: func(string) {}}); err != nil {
+		t.Fatal(err)
+	}
+	if last := e.prov.prompts[len(e.prov.prompts)-1]; !strings.Contains(last, "Onbekend of niet beschikbaar bronnummer") {
+		t.Errorf("reading an unknown number:\n%s", last)
+	}
+
+	// A provider that refuses tools still answers, from what was found beforehand.
+	e.prov.mu.Lock()
+	e.prov.refuseTools = true
+	e.prov.mu.Unlock()
+	msg, err = e.svc.Ask(ctx, ann, conv.ID, "Wat kost de dakkapel?", nil, Stream{Delta: func(string) {}})
+	if err != nil || msg.Content == "" || len(msg.Steps) != 0 {
+		t.Fatalf("without tools: %+v %v", msg, err)
+	}
+	if last := e.prov.prompts[len(e.prov.prompts)-1]; strings.Contains(last, `"tools"`) || strings.Contains(last, "Hulpmiddelen:") {
+		t.Errorf("tools were offered again after a refusal:\n%s", last)
 	}
 }
