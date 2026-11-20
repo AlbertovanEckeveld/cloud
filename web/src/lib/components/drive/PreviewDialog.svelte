@@ -6,6 +6,7 @@
 	import { api, errorMessage, type DriveNode } from '#lib/api.ts';
 	import { formatBytes, previewKind } from '#lib/format.ts';
 	import Markdown from './Markdown.svelte';
+	import { askAssistant, assistant } from '#lib/assistant-state.svelte.ts';
 	import PdfView from './PdfView.svelte';
 
 	let {
@@ -67,6 +68,10 @@
 				<button class="icon-button" aria-label="Vorige" title="Vorige (←)" onclick={() => go(-1)}><Icon name="left" /></button>
 				<span class="muted small">{index + 1} / {files.length}</span>
 				<button class="icon-button" aria-label="Volgende" title="Volgende (→)" onclick={() => go(1)}><Icon name="right" /></button>
+			{/if}
+			{#if assistant.available && !version}
+				<button class="icon-button" aria-label="Samenvatten met de assistent" title="Samenvatten"
+					onclick={() => (dialog.close(), askAssistant('Vat dit bestand samen.', [{ source: 'drive', id: file.id, title: file.name, kind: 'file' }]))}><Icon name="spark" /></button>
 			{/if}
 			<a class="icon-button" href={download(file.id)} download aria-label="Downloaden" title="Downloaden"><Icon name="download" /></a>
 			<button class="icon-button" aria-label="Sluiten" title="Sluiten (Esc)" onclick={() => dialog.close()}><Icon name="close" /></button>

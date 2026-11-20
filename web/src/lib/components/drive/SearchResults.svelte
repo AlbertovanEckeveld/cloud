@@ -5,6 +5,7 @@
 	import { dateTime, formatBytes, previewKind, snippetParts, timeAgo } from '#lib/format.ts';
 	import PreviewDialog from './PreviewDialog.svelte';
 	import { editable } from '#lib/drive-state.svelte.ts';
+	import { askAssistant, assistant } from '#lib/assistant-state.svelte.ts';
 
 	let { query }: { query: string } = $props();
 
@@ -31,7 +32,12 @@
 	});
 </script>
 
-<h1 class="title">Zoekresultaten voor "{query.trim()}"</h1>
+<div class="head">
+	<h1 class="title">Zoekresultaten voor "{query.trim()}"</h1>
+	{#if assistant.available}
+		<button class="button with-icon" onclick={() => askAssistant(query.trim())}><Icon name="spark" />Vraag de assistent</button>
+	{/if}
+</div>
 {#if error}
 	<p class="flash flash--error" role="alert">{error}</p>
 {:else if results === null}
@@ -82,6 +88,13 @@
 {/if}
 
 <style>
+	.head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
 	.title {
 		font-size: 1.15rem;
 		font-weight: 500;

@@ -170,7 +170,8 @@ func (s *Service) handleAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Content string `json:"content"`
+		Content string  `json:"content"`
+		Focus   []Focus `json:"focus"` // what the question is about, if anything
 	}
 	if !httpserver.DecodeJSON(w, r, &in) {
 		return
@@ -191,7 +192,7 @@ func (s *Service) handleAsk(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
 		_ = rc.Flush()
 	}
-	msg, err := s.Ask(r.Context(), s.userID(r), id, in.Content, func(text string) {
+	msg, err := s.Ask(r.Context(), s.userID(r), id, in.Content, in.Focus, func(text string) {
 		send("delta", map[string]string{"text": text})
 	})
 	if err != nil {

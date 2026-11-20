@@ -34,9 +34,10 @@ import (
 
 // fakeSource stands in for a module: items with text, and who may see them.
 type fakeSource struct {
-	name  string
-	mu    sync.Mutex
-	files map[uuid.UUID]*fakeFile
+	name    string
+	mu      sync.Mutex
+	files   map[uuid.UUID]*fakeFile
+	folders map[uuid.UUID][]uuid.UUID // folder -> files in it (a knowledge.Container)
 }
 
 type fakeFile struct {
@@ -48,7 +49,25 @@ type fakeFile struct {
 }
 
 func newSource(name string) *fakeSource {
-	return &fakeSource{name: name, files: map[uuid.UUID]*fakeFile{}}
+	return &fakeSource{name: name, files: map[uuid.UUID]*fakeFile{}, folders: map[uuid.UUID][]uuid.UUID{}}
+}
+
+// Children implements knowledge.Container for folders whose files the user
+// may all see.
+func (f *fakeSource) Children(_ context.Context, user uuid.UUID, id string) ([]knowledge.Item, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	kids, ok := f.folders[uuid.MustParse(id)]
+	if !ok {
+		return nil, knowledge.ErrNotFound
+	}
+	var out []knowledge.Item
+	for _, k := range kids {
+		if file := f.files[k]; file != nil && slices.Contains(file.viewers, user) {
+			out = append(out, f.item(k, file))
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeSource) Name() string { return f.name }
@@ -101,6 +120,8 @@ func (f *fakeSource) Visible(_ context.Context, user uuid.UUID, ids []string) ([
 		nid := uuid.MustParse(id)
 		if file, ok := f.files[nid]; ok && slices.Contains(file.viewers, user) {
 			out = append(out, f.item(nid, file))
+		} else if _, ok := f.folders[nid]; ok {
+			out = append(out, knowledge.Item{Source: f.name, ID: id, Kind: "folder", Title: "Projecten", Link: "/files/" + id})
 		}
 	}
 	return out, nil
@@ -326,7 +347,7 @@ func TestAssistant(t *testing.T) {
 		t.Fatal(err)
 	}
 	var streamed strings.Builder
-	msg, err := e.svc.Ask(ctx, ann, conv.ID, "Wat kost de dakkapel?", func(s string) { streamed.WriteString(s) })
+	msg, err := e.svc.Ask(ctx, ann, conv.ID, "Wat kost de dakkapel?", nil, func(s string) { streamed.WriteString(s) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +367,7 @@ func TestAssistant(t *testing.T) {
 	if _, err := e.svc.GetConversation(ctx, bob, conv.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("bob reads ann's conversation: %v", err)
 	}
-	if _, err := e.svc.Ask(ctx, bob, conv.ID, "?", func(string) {}); !errors.Is(err, ErrNotFound) {
+	if _, err := e.svc.Ask(ctx, bob, conv.ID, "?", nil, func(string) {}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("bob asks in ann's conversation: %v", err)
 	}
 	// Losing access hides the source later too.
@@ -354,6 +375,38 @@ func TestAssistant(t *testing.T) {
 	got, _ = e.svc.GetConversation(ctx, ann, conv.ID)
 	if slices.ContainsFunc(got.Messages[1].Sources, func(s Source) bool { return s.ID == quote.String() }) {
 		t.Errorf("a source ann can no longer open is still listed: %+v", got.Messages[1].Sources)
+	}
+
+	// A question about one item: its whole text goes along, but only for
+	// someone who may see it.
+	conv2, _ := e.svc.CreateConversation(ctx, ann)
+	about := []Focus{{Source: "notes", ID: note.String()}}
+	if _, err := e.svc.Ask(ctx, ann, conv2.ID, "Vat samen", about, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if p := e.prov.prompts[len(e.prov.prompts)-1]; !strings.Contains(p, "aannemer belt volgende week") {
+		t.Errorf("the focused note is not in ann's prompt:\n%s", p)
+	}
+	bobConv, _ := e.svc.CreateConversation(ctx, bob)
+	if _, err := e.svc.Ask(ctx, bob, bobConv.ID, "Vat samen", about, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if p := e.prov.prompts[len(e.prov.prompts)-1]; strings.Contains(p, "aannemer") {
+		t.Errorf("ann's note reached bob's prompt through focus:\n%s", p)
+	}
+	// A folder: what it holds.
+	folder := newID()
+	e.files.folders[folder] = []uuid.UUID{quote, shared}
+	if _, err := e.svc.Ask(ctx, ann, conv2.ID, "Wat staat hier?", []Focus{{Source: "drive", ID: folder.String()}}, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	// Ann lost access to the quote above: the folder shows only what she may see.
+	if p := e.prov.prompts[len(e.prov.prompts)-1]; !strings.Contains(p, "Inhoud (1 item)") || !strings.Contains(p, "- notulen.md") || strings.Contains(p, "- offerte.pdf") {
+		t.Errorf("the folder's contents in the prompt:\n%s", p)
+	}
+	var input *InputError
+	if _, err := e.svc.Ask(ctx, ann, conv2.ID, "?", []Focus{{Source: "elders", ID: "x"}}, func(string) {}); !errors.As(err, &input) {
+		t.Errorf("focus on an unknown source: %v", err)
 	}
 
 	// A changed file is indexed again; a removed one is forgotten.
@@ -476,7 +529,7 @@ func TestProviderRules(t *testing.T) {
 	_ = e.svc.SaveSettings(ctx, Settings{})
 	user := e.user(t)
 	conv, _ := e.svc.CreateConversation(ctx, user)
-	if _, err := e.svc.Ask(ctx, user, conv.ID, "Hallo?", func(string) {}); !errors.Is(err, ErrNotConfigured) {
+	if _, err := e.svc.Ask(ctx, user, conv.ID, "Hallo?", nil, func(string) {}); !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("ask without a model: %v", err)
 	}
 }

@@ -1,5 +1,14 @@
 <script lang="ts">
 	import { can, canAnyIn } from '#lib/permissions.ts';
+	import Icon from '#lib/components/Icon.svelte';
+	import { askAssistant, assistant } from '#lib/assistant-state.svelte.ts';
+
+	let question = $state('');
+	function ask(e: SubmitEvent) {
+		e.preventDefault();
+		if (question.trim()) askAssistant(question.trim());
+		question = '';
+	}
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -12,6 +21,14 @@
 {#if data.user}
 	<h1>Welkom, {data.user.display_name}</h1>
 	<p class="muted">Agenda, foto's en meer volgen in de komende fases.</p>
+
+	{#if assistant.available}
+		<form class="ask" onsubmit={ask}>
+			<Icon name="spark" />
+			<input bind:value={question} maxlength="4000" placeholder="Vraag de assistent iets over je bestanden…" aria-label="Vraag aan de assistent" />
+			<button class="button button--primary" disabled={!question.trim()}>Vragen</button>
+		</form>
+	{/if}
 
 	<div class="cards">
 		<a class="panel card" href="/files">
@@ -48,6 +65,20 @@
 {/if}
 
 <style>
+	.ask {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin-top: 1.5rem;
+		padding: 0.4rem 0.4rem 0.4rem 1rem;
+		background: var(--surface-2);
+		border-radius: 999px;
+		max-width: 720px;
+	}
+	.ask input {
+		border: 0;
+		background: none;
+	}
 	.cards {
 		display: grid;
 		gap: 1rem;

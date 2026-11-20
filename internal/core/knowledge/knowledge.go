@@ -55,3 +55,11 @@ type Source interface {
 	// Search finds items by name and words among what the user may see.
 	Search(ctx context.Context, user uuid.UUID, query string) ([]Item, error)
 }
+
+// Container is offered by sources whose items hold other items (a folder,
+// later a notebook or an album), so "what is in here?" can be answered.
+type Container interface {
+	// Children lists what the item holds, as the user may see it, or
+	// ErrNotFound when the user may not see the item or it holds nothing.
+	Children(ctx context.Context, user uuid.UUID, id string) ([]Item, error)
+}

@@ -116,3 +116,28 @@ func linkOf(r SearchResult) string {
 	}
 	return "/files"
 }
+
+// Children implements knowledge.Container: what a folder holds, as the
+// file browser would show it to this user.
+func (k Knowledge) Children(ctx context.Context, user uuid.UUID, id string) ([]knowledge.Item, error) {
+	folder, err := uuid.Parse(id)
+	if err != nil {
+		return nil, knowledge.ErrNotFound
+	}
+	view, err := k.s.List(ctx, user, &folder)
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrForbidden) || errors.Is(err, ErrNotFolder) {
+		return nil, knowledge.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	name := ""
+	if view.Folder != nil {
+		name = view.Folder.Name
+	}
+	results := make([]SearchResult, len(view.Children))
+	for i, n := range view.Children {
+		results[i] = SearchResult{Node: n, Location: name, LocationID: &folder}
+	}
+	return items(results)
+}

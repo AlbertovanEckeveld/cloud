@@ -1503,13 +1503,19 @@ export const api = {
 		 * Asks a question; onDelta gets the answer as it is written. Resolves
 		 * with the stored answer. Abort with signal to stop.
 		 */
-		ask: async (id: string, content: string, onDelta: (text: string) => void, signal?: AbortSignal): Promise<ChatMessage> => {
+		ask: async (
+			id: string,
+			content: string,
+			onDelta: (text: string) => void,
+			signal?: AbortSignal,
+			focus: { source: string; id: string }[] = []
+		): Promise<ChatMessage> => {
 			let res: Response;
 			try {
 				res = await fetch(`/api/v1/assistant/conversations/${enc(id)}/messages`, {
 					method: 'POST',
 					headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
-					body: JSON.stringify({ content }),
+					body: JSON.stringify({ content, focus: focus.map((f) => ({ source: f.source, id: f.id })) }),
 					credentials: 'same-origin',
 					signal
 				});

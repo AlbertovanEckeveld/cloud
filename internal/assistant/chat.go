@@ -22,6 +22,9 @@ const (
 	historyTurns       = 10   // earlier messages sent along
 	contextChunks      = 6    // passages, by meaning
 	keywordFiles       = 3    // items found by name or words, added
+	maxFocus           = 5    // items a question can be about
+	focusChars         = 12000
+	focusChildren      = 200
 	conversationMaxAge = 90 * 24 * time.Hour
 )
 
@@ -182,6 +185,13 @@ func (s *Service) pruneConversations(ctx context.Context) error {
 	return nil
 }
 
+// Focus is an item a question is about ("this file", "this folder"): only a
+// reference; the server reads it, after checking the user may see it.
+type Focus struct {
+	Source string `json:"source"`
+	ID     string `json:"id"`
+}
+
 // passage is text from an item the user may see, given to the model.
 type passage struct {
 	source Source
@@ -191,7 +201,7 @@ type passage struct {
 // retrieve gathers what the model may read for a question: passages found
 // by meaning and items found by name or words, all through their source's
 // permission check first.
-func (s *Service) retrieve(ctx context.Context, userID uuid.UUID, question string) ([]passage, error) {
+func (s *Service) retrieve(ctx context.Context, userID uuid.UUID, question string, focus []Focus) ([]passage, error) {
 	var out []passage
 	seen := map[key]int{} // item -> source number
 	add := func(it knowledge.Item, text string) {
@@ -202,6 +212,30 @@ func (s *Service) retrieve(ctx context.Context, userID uuid.UUID, question strin
 			seen[k] = n
 		}
 		out = append(out, passage{source: Source{N: n, Item: it}, text: text})
+	}
+
+	// What the question is about comes first, and more of it: enough text
+	// to summarise a document, or what a folder holds.
+	if len(focus) > 0 {
+		keys := make([]key, len(focus))
+		for i, f := range focus {
+			keys[i] = key{f.Source, f.ID}
+		}
+		allowed, err := s.visible(ctx, userID, keys)
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			it, ok := allowed[k]
+			if !ok {
+				continue // not this user's to see: as if it was never asked
+			}
+			text, err := s.focusText(ctx, userID, it)
+			if err != nil {
+				return nil, err
+			}
+			add(it, text)
+		}
 	}
 
 	hits, err := s.nearest(ctx, question, 2, nil)
@@ -254,6 +288,42 @@ func (s *Service) retrieve(ctx context.Context, userID uuid.UUID, question strin
 		}
 	}
 	return out, nil
+}
+
+// focusText is what the model reads about an item the question is about:
+// a container's contents, otherwise the start of its text.
+func (s *Service) focusText(ctx context.Context, user uuid.UUID, it knowledge.Item) (string, error) {
+	src := s.byName[it.Source]
+	if c, ok := src.(knowledge.Container); ok {
+		children, err := c.Children(ctx, user, it.ID)
+		switch {
+		case err == nil:
+			var b strings.Builder
+			if len(children) == 1 {
+				b.WriteString("Inhoud (1 item):\n")
+			} else {
+				fmt.Fprintf(&b, "Inhoud (%d items):\n", len(children))
+			}
+			for i, ch := range children {
+				if i == focusChildren {
+					b.WriteString("… en meer\n")
+					break
+				}
+				fmt.Fprintf(&b, "- %s (%s)\n", ch.Title, ch.Kind)
+			}
+			return b.String(), nil
+		case !errors.Is(err, knowledge.ErrNotFound):
+			return "", err
+		}
+	}
+	_, body, err := src.Text(ctx, it.ID)
+	if errors.Is(err, knowledge.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return body[:advance(body, 0, focusChars)], nil
 }
 
 // opening is the start of an item's text, for one the user may see.
@@ -314,11 +384,19 @@ func buildPrompt(history []Message, passages []passage, question string) []messa
 
 // Ask answers a question in a conversation, streaming the answer through
 // delta, and stores both. The answer cites the files it used.
-func (s *Service) Ask(ctx context.Context, userID, conversationID uuid.UUID, question string, delta func(string)) (Message, error) {
+func (s *Service) Ask(ctx context.Context, userID, conversationID uuid.UUID, question string, focus []Focus, delta func(string)) (Message, error) {
 	question = strings.TrimSpace(question)
 	if n := utf8.RuneCountInString(question); n == 0 || n > maxQuestion ||
 		strings.IndexFunc(question, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) >= 0 {
 		return Message{}, &InputError{"Stel een vraag van hoogstens " + strconv.Itoa(maxQuestion) + " tekens."}
+	}
+	if len(focus) > maxFocus {
+		return Message{}, &InputError{"Een vraag kan over hoogstens " + strconv.Itoa(maxFocus) + " items gaan."}
+	}
+	for _, f := range focus {
+		if _, ok := s.byName[f.Source]; !ok || f.ID == "" || len(f.ID) > 100 {
+			return Message{}, &InputError{"Onbekend item."}
+		}
 	}
 	conv, err := s.conversation(ctx, s.db, userID, conversationID)
 	if err != nil {
@@ -339,7 +417,7 @@ func (s *Service) Ask(ctx context.Context, userID, conversationID uuid.UUID, que
 	if err != nil {
 		return Message{}, err
 	}
-	passages, err := s.retrieve(ctx, userID, question)
+	passages, err := s.retrieve(ctx, userID, question, focus)
 	if err != nil {
 		return Message{}, err
 	}

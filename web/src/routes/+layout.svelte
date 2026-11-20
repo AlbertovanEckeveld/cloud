@@ -4,6 +4,9 @@
 	import { page } from '$app/state';
 	import { api } from '#lib/api.ts';
 	import { can, canAnyIn } from '#lib/permissions.ts';
+	import Icon from '#lib/components/Icon.svelte';
+	import AssistantPanel from '#lib/components/assistant/AssistantPanel.svelte';
+	import { loadAssistantStatus, toggleAssistant } from '#lib/assistant-state.svelte.ts';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -18,6 +21,18 @@
 	}
 
 	const current = (path: string) => (page.url.pathname === path ? 'page' : undefined);
+
+	$effect(() => {
+		if (data.user) loadAssistantStatus(api.assistant.status);
+	});
+
+	// Ctrl+J (Cmd+J on a Mac) opens the assistant on every page.
+	function keys(e: KeyboardEvent) {
+		if (data.user && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'j') {
+			e.preventDefault();
+			toggleAssistant();
+		}
+	}
 </script>
 
 <a class="skip-link" href="#main">Naar inhoud</a>
@@ -38,6 +53,7 @@
 				{/if}
 			</nav>
 			<div class="site-header__actions">
+				<button class="icon-button" aria-label="Assistent openen" title="Assistent (Ctrl+J)" onclick={toggleAssistant}><Icon name="spark" /></button>
 				<a href="/account" aria-current={current('/account')}>{data.user.display_name}</a>
 				<button class="button" onclick={logout}>Uitloggen</button>
 			</div>
@@ -45,9 +61,13 @@
 	</div>
 </header>
 
+<svelte:window onkeydown={keys} />
+
 <main id="main" class="container">
 	{@render children()}
 </main>
+
+{#if data.user}<AssistantPanel />{/if}
 
 <style>
 	.site-header {
