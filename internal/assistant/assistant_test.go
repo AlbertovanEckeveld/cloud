@@ -124,6 +124,19 @@ func TestPromptKeepsDocumentsInTheirBlock(t *testing.T) {
 	}
 }
 
+func TestPromptNamesWhatTheQuestionIsAbout(t *testing.T) {
+	about := passage{source: Source{N: 1}, text: "Reiskosten", focus: true}
+	about.source.Title = "reiskostenbeleid.md"
+	msgs := buildPrompt(nil, []passage{about}, "Vat dit bestand samen.", true)
+	if user := msgs[len(msgs)-1].Content; !strings.Contains(user, "De vraag gaat over [1] reiskostenbeleid.md") {
+		t.Errorf("the prompt does not say which item the question is about:\n%s", user)
+	}
+	other := passage{source: Source{N: 1}, text: "Reiskosten"}
+	if user := buildPrompt(nil, []passage{other}, "Wat kost een hotel?", true)[1].Content; strings.Contains(user, "De vraag gaat over") {
+		t.Errorf("a found passage is presented as the subject:\n%s", user)
+	}
+}
+
 // fakeProvider is an OpenAI-compatible server for tests.
 func fakeProvider(t *testing.T, chatReply string) *httptest.Server {
 	t.Helper()

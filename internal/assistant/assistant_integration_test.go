@@ -444,6 +444,13 @@ func TestAssistant(t *testing.T) {
 	if p := e.prov.prompts[len(e.prov.prompts)-1]; !strings.Contains(p, "aannemer belt volgende week") {
 		t.Errorf("the focused note is not in ann's prompt:\n%s", p)
 	}
+	// Only that item: words in the question do not pull in other files.
+	if _, err := e.svc.Ask(ctx, ann, conv2.ID, "Vat dit samen en vergelijk het niet met de notulen", about, Stream{Delta: func(string) {}}); err != nil {
+		t.Fatal(err)
+	}
+	if p := e.prov.prompts[len(e.prov.prompts)-1]; strings.Contains(p, `nr=\"2\"`) || !strings.Contains(p, "De vraag gaat over [1]") {
+		t.Errorf("a question about one item brought in others:\n%s", p)
+	}
 	bobConv, _ := e.svc.CreateConversation(ctx, bob)
 	if _, err := e.svc.Ask(ctx, bob, bobConv.ID, "Vat samen", about, Stream{Delta: func(string) {}}); err != nil {
 		t.Fatal(err)
