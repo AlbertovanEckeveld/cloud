@@ -353,13 +353,7 @@ describe('api.assistant.ask', () => {
 		role: 'assistant',
 		content: 'Het kost 5000 euro [1].',
 		created_at: '2026-11-18T10:00:00Z',
-		sources: [
-			{
-				n: 1, id: 'f1', parent_id: null, kind: 'file', name: 'offerte.pdf', size: 3, content_type: 'application/pdf',
-				created_at: '2026-11-18T09:00:00Z', updated_at: '2026-11-18T09:00:00Z', updated_by: null, updated_by_name: '',
-				trashed_at: null, permission: 'manage', shared: false, location: 'Mijn bestanden', location_id: null
-			}
-		]
+		sources: [{ n: 1, source: 'drive', id: 'f1', kind: 'file', title: 'offerte.pdf', location: 'Mijn bestanden', link: '/files', snippet: '' }]
 	};
 
 	// A response that arrives in pieces, cut in awkward places.
@@ -386,7 +380,7 @@ describe('api.assistant.ask', () => {
 				let text = '';
 				const msg = await api.assistant.ask('c1', 'Wat kost het?', (t) => (text += t));
 				expect(text).toBe('Het kost 5000 euro [1].');
-				expect(msg.sources[0]).toMatchObject({ n: 1, name: 'offerte.pdf' });
+				expect(msg.sources[0]).toMatchObject({ n: 1, title: 'offerte.pdf', source: 'drive' });
 			}
 		));
 
@@ -399,4 +393,24 @@ describe('api.assistant.ask', () => {
 		withFetch(stream('event: delta\ndata: {"text":"Het"}\n\n'), async () => {
 			await expect(api.assistant.ask('c1', '?', () => {})).rejects.toBeInstanceOf(ApiError);
 		}));
+});
+
+describe('api.assistant.search', () => {
+	const item = { source: 'drive', id: 'f1', kind: 'file', title: 'offerte.pdf', location: 'Mijn bestanden', link: '/files', snippet: '' };
+
+	it('asks only the given sources', async () => {
+		let asked = '';
+		const f: typeof fetch = async (input) => {
+			asked = String(input);
+			return new Response(JSON.stringify({ results: [item] }), { headers: { 'Content-Type': 'application/json' } });
+		};
+		await expect(api.assistant.search('dak', ['drive'], f)).resolves.toMatchObject([{ title: 'offerte.pdf', detail: null }]);
+		expect(asked).toBe('/api/v1/assistant/search?q=dak&source=drive');
+	});
+
+	it('refuses links that leave the app', async () => {
+		for (const link of ['https://evil.example', '//evil.example/x', 'javascript:alert(1)']) {
+			await expect(api.assistant.search('x', [], respond({ results: [{ ...item, link }] }))).rejects.toBeInstanceOf(ApiError);
+		}
+	});
 });

@@ -1,8 +1,9 @@
-// Package assistant searches by meaning and answers questions about the
-// files a user can open, with an AI model the administrator configures in
-// the web app (ADR 0023). It keeps its own index of embeddings; the text
-// stays in drive, and every result passes drive's permission check before
-// it reaches a page or a model.
+// Package assistant searches by meaning and answers questions about what a
+// user can see (files now; notes, photos and mail later), with an AI model
+// the administrator configures in the web app (ADR 0023, 0024). It keeps
+// its own index of embeddings; the text stays with each module, reached
+// through knowledge.Source, and every result passes that module's
+// permission check before it reaches a page or a model.
 package assistant
 
 import (
@@ -18,19 +19,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/AlbertovanEckeveld/cloud/internal/core/knowledge"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
-	"github.com/AlbertovanEckeveld/cloud/internal/drive"
 )
-
-// Files is what the assistant needs from drive. Text and TextIndex check
-// no permissions and are only for indexing; Visible and Search do.
-type Files interface {
-	TextIndex(ctx context.Context, after uuid.UUID, limit int) ([]drive.TextRef, error)
-	TextCount(ctx context.Context) (int, error)
-	Text(ctx context.Context, nodeID uuid.UUID) (drive.TextRef, string, error)
-	Visible(ctx context.Context, userID uuid.UUID, ids []uuid.UUID) ([]drive.SearchResult, error)
-	Search(ctx context.Context, userID uuid.UUID, query string) ([]drive.SearchResult, error)
-}
 
 // Options configure the service.
 type Options struct {
@@ -42,25 +33,40 @@ type Options struct {
 
 // Service is the assistant.
 type Service struct {
-	db     *pgxpool.Pool
-	sealer *sealer.Sealer
-	source Files
-	log    *slog.Logger
-	guard  *guard
-	now    func() time.Time
-	kick   chan struct{}
+	db      *pgxpool.Pool
+	sealer  *sealer.Sealer
+	sources []knowledge.Source
+	byName  map[string]knowledge.Source
+	log     *slog.Logger
+	guard   *guard
+	now     func() time.Time
+	kick    chan struct{}
 
 	userID func(*http.Request) uuid.UUID
 	audit  func(r *http.Request, event string, details map[string]any)
 }
 
-// New returns the assistant service.
-func New(db *pgxpool.Pool, s *sealer.Sealer, source Files, opts Options) *Service {
+// New returns the assistant service over the given sources, in the order
+// their results are preferred when equally good.
+func New(db *pgxpool.Pool, s *sealer.Sealer, sources []knowledge.Source, opts Options) *Service {
+	byName := map[string]knowledge.Source{}
+	for _, src := range sources {
+		byName[src.Name()] = src
+	}
 	return &Service{
-		db: db, sealer: s, source: source, log: opts.Logger,
+		db: db, sealer: s, sources: sources, byName: byName, log: opts.Logger,
 		guard: &guard{services: opts.Services, resolver: net.DefaultResolver},
 		now:   time.Now, kick: make(chan struct{}, 1),
 	}
+}
+
+// sourceNames lists the registered sources.
+func (s *Service) sourceNames() []string {
+	names := make([]string, len(s.sources))
+	for i, src := range s.sources {
+		names[i] = src.Name()
+	}
+	return names
 }
 
 // Errors.

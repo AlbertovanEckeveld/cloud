@@ -286,8 +286,25 @@ export interface AssistantStatus {
 	external_chat: string;
 }
 
-/** A file an answer used, numbered as the answer cites it ([1], [2], …). */
-export interface AnswerSource extends SearchResult {
+/**
+ * Something the assistant found or used, from any source (ADR 0024): a file
+ * now; notes, events, photos and mail later.
+ */
+export interface KnowledgeItem {
+	source: string;
+	id: string;
+	kind: string;
+	title: string;
+	location: string;
+	/** The page that shows it; always a path within this app. */
+	link: string;
+	snippet: string;
+	/** The source's own description; for drive a file, see driveDetail. */
+	detail: unknown;
+}
+
+/** An item an answer used, numbered as the answer cites it ([1], [2], …). */
+export interface AnswerSource extends KnowledgeItem {
 	n: number;
 }
 
@@ -956,6 +973,33 @@ const parseUsage: Validator<Usage> = (v) => {
 	};
 };
 
+export const parseKnowledgeItem: Validator<KnowledgeItem> = (v) => {
+	const r = record(v, 'item');
+	const link = str(r, 'link');
+	// Only a path within this app: never another site or a javascript: URL.
+	if (!link.startsWith('/') || link.startsWith('//')) fail('link');
+	return {
+		source: str(r, 'source'),
+		id: str(r, 'id'),
+		kind: str(r, 'kind'),
+		title: str(r, 'title'),
+		location: str(r, 'location'),
+		link,
+		snippet: typeof r.snippet === 'string' ? r.snippet : '',
+		detail: r.detail ?? null
+	};
+};
+
+/** The file behind a drive item, to preview or open it like the file browser does. */
+export function driveDetail(item: KnowledgeItem): SearchResult | null {
+	if (item.source !== 'drive' || item.detail === null) return null;
+	try {
+		return parseSearchResult(item.detail);
+	} catch {
+		return null;
+	}
+}
+
 const parseConversation: Validator<Conversation> = (v) => {
 	const r = record(v, 'conversation');
 	return { id: str(r, 'id'), title: str(r, 'title'), created_at: str(r, 'created_at'), updated_at: str(r, 'updated_at') };
@@ -969,7 +1013,7 @@ export const parseChatMessage: Validator<ChatMessage> = (v) => {
 		id: str(r, 'id'),
 		role,
 		content: str(r, 'content'),
-		sources: list(r, 'sources', (x) => ({ ...parseSearchResult(x), n: num(record(x, 'source'), 'n') })),
+		sources: list(r, 'sources', (x) => ({ ...parseKnowledgeItem(x), n: num(record(x, 'source'), 'n') })),
 		created_at: str(r, 'created_at')
 	};
 };
@@ -1435,9 +1479,16 @@ export const api = {
 				const r = record(v, 'status');
 				return { search: bool(r, 'search'), chat: bool(r, 'chat'), external_chat: str(r, 'external_chat') } as AssistantStatus;
 			}, f),
-		/** Search by name, words and meaning; every result is one the user may open. */
-		search: (query: string, f: typeof fetch = fetch) =>
-			get(`/api/v1/assistant/search?q=${enc(query)}`, (v) => list(record(v, 'search'), 'results', parseSearchResult), f),
+		/**
+		 * Search by name, words and meaning in the given sources (all when
+		 * none); every result is one the user may see.
+		 */
+		search: (query: string, sources: string[] = [], f: typeof fetch = fetch) =>
+			get(
+				`/api/v1/assistant/search?q=${enc(query)}${sources.map((s) => `&source=${enc(s)}`).join('')}`,
+				(v) => list(record(v, 'search'), 'results', parseKnowledgeItem),
+				f
+			),
 		conversations: (f: typeof fetch = fetch) =>
 			get('/api/v1/assistant/conversations', (v) => list(record(v, 'list'), 'conversations', parseConversation), f),
 		conversation: (id: string, f: typeof fetch = fetch) =>

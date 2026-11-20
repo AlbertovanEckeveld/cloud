@@ -8,11 +8,13 @@
 	import PreviewDialog from '#lib/components/drive/PreviewDialog.svelte';
 	import {
 		api,
+		driveDetail,
 		errorMessage,
 		type AnswerSource,
 		type AssistantStatus,
 		type ChatMessage,
-		type Conversation
+		type Conversation,
+		type SearchResult
 	} from '#lib/api.ts';
 	import { editable } from '#lib/drive-state.svelte.ts';
 	import { previewKind, timeAgo } from '#lib/format.ts';
@@ -27,7 +29,7 @@
 	let error = $state('');
 	let stop: AbortController | null = null;
 	let log = $state<HTMLElement>();
-	let viewing = $state<AnswerSource | null>(null);
+	let viewing = $state<SearchResult | null>(null);
 
 	const mayManage = $derived(can(page.data.user, 'assistant.provider.manage'));
 
@@ -117,12 +119,16 @@
 		return some.length > 0 ? some : m.sources;
 	}
 
-	// A source opens in the viewer when it can, else in its folder.
-	function sourceHref(s: AnswerSource): string | null {
-		if (s.kind === 'folder') return `/files/${s.id}`;
-		if (previewKind(s.content_type, s.name)) return null;
-		if (editable(s.name)) return `/edit/${s.id}`;
-		return s.location_id ? `/files/${s.location_id}` : '/files';
+	// A file opens in the viewer when it can; anything else on its own page.
+	function previewable(s: AnswerSource): SearchResult | null {
+		const file = driveDetail(s);
+		return file && file.kind === 'file' && previewKind(file.content_type, file.name) ? file : null;
+	}
+
+	// Documents open in the editor, everything else on its own page.
+	function href(s: AnswerSource): string {
+		const file = driveDetail(s);
+		return file && file.kind === 'file' && editable(file.name) ? `/edit/${file.id}` : s.link;
 	}
 </script>
 
@@ -177,12 +183,12 @@
 							{#if m.sources.length > 0}
 								<ol class="sources" aria-label="Bronnen">
 									{#each cited(m) as s (s.n)}
-										{@const href = sourceHref(s)}
+										{@const file = previewable(s)}
 										<li value={s.n}>
-											{#if href}
-												<a class="with-icon" {href}><Icon name={s.kind === 'folder' ? 'folder' : 'file'} size={16} />{s.name}</a>
+											{#if file}
+												<button class="link-button with-icon" onclick={() => (viewing = file)}><Icon name="file" size={16} />{s.title}</button>
 											{:else}
-												<button class="link-button with-icon" onclick={() => (viewing = s)}><Icon name="file" size={16} />{s.name}</button>
+												<a class="with-icon" href={href(s)}><Icon name={s.kind === 'folder' ? 'folder' : 'file'} size={16} />{s.title}</a>
 											{/if}
 											<span class="muted small">{s.location}</span>
 										</li>

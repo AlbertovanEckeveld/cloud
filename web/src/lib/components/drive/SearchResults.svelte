@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Search results across everything the user can see.
 	import Icon from '#lib/components/Icon.svelte';
-	import { api, errorMessage, type SearchResult } from '#lib/api.ts';
+	import { api, driveDetail, errorMessage, type SearchResult } from '#lib/api.ts';
 	import { dateTime, formatBytes, previewKind, snippetParts, timeAgo } from '#lib/format.ts';
 	import PreviewDialog from './PreviewDialog.svelte';
 	import { editable } from '#lib/drive-state.svelte.ts';
@@ -21,7 +21,7 @@
 		const timer = setTimeout(async () => {
 			try {
 				// Name, words and, when a model is set up, meaning (ADR 0023).
-				const found = await api.assistant.search(q);
+				const found = (await api.assistant.search(q, ['drive'])).map(driveDetail).filter((r) => r !== null);
 				if (query.trim() === q) results = found;
 			} catch (e) {
 				error = errorMessage(e);

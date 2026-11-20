@@ -10,10 +10,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/AlbertovanEckeveld/cloud/internal/drive"
+	"github.com/AlbertovanEckeveld/cloud/internal/core/knowledge"
 )
 
 const (
@@ -107,72 +106,83 @@ func vectorLiteral(v []float32) string {
 	return b.String()
 }
 
-// sync brings the index in step with drive: what is new or changed is
-// indexed (at most filesPerRound per round), what is gone is forgotten.
+// sync brings the index in step with every source: what is new or changed
+// is indexed (at most filesPerRound per round), what is gone is forgotten.
 func (s *Service) sync(ctx context.Context) error {
 	c, model, modelID, err := s.embedder(ctx)
 	if errors.Is(err, ErrNotConfigured) {
-		return s.purgeOtherModels(ctx, "")
+		return s.purge(ctx, "")
 	}
 	if err != nil {
 		return err
 	}
-	if err := s.purgeOtherModels(ctx, modelID); err != nil {
+	if err := s.purge(ctx, modelID); err != nil {
 		return err
 	}
-	type state struct {
-		version uuid.UUID
-		readAt  *time.Time
-		model   string
-		failed  *time.Time
-	}
 	budget := filesPerRound
-	after := uuid.Nil
-	for {
-		refs, err := s.source.TextIndex(ctx, after, indexPage)
-		if err != nil {
+	for _, src := range s.sources {
+		if err := s.syncSource(ctx, src, c, model, modelID, &budget); err != nil {
 			return err
 		}
-		// What the index knows in this range of IDs.
-		last := uuid.Max
+		if budget == 0 {
+			s.Kick() // more to do: carry on soon
+			return nil
+		}
+	}
+	return nil
+}
+
+func (s *Service) syncSource(ctx context.Context, src knowledge.Source, c *client, model, modelID string, budget *int) error {
+	type state struct {
+		stamp  string
+		model  string
+		failed *time.Time
+	}
+	name := src.Name()
+	after := ""
+	for {
+		refs, err := src.Index(ctx, after, indexPage)
+		if err != nil {
+			return fmt.Errorf("list %s: %w", name, err)
+		}
+		// What the index knows in this range of IDs: after < id <= last.
+		last := ""
 		if len(refs) == indexPage {
-			last = refs[len(refs)-1].NodeID
+			last = refs[len(refs)-1].ID
 		}
 		rows, err := s.db.Query(ctx, `
-			SELECT node_id, version_id, text_at, model, CASE WHEN error IS NULL THEN NULL ELSE indexed_at END
-			FROM assistant.documents WHERE node_id > $1 AND node_id <= $2`, after, last)
+			SELECT item_id, stamp, model, CASE WHEN error IS NULL THEN NULL ELSE indexed_at END
+			FROM assistant.documents WHERE source = $1 AND item_id > $2 AND ($3 = '' OR item_id <= $3)`, name, after, last)
 		if err != nil {
 			return fmt.Errorf("load index state: %w", err)
 		}
-		known := map[uuid.UUID]state{}
-		var id uuid.UUID
+		known := map[string]state{}
+		var id string
 		var st state
-		if _, err := pgx.ForEachRow(rows, []any{&id, &st.version, &st.readAt, &st.model, &st.failed}, func() error {
+		if _, err := pgx.ForEachRow(rows, []any{&id, &st.stamp, &st.model, &st.failed}, func() error {
 			known[id] = st
 			return nil
 		}); err != nil {
 			return fmt.Errorf("load index state: %w", err)
 		}
-		present := map[uuid.UUID]bool{}
+		present := map[string]bool{}
 		for _, r := range refs {
-			present[r.NodeID] = true
-			k, ok := known[r.NodeID]
-			current := ok && k.version == r.VersionID && k.model == modelID && k.readAt != nil && k.readAt.Equal(r.ReadAt)
-			if current && (k.failed == nil || s.now().Sub(*k.failed) < retryFailed) {
+			present[r.ID] = true
+			k, ok := known[r.ID]
+			if ok && k.stamp == r.Stamp && k.model == modelID && (k.failed == nil || s.now().Sub(*k.failed) < retryFailed) {
 				continue
 			}
-			if budget == 0 {
-				s.Kick() // more to do: carry on soon
+			if *budget == 0 {
 				return nil
 			}
-			budget--
-			if err := s.indexFile(ctx, c, model, modelID, r); err != nil {
+			*budget--
+			if err := s.indexItem(ctx, src, c, model, modelID, r.ID); err != nil {
 				return err
 			}
 		}
 		for id := range known {
 			if !present[id] {
-				if err := s.forget(ctx, id); err != nil {
+				if err := s.forget(ctx, name, id); err != nil {
 					return err
 				}
 			}
@@ -184,27 +194,29 @@ func (s *Service) sync(ctx context.Context) error {
 	}
 }
 
-// purgeOtherModels removes vectors and index state of any model other than
-// current ("" when embeddings are off): search only uses the current one,
-// and vectors are derived from users' files, so unused ones do not stay.
-func (s *Service) purgeOtherModels(ctx context.Context, current string) error {
+// purge removes what search no longer uses: vectors of any model other
+// than current ("" when embeddings are off), and everything of sources that
+// are no longer registered. Vectors are derived from users' content, so
+// unused ones do not stay.
+func (s *Service) purge(ctx context.Context, current string) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `DELETE FROM assistant.chunks WHERE model <> $1`, current); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM assistant.chunks WHERE model <> $1 OR source <> ALL($2)`, current, s.sourceNames()); err != nil {
 			return fmt.Errorf("purge old vectors: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM assistant.documents WHERE model <> $1`, current); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM assistant.documents WHERE model <> $1 OR source <> ALL($2)`, current, s.sourceNames()); err != nil {
 			return fmt.Errorf("purge old index state: %w", err)
 		}
 		return nil
 	})
 }
 
-// indexFile (re)indexes one file. A failure of the provider is recorded on
-// the file and tried again later; only database errors stop the round.
-func (s *Service) indexFile(ctx context.Context, c *client, model, modelID string, ref drive.TextRef) error {
-	got, text, err := s.source.Text(ctx, ref.NodeID)
-	if errors.Is(err, drive.ErrNotFound) {
-		return s.forget(ctx, ref.NodeID)
+// indexItem (re)indexes one item. A failure of the provider is recorded on
+// the item and tried again later; only database errors stop the round.
+func (s *Service) indexItem(ctx context.Context, src knowledge.Source, c *client, model, modelID, id string) error {
+	name := src.Name()
+	ref, text, err := src.Text(ctx, id)
+	if errors.Is(err, knowledge.ErrNotFound) {
+		return s.forget(ctx, name, id)
 	}
 	if err != nil {
 		return err
@@ -221,30 +233,30 @@ func (s *Service) indexFile(ctx context.Context, c *client, model, modelID strin
 		if err != nil {
 			var pe *ProviderError
 			if errors.As(err, &pe) {
-				s.log.Warn("assistant embedding failed", "node", ref.NodeID, "error", pe.Detail())
-				return s.recordFailure(ctx, got, modelID, pe.Error())
+				s.log.Warn("assistant embedding failed", "source", name, "item", id, "error", pe.Detail())
+				return s.recordFailure(ctx, name, ref, modelID, pe.Error())
 			}
 			return err
 		}
 		vectors = append(vectors, v...)
 	}
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `DELETE FROM assistant.chunks WHERE node_id = $1`, ref.NodeID); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM assistant.chunks WHERE source = $1 AND item_id = $2`, name, id); err != nil {
 			return fmt.Errorf("replace chunks: %w", err)
 		}
 		for i, sp := range spans {
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO assistant.chunks (node_id, model, chunk_no, start_at, end_at, embedding)
-				VALUES ($1, $2, $3, $4, $5, $6::vector)`, ref.NodeID, modelID, i, sp.start, sp.end, vectorLiteral(vectors[i])); err != nil {
+				INSERT INTO assistant.chunks (source, item_id, model, chunk_no, start_at, end_at, embedding)
+				VALUES ($1, $2, $3, $4, $5, $6, $7::vector)`, name, id, modelID, i, sp.start, sp.end, vectorLiteral(vectors[i])); err != nil {
 				return fmt.Errorf("store chunk: %w", err)
 			}
 		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO assistant.documents (node_id, version_id, text_at, model, chunks, indexed_at, error)
+			INSERT INTO assistant.documents (source, item_id, stamp, model, chunks, indexed_at, error)
 			VALUES ($1, $2, $3, $4, $5, $6, NULL)
-			ON CONFLICT (node_id) DO UPDATE SET version_id = EXCLUDED.version_id, text_at = EXCLUDED.text_at, model = EXCLUDED.model,
+			ON CONFLICT (source, item_id) DO UPDATE SET stamp = EXCLUDED.stamp, model = EXCLUDED.model,
 				chunks = EXCLUDED.chunks, indexed_at = EXCLUDED.indexed_at, error = NULL`,
-			ref.NodeID, got.VersionID, got.ReadAt, modelID, len(spans), s.now())
+			name, id, ref.Stamp, modelID, len(spans), s.now())
 		if err != nil {
 			return fmt.Errorf("store index state: %w", err)
 		}
@@ -252,26 +264,26 @@ func (s *Service) indexFile(ctx context.Context, c *client, model, modelID strin
 	})
 }
 
-func (s *Service) recordFailure(ctx context.Context, ref drive.TextRef, modelID, reason string) error {
+func (s *Service) recordFailure(ctx context.Context, source string, ref knowledge.Ref, modelID, reason string) error {
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO assistant.documents (node_id, version_id, text_at, model, chunks, indexed_at, error)
+		INSERT INTO assistant.documents (source, item_id, stamp, model, chunks, indexed_at, error)
 		VALUES ($1, $2, $3, $4, 0, $5, $6)
-		ON CONFLICT (node_id) DO UPDATE SET version_id = EXCLUDED.version_id, text_at = EXCLUDED.text_at, model = EXCLUDED.model,
+		ON CONFLICT (source, item_id) DO UPDATE SET stamp = EXCLUDED.stamp, model = EXCLUDED.model,
 			chunks = 0, indexed_at = EXCLUDED.indexed_at, error = EXCLUDED.error`,
-		ref.NodeID, ref.VersionID, ref.ReadAt, modelID, s.now(), reason)
+		source, ref.ID, ref.Stamp, modelID, s.now(), reason)
 	if err != nil {
 		return fmt.Errorf("record index failure: %w", err)
 	}
 	return nil
 }
 
-// forget removes a file that drive no longer has from the index.
-func (s *Service) forget(ctx context.Context, nodeID uuid.UUID) error {
+// forget removes an item that its source no longer has from the index.
+func (s *Service) forget(ctx context.Context, source, id string) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `DELETE FROM assistant.chunks WHERE node_id = $1`, nodeID); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM assistant.chunks WHERE source = $1 AND item_id = $2`, source, id); err != nil {
 			return fmt.Errorf("forget chunks: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM assistant.documents WHERE node_id = $1`, nodeID); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM assistant.documents WHERE source = $1 AND item_id = $2`, source, id); err != nil {
 			return fmt.Errorf("forget document: %w", err)
 		}
 		return nil
@@ -281,7 +293,7 @@ func (s *Service) forget(ctx context.Context, nodeID uuid.UUID) error {
 // IndexStatus says how far the index is, for the settings page.
 type IndexStatus struct {
 	Configured bool   `json:"configured"`
-	Files      int    `json:"files"`   // files with text in drive
+	Files      int    `json:"files"`   // items with text in all sources
 	Indexed    int    `json:"indexed"` // of those, indexed with the current model
 	Failed     int    `json:"failed"`
 	LastError  string `json:"last_error,omitempty"`
@@ -294,8 +306,12 @@ func (s *Service) Status(ctx context.Context) (IndexStatus, error) {
 		return IndexStatus{}, err
 	}
 	var out IndexStatus
-	if out.Files, err = s.source.TextCount(ctx); err != nil {
-		return IndexStatus{}, err
+	for _, src := range s.sources {
+		n, err := src.Count(ctx)
+		if err != nil {
+			return IndexStatus{}, err
+		}
+		out.Files += n
 	}
 	if st.EmbedProvider == nil || st.EmbedModel == "" {
 		return out, nil

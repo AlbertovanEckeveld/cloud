@@ -102,7 +102,15 @@ func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleSearch(w http.ResponseWriter, r *http.Request) {
-	results, err := s.Search(r.Context(), s.userID(r), r.URL.Query().Get("q"))
+	// ?source=drive limits the search to those sources (the files page);
+	// without it, everything the user may see.
+	var only []string
+	for _, name := range r.URL.Query()["source"] {
+		if _, ok := s.byName[name]; ok {
+			only = append(only, name)
+		}
+	}
+	results, err := s.Search(r.Context(), s.userID(r), r.URL.Query().Get("q"), only)
 	if err != nil {
 		s.writeError(w, r, err)
 		return

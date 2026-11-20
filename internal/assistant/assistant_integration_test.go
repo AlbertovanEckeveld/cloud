@@ -27,14 +27,14 @@ import (
 
 	"github.com/AlbertovanEckeveld/cloud/internal/core/config"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/database"
+	"github.com/AlbertovanEckeveld/cloud/internal/core/knowledge"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
-	"github.com/AlbertovanEckeveld/cloud/internal/drive"
 	"github.com/AlbertovanEckeveld/cloud/migrations"
 )
 
-// fakeFiles stands in for drive: files with text, an owner, and who else
-// may see them.
-type fakeFiles struct {
+// fakeSource stands in for a module: items with text, and who may see them.
+type fakeSource struct {
+	name  string
 	mu    sync.Mutex
 	files map[uuid.UUID]*fakeFile
 }
@@ -47,63 +47,75 @@ type fakeFile struct {
 	viewers []uuid.UUID
 }
 
-func (f *fakeFiles) TextIndex(_ context.Context, after uuid.UUID, limit int) ([]drive.TextRef, error) {
+func newSource(name string) *fakeSource {
+	return &fakeSource{name: name, files: map[uuid.UUID]*fakeFile{}}
+}
+
+func (f *fakeSource) Name() string { return f.name }
+
+func stampOf(file *fakeFile) string {
+	return file.version.String() + "@" + file.readAt.Format(time.RFC3339Nano)
+}
+
+func (f *fakeSource) Index(_ context.Context, after string, limit int) ([]knowledge.Ref, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var out []drive.TextRef
+	var out []knowledge.Ref
 	for id, file := range f.files {
-		if id.String() > after.String() {
-			out = append(out, drive.TextRef{NodeID: id, VersionID: file.version, ReadAt: file.readAt})
+		if id.String() > after {
+			out = append(out, knowledge.Ref{ID: id.String(), Stamp: stampOf(file)})
 		}
 	}
-	slices.SortFunc(out, func(a, b drive.TextRef) int { return strings.Compare(a.NodeID.String(), b.NodeID.String()) })
+	slices.SortFunc(out, func(a, b knowledge.Ref) int { return strings.Compare(a.ID, b.ID) })
 	if len(out) > limit {
 		out = out[:limit]
 	}
 	return out, nil
 }
 
-func (f *fakeFiles) TextCount(context.Context) (int, error) {
+func (f *fakeSource) Count(context.Context) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.files), nil
 }
 
-func (f *fakeFiles) Text(_ context.Context, id uuid.UUID) (drive.TextRef, string, error) {
+func (f *fakeSource) Text(_ context.Context, id string) (knowledge.Ref, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	file, ok := f.files[id]
+	file, ok := f.files[uuid.MustParse(id)]
 	if !ok {
-		return drive.TextRef{}, "", drive.ErrNotFound
+		return knowledge.Ref{}, "", knowledge.ErrNotFound
 	}
-	return drive.TextRef{NodeID: id, VersionID: file.version, ReadAt: file.readAt}, file.text, nil
+	return knowledge.Ref{ID: id, Stamp: stampOf(file)}, file.text, nil
 }
 
-func (f *fakeFiles) result(id uuid.UUID, file *fakeFile) drive.SearchResult {
-	var r drive.SearchResult
-	r.ID, r.Name, r.Kind, r.Location = id, file.name, "file", "Mijn bestanden"
-	return r
+func (f *fakeSource) item(id uuid.UUID, file *fakeFile) knowledge.Item {
+	return knowledge.Item{Source: f.name, ID: id.String(), Kind: "file", Title: file.name, Location: "Mijn bestanden", Link: "/files"}
 }
 
-func (f *fakeFiles) Visible(_ context.Context, user uuid.UUID, ids []uuid.UUID) ([]drive.SearchResult, error) {
+func (f *fakeSource) Visible(_ context.Context, user uuid.UUID, ids []string) ([]knowledge.Item, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := []drive.SearchResult{}
+	out := []knowledge.Item{}
 	for _, id := range ids {
-		if file, ok := f.files[id]; ok && slices.Contains(file.viewers, user) {
-			out = append(out, f.result(id, file))
+		nid := uuid.MustParse(id)
+		if file, ok := f.files[nid]; ok && slices.Contains(file.viewers, user) {
+			out = append(out, f.item(nid, file))
 		}
 	}
 	return out, nil
 }
 
-func (f *fakeFiles) Search(_ context.Context, user uuid.UUID, q string) ([]drive.SearchResult, error) {
+func (f *fakeSource) Search(_ context.Context, user uuid.UUID, q string) ([]knowledge.Item, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := []drive.SearchResult{}
+	out := []knowledge.Item{}
 	for id, file := range f.files {
-		if slices.Contains(file.viewers, user) && strings.Contains(strings.ToLower(file.name), strings.ToLower(q)) {
-			out = append(out, f.result(id, file))
+		for _, w := range strings.Split(strings.ToLower(q), " or ") {
+			if slices.Contains(file.viewers, user) && strings.Contains(strings.ToLower(file.name), strings.TrimSpace(w)) {
+				out = append(out, f.item(id, file))
+				break
+			}
 		}
 	}
 	return out, nil
@@ -190,7 +202,8 @@ func newProvider(t *testing.T) *provider {
 type env struct {
 	svc   *Service
 	pool  *pgxpool.Pool
-	files *fakeFiles
+	files *fakeSource
+	notes *fakeSource
 	prov  *provider
 }
 
@@ -212,8 +225,8 @@ func newEnv(t *testing.T) *env {
 	}
 	key := make([]byte, 32)
 	sl, _ := sealer.New(key)
-	files := &fakeFiles{files: map[uuid.UUID]*fakeFile{}}
-	e := &env{svc: New(pool, sl, files, Options{Logger: logger}), pool: pool, files: files, prov: newProvider(t)}
+	files, notes := newSource("drive"), newSource("notes")
+	e := &env{svc: New(pool, sl, []knowledge.Source{files, notes}, Options{Logger: logger}), pool: pool, files: files, notes: notes, prov: newProvider(t)}
 
 	// The settings row is shared: put it back afterwards.
 	before, err := e.svc.GetSettings(ctx)
@@ -224,9 +237,11 @@ func newEnv(t *testing.T) *env {
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, `UPDATE assistant.settings SET chat_provider = $1, chat_model = NULLIF($2, ''),
 			embed_provider = $3, embed_model = NULLIF($4, '')`, before.ChatProvider, before.ChatModel, before.EmbedProvider, before.EmbedModel)
-		for id := range files.files {
-			_, _ = pool.Exec(ctx, `DELETE FROM assistant.chunks WHERE node_id = $1`, id)
-			_, _ = pool.Exec(ctx, `DELETE FROM assistant.documents WHERE node_id = $1`, id)
+		for _, src := range []*fakeSource{files, notes} {
+			for id := range src.files {
+				_, _ = pool.Exec(ctx, `DELETE FROM assistant.chunks WHERE item_id = $1`, id.String())
+				_, _ = pool.Exec(ctx, `DELETE FROM assistant.documents WHERE item_id = $1`, id.String())
+			}
 		}
 		_, _ = pool.Exec(ctx, `DELETE FROM assistant.providers WHERE name LIKE 'it-%'`)
 	})
@@ -270,6 +285,10 @@ func TestAssistant(t *testing.T) {
 	e.files.files[shared] = &fakeFile{name: "notulen.md", version: newID(), viewers: []uuid.UUID{ann, bob},
 		text: "Notulen van de vergadering over de tuin en het hek."}
 
+	note := newID()
+	e.notes.files[note] = &fakeFile{name: "notitie dakkapel", version: newID(), viewers: []uuid.UUID{ann},
+		text: "Notitie: de aannemer belt volgende week over de planning van de dakkapel."}
+
 	pid := e.configure(t, "embed-m")
 	if models, err := e.svc.TestProvider(ctx, pid); err != nil || len(models) != 3 {
 		t.Fatalf("test provider: %v %v", models, err)
@@ -277,17 +296,28 @@ func TestAssistant(t *testing.T) {
 	if err := e.svc.sync(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := e.svc.Status(ctx); !st.Configured || st.Files != 3 || st.Indexed != 3 || st.Failed != 0 {
+	if st, _ := e.svc.Status(ctx); !st.Configured || st.Files != 4 || st.Indexed != 4 || st.Failed != 0 {
 		t.Fatalf("status: %+v", st)
 	}
 
 	// Search by meaning: only what the user may see.
-	results, err := e.svc.Search(ctx, ann, "wat kost de dakkapel")
+	results, err := e.svc.Search(ctx, ann, "wat kost de dakkapel", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) == 0 || results[0].ID != quote || slices.ContainsFunc(results, func(r drive.SearchResult) bool { return r.ID == salary }) {
+	if len(results) == 0 || results[0].ID != quote.String() || slices.ContainsFunc(results, func(r knowledge.Item) bool { return r.ID == salary.String() }) {
 		t.Fatalf("search for ann: %+v", results)
+	}
+
+	// Items of every source are found, each with its source.
+	if !slices.ContainsFunc(results, func(r knowledge.Item) bool { return r.Source == "notes" && r.ID == note.String() }) {
+		t.Errorf("the note is not found: %+v", results)
+	}
+	if bobs, _ := e.svc.Search(ctx, bob, "dakkapel planning", nil); slices.ContainsFunc(bobs, func(r knowledge.Item) bool { return r.Source == "notes" }) {
+		t.Errorf("bob finds ann's note: %+v", bobs)
+	}
+	if only, _ := e.svc.Search(ctx, ann, "dakkapel", []string{"drive"}); slices.ContainsFunc(only, func(r knowledge.Item) bool { return r.Source != "drive" }) {
+		t.Errorf("search limited to drive returns other sources: %+v", only)
 	}
 
 	// Chat: the model only reads what the user may see.
@@ -305,7 +335,7 @@ func TestAssistant(t *testing.T) {
 		t.Fatalf("prompt for ann:\n%s", prompt)
 	}
 	if streamed.String() != msg.Content || msg.Content != "Volgens [1] kost het 5000 euro." ||
-		len(msg.Sources) == 0 || msg.Sources[0].ID != quote || msg.Sources[0].N != 1 {
+		len(msg.Sources) == 0 || msg.Sources[0].ID != quote.String() || msg.Sources[0].N != 1 || msg.Sources[0].Source != "drive" {
 		t.Fatalf("answer: %+v", msg)
 	}
 	got, err := e.svc.GetConversation(ctx, ann, conv.ID)
@@ -322,7 +352,7 @@ func TestAssistant(t *testing.T) {
 	// Losing access hides the source later too.
 	e.files.files[quote].viewers = nil
 	got, _ = e.svc.GetConversation(ctx, ann, conv.ID)
-	if slices.ContainsFunc(got.Messages[1].Sources, func(s Source) bool { return s.ID == quote }) {
+	if slices.ContainsFunc(got.Messages[1].Sources, func(s Source) bool { return s.ID == quote.String() }) {
 		t.Errorf("a source ann can no longer open is still listed: %+v", got.Messages[1].Sources)
 	}
 
@@ -337,7 +367,7 @@ func TestAssistant(t *testing.T) {
 		t.Errorf("re-embedded %d chunks, want only the changed file's 1", e.prov.embedded-before)
 	}
 	var n int
-	_ = e.pool.QueryRow(ctx, `SELECT count(*) FROM assistant.chunks WHERE node_id = $1`, salary).Scan(&n)
+	_ = e.pool.QueryRow(ctx, `SELECT count(*) FROM assistant.chunks WHERE item_id = $1`, salary.String()).Scan(&n)
 	if n != 0 {
 		t.Errorf("a removed file still has %d chunks", n)
 	}
@@ -358,13 +388,24 @@ func TestAssistant(t *testing.T) {
 	if err := e.svc.sync(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := e.svc.Status(ctx); st.Indexed != len(e.files.files) {
+	if st, _ := e.svc.Status(ctx); st.Indexed != len(e.files.files)+len(e.notes.files) {
 		t.Errorf("after a model change: %+v", st)
 	}
 	var old int
 	_ = e.pool.QueryRow(ctx, `SELECT count(*) FROM assistant.chunks WHERE model = $1`, embedModelID(pid, "embed-m")).Scan(&old)
 	if old != 0 {
 		t.Errorf("%d vectors of the previous model remain", old)
+	}
+
+	// A source that is no longer registered: its part of the index goes.
+	without := New(e.pool, e.svc.sealer, []knowledge.Source{e.files}, Options{Logger: e.svc.log})
+	if err := without.sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var notesLeft int
+	_ = e.pool.QueryRow(ctx, `SELECT count(*) FROM assistant.chunks WHERE source = 'notes'`).Scan(&notesLeft)
+	if notesLeft != 0 {
+		t.Errorf("%d chunks of an unregistered source remain", notesLeft)
 	}
 
 	// Embeddings off: no vectors stay behind.
@@ -391,7 +432,7 @@ func TestProviderRules(t *testing.T) {
 	}
 	// The platform's own services neither: they are refused at connect time.
 	u, _ := url.Parse(e.prov.srv.URL)
-	blocked := New(e.pool, e.svc.sealer, e.files, Options{Logger: e.svc.log, Services: []string{u.Host}})
+	blocked := New(e.pool, e.svc.sealer, []knowledge.Source{e.files}, Options{Logger: e.svc.log, Services: []string{u.Host}})
 	p, err := blocked.SaveProvider(ctx, admin, nil, ProviderInput{Name: "it-db", BaseURL: e.prov.srv.URL + "/v1"})
 	if err != nil {
 		t.Fatal(err)

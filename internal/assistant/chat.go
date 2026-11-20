@@ -14,14 +14,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/AlbertovanEckeveld/cloud/internal/drive"
+	"github.com/AlbertovanEckeveld/cloud/internal/core/knowledge"
 )
 
 const (
 	maxQuestion        = 4000 // characters
 	historyTurns       = 10   // earlier messages sent along
-	contextChunks      = 6    // passages from files, by meaning
-	keywordFiles       = 3    // files found by name or words, added
+	contextChunks      = 6    // passages, by meaning
+	keywordFiles       = 3    // items found by name or words, added
 	conversationMaxAge = 90 * 24 * time.Hour
 )
 
@@ -33,10 +33,10 @@ type Conversation struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Source is a file an answer used, numbered as the answer cites it.
+// Source is an item an answer used, numbered as the answer cites it.
 type Source struct {
 	N int `json:"n"`
-	drive.SearchResult
+	knowledge.Item
 }
 
 // Message is one turn of a conversation.
@@ -104,25 +104,21 @@ func (s *Service) GetConversation(ctx context.Context, userID, id uuid.UUID) (Co
 	if err != nil {
 		return ConversationDetail{}, err
 	}
-	var ids []uuid.UUID
+	var keys []key
 	for _, m := range msgs {
 		for _, src := range m.Sources {
-			ids = append(ids, src.ID)
+			keys = append(keys, key{src.Source, src.ID})
 		}
 	}
-	visible, err := s.source.Visible(ctx, userID, ids)
+	now, err := s.visible(ctx, userID, keys)
 	if err != nil {
 		return ConversationDetail{}, err
-	}
-	now := map[uuid.UUID]drive.SearchResult{}
-	for _, v := range visible {
-		now[v.ID] = v
 	}
 	for i := range msgs {
 		kept := []Source{}
 		for _, src := range msgs[i].Sources {
-			if v, ok := now[src.ID]; ok {
-				kept = append(kept, Source{N: src.N, SearchResult: v})
+			if it, ok := now[key{src.Source, src.ID}]; ok {
+				kept = append(kept, Source{N: src.N, Item: it})
 			}
 		}
 		msgs[i].Sources = kept
@@ -186,92 +182,91 @@ func (s *Service) pruneConversations(ctx context.Context) error {
 	return nil
 }
 
-// passage is text from a file the user may open, given to the model.
+// passage is text from an item the user may see, given to the model.
 type passage struct {
 	source Source
 	text   string
 }
 
 // retrieve gathers what the model may read for a question: passages found
-// by meaning and files found by name or words, all through drive's
+// by meaning and items found by name or words, all through their source's
 // permission check first.
 func (s *Service) retrieve(ctx context.Context, userID uuid.UUID, question string) ([]passage, error) {
 	var out []passage
-	seen := map[uuid.UUID]int{} // file -> source number
-	add := func(r drive.SearchResult, text string) {
-		n, ok := seen[r.ID]
+	seen := map[key]int{} // item -> source number
+	add := func(it knowledge.Item, text string) {
+		k := key{it.Source, it.ID}
+		n, ok := seen[k]
 		if !ok {
 			n = len(seen) + 1
-			seen[r.ID] = n
+			seen[k] = n
 		}
-		out = append(out, passage{source: Source{N: n, SearchResult: r}, text: text})
+		out = append(out, passage{source: Source{N: n, Item: it}, text: text})
 	}
 
-	hits, err := s.nearest(ctx, question, 2)
+	hits, err := s.nearest(ctx, question, 2, nil)
 	switch {
 	case errors.Is(err, ErrNotConfigured):
 	case err != nil:
 		s.log.Warn("assistant retrieval by meaning unavailable", "error", logDetail(err))
 	default:
-		ids := make([]uuid.UUID, len(hits))
+		keys := make([]key, len(hits))
 		for i, h := range hits {
-			ids[i] = h.node
+			keys[i] = h.key
 		}
-		visible, err := s.source.Visible(ctx, userID, ids)
+		allowed, err := s.visible(ctx, userID, keys)
 		if err != nil {
 			return nil, err
 		}
-		allowed := map[uuid.UUID]drive.SearchResult{}
-		for _, v := range visible {
-			allowed[v.ID] = v
-		}
-		texts := map[uuid.UUID]string{}
 		for _, h := range hits {
 			if len(out) >= contextChunks {
 				break
 			}
-			r, ok := allowed[h.node]
+			it, ok := allowed[h.key]
 			if !ok {
 				continue
 			}
-			body, ok := texts[h.node]
-			if !ok {
-				ref, b, err := s.source.Text(ctx, h.node)
-				if err != nil || !h.matches(ref) {
-					continue // changed since it was indexed: skip until re-indexed
-				}
-				body, texts[h.node] = b, b
-			}
-			if h.end <= len(body) {
-				add(r, body[h.start:h.end])
+			if t, ok := s.text(ctx, h); ok {
+				add(it, t)
 			}
 		}
 	}
 
-	// Files found by name or words: their name helps "where is my …", and
+	// Items found by name or words: their name helps "where is my …", and
 	// the start of their text helps when meaning search missed them. A
 	// question as a whole rarely matches word for word, so its main words
 	// are searched with "or".
-	found, err := s.source.Search(ctx, userID, keywordQuery(question))
+	lists, err := s.wordSearch(ctx, userID, keywordQuery(question), nil)
 	if err != nil {
 		return nil, err
 	}
-	for i, r := range found {
-		if i >= keywordFiles {
-			break
-		}
-		if _, ok := seen[r.ID]; ok {
-			continue
-		}
-		text := ""
-		if r.Kind == "file" {
-			if _, b, err := s.source.Text(ctx, r.ID); err == nil {
-				text = b[:advance(b, 0, chunkSize)]
+	added := 0
+	for _, list := range lists {
+		for _, it := range list {
+			if added >= keywordFiles {
+				break
 			}
+			if _, ok := seen[key{it.Source, it.ID}]; ok {
+				continue
+			}
+			added++
+			add(it, s.opening(ctx, it))
 		}
-		add(r, text)
 	}
 	return out, nil
+}
+
+// opening is the start of an item's text, for one the user may see.
+func (s *Service) opening(ctx context.Context, it knowledge.Item) string {
+	src, ok := s.byName[it.Source]
+	if !ok {
+		return ""
+	}
+	_, body, err := src.Text(ctx, it.ID)
+	if err != nil {
+		return ""
+	}
+	return body[:advance(body, 0, chunkSize)]
 }
 
 // neutralise keeps a passage from closing its <bron> block or opening a
@@ -306,8 +301,8 @@ func buildPrompt(history []Message, passages []passage, question string) []messa
 	} else {
 		b.WriteString("<bronnen>\n")
 		for _, p := range passages {
-			fmt.Fprintf(&b, "<bron nr=\"%d\" bestand=\"%s\" locatie=\"%s\">\n%s\n</bron>\n",
-				p.source.N, attr(p.source.Name), attr(p.source.Location), neutralise(p.text))
+			fmt.Fprintf(&b, "<bron nr=\"%d\" titel=\"%s\" locatie=\"%s\">\n%s\n</bron>\n",
+				p.source.N, attr(p.source.Title), attr(p.source.Location), neutralise(p.text))
 		}
 		b.WriteString("</bronnen>\n\n")
 	}

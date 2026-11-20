@@ -33,6 +33,7 @@ import (
 	"github.com/AlbertovanEckeveld/cloud/internal/core/database"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/health"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/httpserver"
+	"github.com/AlbertovanEckeveld/cloud/internal/core/knowledge"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/logging"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/mailer"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/sealer"
@@ -191,7 +192,8 @@ func serve(ctx context.Context) error {
 		frameOrigins = append(frameOrigins, cfg.Collabora.String())
 	}
 	files := drive.New(a.pool, store, opts)
-	ai := assistant.New(a.pool, a.sealer, files, assistant.Options{Logger: logger, Services: serviceAddrs(cfg)})
+	// Every module that offers content to the assistant registers its source here (ADR 0024).
+	ai := assistant.New(a.pool, a.sealer, []knowledge.Source{files.Knowledge()}, assistant.Options{Logger: logger, Services: serviceAddrs(cfg)})
 	go registry.Run(ctx)
 	go a.identity.Run(ctx)
 	go files.Run(ctx)
