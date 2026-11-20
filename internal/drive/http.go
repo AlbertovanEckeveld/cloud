@@ -21,8 +21,10 @@ const transferDeadline = 12 * time.Hour
 // Auth is what drive needs from the identity module, which owns
 // authentication. Keeping it this small keeps the modules decoupled.
 type Auth struct {
-	RequireUser  func(http.Handler) http.Handler
-	RequireAdmin func(http.Handler) http.Handler
+	RequireUser func(http.Handler) http.Handler
+	// RequirePermission allows only users with this administrative
+	// permission (ADR 0022), such as "drive.teamfolders.create".
+	RequirePermission func(permission string) func(http.Handler) http.Handler
 	// RequireRecentAuth guards sensitive administrative changes.
 	RequireRecentAuth func(http.Handler) http.Handler
 	// UserID returns the signed-in user of a request that passed RequireUser.
@@ -92,21 +94,24 @@ func (s *Service) Routes(r chi.Router, auth Auth) {
 		r.Delete("/trash/{id}", s.handleDeleteForever)
 		r.Delete("/trash", s.handleEmptyTrash)
 		r.Get("/usage", s.handleUsage)
-		r.With(auth.RequireAdmin).Get("/admin/users/{id}/usage", s.handleAdminUsage)
-		r.With(auth.RequireAdmin).Put("/admin/users/{id}/quota", s.handleAdminQuota)
+		can := func(p string) chi.Router { return r.With(auth.RequirePermission(p)) }
+		can("drive.quota.manage").Get("/admin/users/{id}/usage", s.handleAdminUsage)
+		can("drive.quota.manage").Put("/admin/users/{id}/quota", s.handleAdminQuota)
 		r.Route("/admin/team-folders", func(r chi.Router) {
-			r.Use(auth.RequireAdmin)
-			r.Get("/", s.handleListTeamFolders)
+			r.With(auth.RequirePermission("drive.teamfolders.view")).Get("/", s.handleListTeamFolders)
 			r.Group(func(r chi.Router) {
 				r.Use(auth.RequireRecentAuth)
-				r.Post("/", s.handleCreateTeamFolder)
-				r.Patch("/{id}", s.handleRenameTeamFolder)
-				r.Put("/{id}/quota", s.handleTeamFolderQuota)
-				r.Put("/{id}/groups/{group}", s.handleSetTeamFolderGroup)
-				r.Delete("/{id}/groups/{group}", s.handleRemoveTeamFolderGroup)
-				r.Delete("/{id}", s.handleDeleteTeamFolder)
-				r.Post("/{id}/restore", s.handleRestoreTeamFolder)
-				r.Post("/{id}/purge", s.handlePurgeTeamFolder)
+				create := r.With(auth.RequirePermission("drive.teamfolders.create"))
+				manage := r.With(auth.RequirePermission("drive.teamfolders.manage"))
+				remove := r.With(auth.RequirePermission("drive.teamfolders.delete"))
+				create.Post("/", s.handleCreateTeamFolder)
+				manage.Patch("/{id}", s.handleRenameTeamFolder)
+				manage.Put("/{id}/quota", s.handleTeamFolderQuota)
+				manage.Put("/{id}/groups/{group}", s.handleSetTeamFolderGroup)
+				manage.Delete("/{id}/groups/{group}", s.handleRemoveTeamFolderGroup)
+				remove.Delete("/{id}", s.handleDeleteTeamFolder)
+				remove.Post("/{id}/restore", s.handleRestoreTeamFolder)
+				remove.Post("/{id}/purge", s.handlePurgeTeamFolder)
 			})
 		})
 	})

@@ -33,6 +33,8 @@ type Group struct {
 type GroupDetail struct {
 	Group
 	Members []User `json:"members"`
+	// Roles given to the group: every member has them.
+	Roles []RoleRef `json:"roles"`
 }
 
 // GroupInput holds the editable fields of a group.
@@ -92,7 +94,7 @@ func (s *Service) GetGroup(ctx context.Context, id uuid.UUID) (GroupDetail, erro
 	}
 	g.CreatedAt = g.CreatedAt.UTC()
 	rows, err := s.db.Query(ctx, `
-		SELECT u.id, u.username, u.display_name, u.is_admin, COALESCE(u.email, '')
+		SELECT u.id, u.username, u.display_name, COALESCE(u.email, '')
 		FROM identity.group_members m JOIN identity.users u ON u.id = m.user_id
 		WHERE m.group_id = $1 ORDER BY u.username`, id)
 	if err != nil {
@@ -103,6 +105,19 @@ func (s *Service) GetGroup(ctx context.Context, id uuid.UUID) (GroupDetail, erro
 		return GroupDetail{}, fmt.Errorf("read members: %w", err)
 	}
 	g.MemberCount = len(g.Members)
+	rows, err = s.db.Query(ctx, `
+		SELECT r.id, r.name FROM identity.role_assignments a JOIN identity.roles r ON r.id = a.role_id
+		WHERE a.group_id = $1 ORDER BY r.name`, id)
+	if err != nil {
+		return GroupDetail{}, fmt.Errorf("list group roles: %w", err)
+	}
+	g.Roles, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (RoleRef, error) {
+		var r RoleRef
+		return r, row.Scan(&r.ID, &r.Name)
+	})
+	if err != nil {
+		return GroupDetail{}, fmt.Errorf("read group roles: %w", err)
+	}
 	return g, nil
 }
 
@@ -171,13 +186,25 @@ func (s *Service) UpdateGroup(ctx context.Context, c Client, actor Session, id u
 }
 
 // DeleteGroup removes a group; its members stay as they are.
-func (s *Service) DeleteGroup(ctx context.Context, c Client, actor Session, id uuid.UUID) error {
-	if err := s.requireRecentAuth(actor); err != nil {
+// A group with roles can only be deleted by someone who could take those
+// roles away (ADR 0022), and never when it holds the last administrator.
+func (s *Service) DeleteGroup(ctx context.Context, c Client, actor Principal, id uuid.UUID) error {
+	if err := s.requireRecentAuth(actor.Session); err != nil {
 		return err
 	}
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if err := lockRoles(ctx, tx); err != nil {
+			return err
+		}
+		grants, err := groupPermissions(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := requireMayGrant(actor, grants); err != nil {
+			return err
+		}
 		var name string
-		err := tx.QueryRow(ctx, `DELETE FROM identity.groups WHERE id = $1 RETURNING name`, id).Scan(&name)
+		err = tx.QueryRow(ctx, `DELETE FROM identity.groups WHERE id = $1 RETURNING name`, id).Scan(&name)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -191,16 +218,31 @@ func (s *Service) DeleteGroup(ctx context.Context, c Client, actor Session, id u
 		if _, err := tx.Exec(ctx, `DELETE FROM identity.grants WHERE subject_type = 'group' AND subject_id = $1`, id); err != nil {
 			return fmt.Errorf("delete group shares: %w", err)
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: EventGroupDeleted, actor: &actor.UserID, details: map[string]any{"group": name}})
+		if err := ensureAdminRemains(ctx, tx); err != nil {
+			return err
+		}
+		return s.audit(ctx, tx, c, auditEntry{event: EventGroupDeleted, actor: &actor.Session.UserID, details: map[string]any{"group": name}})
 	})
 }
 
 // SetGroupMember adds a user to a group or removes them. Both are idempotent.
-func (s *Service) SetGroupMember(ctx context.Context, c Client, actor Session, groupID, userID uuid.UUID, member bool) error {
-	if err := s.requireRecentAuth(actor); err != nil {
+// For a group with roles this gives or takes those roles, so it follows the
+// rules for assigning roles (ADR 0022).
+func (s *Service) SetGroupMember(ctx context.Context, c Client, actor Principal, groupID, userID uuid.UUID, member bool) error {
+	if err := s.requireRecentAuth(actor.Session); err != nil {
 		return err
 	}
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if err := lockRoles(ctx, tx); err != nil {
+			return err
+		}
+		grants, err := groupPermissions(ctx, tx, groupID)
+		if err != nil {
+			return err
+		}
+		if err := requireMayGrant(actor, grants); err != nil {
+			return err
+		}
 		var group string
 		if err := tx.QueryRow(ctx, `SELECT name FROM identity.groups WHERE id = $1`, groupID).Scan(&group); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -209,7 +251,6 @@ func (s *Service) SetGroupMember(ctx context.Context, c Client, actor Session, g
 			return fmt.Errorf("load group: %w", err)
 		}
 		var tag pgconn.CommandTag
-		var err error
 		event := EventGroupMemberRemoved
 		if member {
 			event = EventGroupMemberAdded
@@ -234,6 +275,11 @@ func (s *Service) SetGroupMember(ctx context.Context, c Client, actor Session, g
 			}
 			return nil
 		}
-		return s.audit(ctx, tx, c, auditEntry{event: event, actor: &actor.UserID, subject: &userID, details: map[string]any{"group": group}})
+		if !member {
+			if err := ensureAdminRemains(ctx, tx); err != nil {
+				return err
+			}
+		}
+		return s.audit(ctx, tx, c, auditEntry{event: event, actor: &actor.Session.UserID, subject: &userID, details: map[string]any{"group": group}})
 	})
 }

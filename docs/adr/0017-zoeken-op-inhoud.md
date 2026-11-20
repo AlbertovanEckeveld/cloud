@@ -34,3 +34,14 @@ ADR 0013 leverde zoeken op naam; dit voegt de tekst van bestanden toe.
 
 - Gescande PDF's zonder tekstlaag worden niet gevonden; OCR hoort bij de ml-worker (fase 4/5).
 - Semantisch zoeken (pgvector) volgt met de assistent-fase.
+
+## Uitbreiding (2026-11-18)
+
+Meer bestandstypes worden uitgelezen: veel meer tekst- en code-extensies en bestanden zonder
+extensie (`README`, `Makefile`), HTML en XML zonder tags of scripts, RTF, e-mail (`.eml`: onderwerp,
+afzender, tekst, namen van bijlagen), elke cel van een spreadsheet (ook getallen), kop- en voetteksten,
+voetnoten en opmerkingen in Word, sprekersnotities in PowerPoint, e-books (`.epub`) en de inhoudsopgave
+van zip-archieven. Tekst die geen UTF-8 is (UTF-16 met BOM, Windows-1252 zoals Excel schrijft) wordt
+omgezet. Bestanden met geheimen (`.env`, `.pem`, `.key`, `.p12`, `.kdbx`, …) worden bewust **niet**
+uitgelezen: die horen niet in een zoekindex of bij een AI-aanbieder. Alle bestaande bestanden worden
+één keer opnieuw uitgelezen (migratie `drive` 00011).

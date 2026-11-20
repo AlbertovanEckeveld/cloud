@@ -212,7 +212,10 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - Drive-verbeteringen (2026-11-17/18): A smalle schermen (container queries, ⋯-menu per rij) en
   B accountpagina (pagineren, gekoppelde computers, ADR 0021) en C versiebeheer (zijpaneel,
   bekijken, naam geven, opruimen; geen automatisch uitdunnen) gebouwd en getest; D
-  rechten/instellingen/identity-pagina volgt, E AI alleen als ADR.
+  rechten/instellingen/identity-pagina (ADR 0022): D1 backend (rollen, rechten, escalatieregels),
+  D2 Identity-pagina (`/identity`: gebruikers, groepen, rollen, apps, audit-log) en D3 drive-tandwiel
+  (`/files/settings`: teammappen, opslag per gebruiker) en `/system` gebouwd en getest; "Beheer"
+  (`/admin`) bestaat niet meer. E AI alleen als ADR.
 - Fase 2.6 desktop-sync: Go + Wails v2, eerst Linux en macOS, volledige kopie van gekozen mappen,
   inloggen via browser (OIDC + PKCE, loopback). 2.6a server, 2.6b sync-engine en 2.6c app
   (module `desktop/`, ADR 0016) gebouwd en getest, ook tegen de echte server; wacht op mijn test. Desktop-deps: wails v2.17.1, fsnotify, go-keyring, fyne.io/systray,
@@ -239,6 +242,19 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
   bouwt na een groene CI op `main` een cosign-ondertekend image in GHCR; de VM haalt het op
   via `deploy/update.sh` + systemd-timer. Release en VM-kant nog niet end-to-end getest (pas na
   de eerste merge naar `main`).
+- Fase 5 assistant (op mijn verzoek naar voren gehaald, 2026-11-18; ADR 0023 met wijzigingen):
+  module `internal/assistant` gebouwd en getest: aanbieders en modellen instelbaar in de webapp
+  (`/assistant/settings`, recht `assistant.provider.manage`, SSRF-bescherming, sleutels versleuteld),
+  index van embeddings (pgvector, exact zoeken) bijgehouden door drive's tekstlijst te vergelijken,
+  slim zoeken (tekst + betekenis, RRF) in de zoekbalk van Bestanden, chat met bronnen op `/assistant`.
+  Rechten via `drive.Visible` vóór pagina of model. Geen NATS, geen Python-worker nodig. Testen
+  tijdelijk met Gemini (extern, opt-in); later een lokaal model (Ollama). pgvector moet een
+  superuser eenmalig installeren (ook op de VM).
+- Assistent overal (ADR 0024, 2026-11-20): F1 bronnen (`internal/core/knowledge`: elke module levert
+  een `Source`, drive is de eerste; registratie in `main.go`), F2 zijpaneel op elke pagina (Ctrl+J)
+  met context (bestand, map) en ingangen in bestandslijst, lezer, zoekresultaten en startpagina,
+  F3 hulpmiddelen alleen-lezen (zoeken, lezen, inhoud; op bronnummers, als de gebruiker; stappen
+  zichtbaar) gebouwd en getest. F4 (bronnen/acties met bevestiging) komt met pim, photos, mail.
 - Open vragen: definitieve keuze Go vs. Rust (huidige keuze: Go)
 
 ## 12. Beslissingen
@@ -251,6 +267,11 @@ Een fase is pas af als het "klaar als"-criterium uit het roadmapdocument gehaald
 - CI: GitHub Actions. Uitrollen alleen pull-based: de VM start alleen images die cosign
   (keyless) als gebouwd door `release.yml` op `main` herkent; GitHub krijgt geen toegang tot de
   VM (ADR 0020). Actions vastgezet op commit-SHA.
+- Elke module die inhoud heeft, levert de assistent een `knowledge.Source` (ADR 0024). Acties die
+  iets veranderen alleen als voorstel dat de gebruiker bevestigt; het model voert nooit zelf uit.
+- Beheer via rollen en vaste rechten (`module.onderwerp.actie`), toegekend aan gebruikers of groepen;
+  ingebouwde rol Beheerder heeft alles. Nooit meer uitdelen dan je zelf hebt, geen ingrepen bij
+  zwaardere accounts, altijd minstens één Beheerder (ADR 0022). `is_admin` bestaat niet meer.
 - Inloggen: passkey als hoofdroute; wachtwoord alleen samen met een tweede factor (TOTP of passkey); herstelcodes.
 - Eerste admin via CLI (`platform user create --admin`), die een eenmalige activatielink geeft.
 - OIDC-provider op basis van `zitadel/oidc` (OpenID-gecertificeerd).

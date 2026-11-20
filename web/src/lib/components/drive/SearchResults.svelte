@@ -1,10 +1,11 @@
 <script lang="ts">
 	// Search results across everything the user can see.
 	import Icon from '#lib/components/Icon.svelte';
-	import { api, errorMessage, type SearchResult } from '#lib/api.ts';
+	import { api, driveDetail, errorMessage, type SearchResult } from '#lib/api.ts';
 	import { dateTime, formatBytes, previewKind, snippetParts, timeAgo } from '#lib/format.ts';
 	import PreviewDialog from './PreviewDialog.svelte';
 	import { editable } from '#lib/drive-state.svelte.ts';
+	import { askAssistant, assistant } from '#lib/assistant-state.svelte.ts';
 
 	let { query }: { query: string } = $props();
 
@@ -20,7 +21,8 @@
 		// Wait until the user stops typing instead of searching every key.
 		const timer = setTimeout(async () => {
 			try {
-				const found = await api.drive.search(q);
+				// Name, words and, when a model is set up, meaning (ADR 0023).
+				const found = (await api.assistant.search(q, ['drive'])).map(driveDetail).filter((r) => r !== null);
 				if (query.trim() === q) results = found;
 			} catch (e) {
 				error = errorMessage(e);
@@ -30,7 +32,12 @@
 	});
 </script>
 
-<h1 class="title">Zoekresultaten voor "{query.trim()}"</h1>
+<div class="head">
+	<h1 class="title">Zoekresultaten voor "{query.trim()}"</h1>
+	{#if assistant.available}
+		<button class="button with-icon" onclick={() => askAssistant(query.trim())}><Icon name="spark" />Vraag de assistent</button>
+	{/if}
+</div>
 {#if error}
 	<p class="flash flash--error" role="alert">{error}</p>
 {:else if results === null}
@@ -81,6 +88,13 @@
 {/if}
 
 <style>
+	.head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
 	.title {
 		font-size: 1.15rem;
 		font-weight: 500;

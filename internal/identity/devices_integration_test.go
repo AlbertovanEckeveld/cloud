@@ -52,12 +52,12 @@ func TestDesktopSignIn(t *testing.T) {
 		t.Fatalf("device token: %d %+v", code, seen)
 	}
 	// ...but never for administration, even for an administrator.
-	admin := o.svc.RequireUserOrDevice(RequireAdmin(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
+	admin := o.svc.RequireUserOrDevice(RequirePermission(PermUsersView)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 	if code := call(admin, tk.AccessToken); code != http.StatusForbidden {
 		t.Errorf("device token on admin route: %d", code)
 	}
 	// Tampered tokens and tokens of other apps are refused.
-	if code := call(files, tk.AccessToken[:len(tk.AccessToken)-2]+"AA"); code != http.StatusUnauthorized {
+	if code := call(files, tamper(tk.AccessToken)); code != http.StatusUnauthorized {
 		t.Errorf("tampered token: %d", code)
 	}
 	other, _ := o.newClient(t, false, nil)
@@ -253,4 +253,16 @@ func TestActivityPaging(t *testing.T) {
 			t.Errorf("%s: %d", bad, resp.StatusCode)
 		}
 	}
+}
+
+// tamper changes one character in the middle of a JWT's signature. The last
+// characters would not do: their padding bits are ignored when decoding, and
+// they may already be the replacement.
+func tamper(token string) string {
+	i := strings.LastIndexByte(token, '.') + (len(token)-strings.LastIndexByte(token, '.'))/2
+	c := byte('A')
+	if token[i] == c {
+		c = 'B'
+	}
+	return token[:i] + string(c) + token[i+1:]
 }

@@ -15,6 +15,7 @@
 	import VersionsPanel from './VersionsPanel.svelte';
 	import PreviewDialog from './PreviewDialog.svelte';
 	import { dismissible } from '#lib/dismiss.ts';
+	import { askAssistant, assistant, type Focus } from '#lib/assistant-state.svelte.ts';
 
 	let { folderId }: { folderId: string | null } = $props();
 
@@ -153,6 +154,16 @@
 <!-- What can be done with one item. Wide rows show these as icons; narrow
      ones in a menu with labels (see the container queries below). -->
 {#snippet itemActions(n: DriveNode, labelled: boolean)}
+	{#if assistant.available}
+		{@const about: Focus[] = [{ source: 'drive', id: n.id, title: n.name, kind: n.kind }]}
+		<button class="icon-button" role={labelled ? 'menuitem' : undefined} aria-label="Vraag de assistent" title="Vraag de assistent"
+			onclick={() => askAssistant(null, about)}><Icon name="spark" />{#if labelled}<span>Vraag de assistent</span>{/if}</button>
+		{#if labelled}
+			<button class="icon-button" role="menuitem" onclick={() => askAssistant(n.kind === 'folder' ? 'Wat staat er in deze map, en wat valt op?' : 'Vat dit bestand samen.', about)}>
+				<Icon name="spark" /><span>{n.kind === 'folder' ? 'Wat staat hier?' : 'Samenvatten'}</span>
+			</button>
+		{/if}
+	{/if}
 	{#if allows(n.permission, 'manage')}
 		<button class="icon-button" role={labelled ? 'menuitem' : undefined} aria-label="Delen" title="Delen" onclick={() => (sharing = n)}><Icon name="share" />{#if labelled}<span>Delen</span>{/if}</button>
 	{/if}
@@ -185,6 +196,12 @@
 	</nav>
 	<div class="actions">
 		<input type="file" multiple hidden bind:this={fileInput} onchange={pick} />
+		{#if assistant.available && view?.folder}
+			{@const here = view.folder}
+			<button class="button with-icon" onclick={() => askAssistant('Wat staat er in deze map, en wat valt op?', [{ source: 'drive', id: here.id, title: here.name, kind: 'folder' }])}>
+				<Icon name="spark" />Wat staat hier?
+			</button>
+		{/if}
 		{#if view?.team}
 			<a class="button" href="/files/trash?team={view.team.id}">Prullenbak van {view.team.name}</a>
 		{/if}

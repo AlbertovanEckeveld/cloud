@@ -20,7 +20,7 @@ func TestGrantsDirectAndThroughGroups(t *testing.T) {
 	alice, bob := e.newUser(t), e.newUser(t)
 	g := e.newGroup(t, actor)
 	ctx := context.Background()
-	if err := e.svc.SetGroupMember(ctx, e.client, actor, g.ID, bob.ID, true); err != nil {
+	if err := e.svc.SetGroupMember(ctx, e.client, e.as(t, actor), g.ID, bob.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	doc, folder := uuid.New(), uuid.New()
@@ -61,14 +61,14 @@ func TestGrantsDirectAndThroughGroups(t *testing.T) {
 	}
 
 	// Leaving the group ends access immediately.
-	if err := e.svc.SetGroupMember(ctx, e.client, actor, g.ID, bob.ID, false); err != nil {
+	if err := e.svc.SetGroupMember(ctx, e.client, e.as(t, actor), g.ID, bob.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if perms, _ := e.svc.Permissions(ctx, bob.ID, testResource, []uuid.UUID{folder}); len(perms) != 0 {
 		t.Errorf("after leaving the group: %v", perms)
 	}
 	// A disabled user holds nothing.
-	if err := e.svc.SetUserDisabled(ctx, e.client, actor, alice.ID, true); err != nil {
+	if err := e.svc.SetUserDisabled(ctx, e.client, e.as(t, actor), alice.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if perms, _ := e.svc.Permissions(ctx, alice.ID, testResource, []uuid.UUID{doc}); len(perms) != 0 {
@@ -76,7 +76,7 @@ func TestGrantsDirectAndThroughGroups(t *testing.T) {
 	}
 
 	// Deleting the group removes its shares.
-	if err := e.svc.DeleteGroup(ctx, e.client, actor, g.ID); err != nil {
+	if err := e.svc.DeleteGroup(ctx, e.client, e.as(t, actor), g.ID); err != nil {
 		t.Fatal(err)
 	}
 	if grants, _ := e.svc.Grants(ctx, testResource, folder); len(grants) != 0 {
@@ -102,7 +102,7 @@ func TestGrantRejectsBadTargets(t *testing.T) {
 	owner, actor := e.newAdmin(t)
 	off := e.newUser(t)
 	ctx := context.Background()
-	if err := e.svc.SetUserDisabled(ctx, e.client, actor, off.ID, true); err != nil {
+	if err := e.svc.SetUserDisabled(ctx, e.client, e.as(t, actor), off.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	id := uuid.New()
@@ -140,7 +140,7 @@ func TestDirectory(t *testing.T) {
 	if entries, _ := e.svc.Directory(ctx, "%_%"); len(entries) != 0 {
 		t.Errorf("wildcard query matched %d entries", len(entries))
 	}
-	if err := e.svc.SetUserDisabled(ctx, e.client, actor, u.ID, true); err != nil {
+	if err := e.svc.SetUserDisabled(ctx, e.client, e.as(t, actor), u.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if entries, _ := e.svc.Directory(ctx, u.Username); len(entries) != 0 {

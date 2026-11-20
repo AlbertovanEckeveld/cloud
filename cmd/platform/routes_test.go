@@ -67,7 +67,7 @@ func testRouter(t *testing.T, sites fakeSites) http.Handler {
 				next.ServeHTTP(w, r)
 			})
 		},
-		requireAdmin: func(next http.Handler) http.Handler {
+		systemStatus: func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("X-Test-User") != "admin" {
 					w.WriteHeader(http.StatusForbidden)

@@ -27,6 +27,9 @@ type Principal struct {
 	// DeviceID identifies that linked device (its refresh token); zero for
 	// browser sessions.
 	DeviceID uuid.UUID
+	// Permissions are the user's administrative permissions (ADR 0022),
+	// loaded for every request; empty for devices.
+	Permissions PermissionSet
 }
 
 type principalKey struct{}
@@ -103,7 +106,12 @@ func (s *Service) RequireUser(next http.Handler) http.Handler {
 			httpserver.WriteError(w, http.StatusUnauthorized, "unauthenticated", "Rond eerst het inloggen af.")
 			return
 		}
-		ctx := context.WithValue(r.Context(), principalKey{}, Principal{User: u, Session: sess})
+		perms, err := s.permissionsOf(r.Context(), s.db, u.ID)
+		if err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		ctx := context.WithValue(r.Context(), principalKey{}, Principal{User: u, Session: sess, Permissions: perms})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -134,17 +142,6 @@ func (s *Service) AuditRequest(r *http.Request, event string, details map[string
 		return
 	}
 	s.auditBestEffort(r.Context(), clientFrom(r), auditEntry{event: event, actor: &p.User.ID, details: details})
-}
-
-// RequireAdmin must run after RequireUser.
-func RequireAdmin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p, ok := PrincipalFrom(r.Context()); !ok || !p.User.IsAdmin || p.Device {
-			httpserver.WriteError(w, http.StatusForbidden, "forbidden", "Je hebt geen toegang tot deze pagina.")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // Routes mounts the identity API: /auth/* for signing in, /account/* for
@@ -218,7 +215,14 @@ func (s *Service) withSession(h sessionHandler) http.HandlerFunc {
 
 type sessionResponse struct {
 	State SessionState `json:"state"`
-	User  *User        `json:"user,omitempty"`
+	User  *sessionUser `json:"user,omitempty"`
+}
+
+// sessionUser is the signed-in user with what they may administer, so the
+// pages show only what is allowed (the API checks every request again).
+type sessionUser struct {
+	User
+	Permissions []Permission `json:"permissions"`
 }
 
 func (s *Service) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -230,7 +234,12 @@ func (s *Service) handleSession(w http.ResponseWriter, r *http.Request) {
 	resp := sessionResponse{State: sess.State}
 	// User details are only revealed once both factors are verified.
 	if sess.State == StateAuthenticated {
-		resp.User = &u
+		perms, err := s.permissionsOf(r.Context(), s.db, u.ID)
+		if err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		resp.User = &sessionUser{User: u, Permissions: perms.List()}
 	}
 	httpserver.WriteJSON(w, http.StatusOK, resp)
 }
@@ -411,6 +420,8 @@ func (s *Service) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpserver.WriteError(w, http.StatusBadRequest, "passkey_rejected", "De passkey kon niet worden geverifieerd.")
 	case errors.Is(err, ErrChallengeInvalid):
 		httpserver.WriteError(w, http.StatusBadRequest, "challenge_expired", "Dit verzoek is verlopen. Probeer het opnieuw.")
+	case errors.Is(err, ErrEscalation):
+		httpserver.WriteError(w, http.StatusForbidden, "escalation", "Je kunt geen rechten geven, afnemen of gebruiken die je zelf niet hebt.")
 	case errors.Is(err, ErrLastAdmin):
 		httpserver.WriteError(w, http.StatusConflict, "last_admin", "Er moet minstens één actieve beheerder overblijven.")
 	case errors.Is(err, ErrSelf):

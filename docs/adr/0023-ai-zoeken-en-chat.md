@@ -1,6 +1,6 @@
 # ADR 0023: AI voor zoeken en chat (voorbereiding fase 5)
 
-- Status: geaccepteerd (ontwerp; bouwen gebeurt in fase 5 `assistant`)
+- Status: geaccepteerd; gebouwd (2026-11-18), met de wijzigingen onderaan
 - Datum: 2026-11-18
 
 ## Context
@@ -152,3 +152,29 @@ daarmee interne diensten kunnen bereiken (Postgres, S3, NATS, een metadata-adres
 - Het recht `assistant.provider.manage` en de module `assistant` komen in fase 5 in de catalogus;
   de pagina AI-instellingen is de eerste bouwstap van fase 5.
 - Een externe AI-aanbieder blijft een bewuste keuze van de beheerder, nooit een standaard.
+
+## Wijzigingen bij het bouwen (2026-11-18)
+
+Op verzoek is de assistent gebouwd vóór fase 0.2 (NATS). Daarvoor zijn twee keuzes aangepast,
+zonder dat de veiligheid verandert:
+
+1. **Geen gebeurtenissen via NATS, maar vergelijken.** `assistant` loopt elke paar minuten de lijst
+   (bestand, versie) met tekst van `drive` door (`TextIndex`) en vergelijkt die met zijn eigen
+   administratie: nieuw of gewijzigd wordt geïndexeerd, verdwenen wordt vergeten. Dat mag volgens
+   §3 (synchroon via een Go-interface), mist geen wijziging (geen cursor die kan achterlopen) en
+   is voor een thuisplatform goedkoop. Bij heel veel bestanden wordt dit een gebeurtenis-feed.
+2. **Embeddings via de aanbieder-API, geen eigen Python-worker.** Hetzelfde OpenAI-compatibele
+   `/v1/embeddings` als de chat; Ollama en llama.cpp leveren embedding-modellen. Zo is ook het
+   embedding-model in de webapp instelbaar.
+
+Verder:
+
+- **Exact zoeken, nog geen HNSW-index.** De vectoren hebben de grootte van het gekozen model;
+  exact zoeken op een paar duizend bestanden is snel genoeg. Een index komt als het nodig is.
+- **Na een modelwissel** worden bestanden één voor één opnieuw geïndexeerd; zoeken op betekenis
+  vindt in die tijd alleen de bestanden die al klaar zijn (de pagina toont de voortgang). Woorden
+  en namen blijven gewoon gevonden worden.
+- **Rechten**: `drive.Visible` is dezelfde controle als het openen van een bestand en wordt
+  gebruikt vóór iets de pagina of het model bereikt, en opnieuw bij het tonen van bronnen in een
+  oud gesprek. `drive.Text` controleert niets en is alleen voor het indexeren.
+- Gesprekken worden na 90 dagen zonder activiteit verwijderd.

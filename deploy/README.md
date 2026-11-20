@@ -77,6 +77,13 @@ over uit je laptop-`.env` (daar staan ze als commentaar sinds de laptop een eige
 
 Bewaar de sleutel ook in je wachtwoordmanager en haal de commentaarregels daarna uit je `.env`.
 
+Het platform maakt de schema's zelf aan. De assistent (ADR 0023) gebruikt pgvector; die extensie
+moet een superuser eenmalig in `ave_cloud` installeren:
+
+```sh
+docker exec -it <postgres-container> psql -U <superuser> -d ave_cloud -c "CREATE EXTENSION IF NOT EXISTS vector"
+```
+
 ## 2. Collabora
 
 De bestaande Collabora accepteert alleen WOPI-hosts uit zijn `aliasgroup`-instellingen. Voeg

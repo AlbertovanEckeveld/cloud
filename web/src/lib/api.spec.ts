@@ -74,13 +74,18 @@ describe('api.sites', () => {
 });
 
 describe('api.session', () => {
-	const user = { id: 'u1', username: 'alice', display_name: 'Alice', is_admin: false, email: '' };
+	const user = { id: 'u1', username: 'alice', display_name: 'Alice', email: '', permissions: ['identity.users.view'] };
 
 	it('returns the user for an authenticated session', async () => {
 		expect(await api.session(respond({ state: 'authenticated', user }))).toEqual({
 			state: 'authenticated',
 			user
 		});
+	});
+
+	it('rejects a session user without permissions', async () => {
+		const { permissions: _, ...withoutPermissions } = user;
+		await expect(api.session(respond({ state: 'authenticated', user: withoutPermissions }))).rejects.toBeInstanceOf(ApiError);
 	});
 
 	it('never exposes a user for a partial session', async () => {
@@ -131,7 +136,7 @@ describe('POST requests', () => {
 });
 
 describe('admin.invite', () => {
-	const bob = { username: 'bob', display_name: 'Bob', is_admin: false, email: '' };
+	const bob = { username: 'bob', display_name: 'Bob', email: '' };
 
 	it('returns a well-formed activation link', async () => {
 		const link = 'https://cloud.example.com/activate#abc_DEF-123';
@@ -339,5 +344,87 @@ describe('api.drive.versions', () => {
 
 	it('reports what a clean-up freed', async () => {
 		await expect(api.drive.pruneVersions('f', respond({ versions: 2, bytes: 1024 }))).resolves.toEqual({ versions: 2, bytes: 1024 });
+	});
+});
+
+describe('api.assistant.ask', () => {
+	const done = {
+		id: 'm1',
+		role: 'assistant',
+		content: 'Het kost 5000 euro [1].',
+		created_at: '2026-11-18T10:00:00Z',
+		sources: [{ n: 1, source: 'drive', id: 'f1', kind: 'file', title: 'offerte.pdf', location: 'Mijn bestanden', link: '/files', snippet: '' }]
+	};
+
+	// A response that arrives in pieces, cut in awkward places.
+	function stream(...pieces: string[]): typeof fetch {
+		return async () =>
+			new Response(new ReadableStream({
+				start(c) {
+					for (const p of pieces) c.enqueue(new TextEncoder().encode(p));
+					c.close();
+				}
+			}), { headers: { 'Content-Type': 'text/event-stream' } });
+	}
+
+	function withFetch(f: typeof fetch, run: () => Promise<void>) {
+		const real = globalThis.fetch;
+		globalThis.fetch = f;
+		return run().finally(() => (globalThis.fetch = real));
+	}
+
+	it('streams the answer and returns the stored message', () =>
+		withFetch(
+			stream('event: delta\ndata: {"text":"Het kost "}\n\nevent: del', 'ta\ndata: {"text":"5000 euro [1]."}\n\n', `event: done\ndata: ${JSON.stringify(done)}\n\n`),
+			async () => {
+				let text = '';
+				const msg = await api.assistant.ask('c1', 'Wat kost het?', { delta: (t) => (text += t) });
+				expect(text).toBe('Het kost 5000 euro [1].');
+				expect(msg.sources[0]).toMatchObject({ n: 1, title: 'offerte.pdf', source: 'drive' });
+			}
+		));
+
+	it('passes on steps, and forgets text when the assistant goes on searching', () =>
+		withFetch(
+			stream('event: delta\ndata: {"text":"Even kijken"}\n\nevent: reset\ndata: {}\n\nevent: step\ndata: {"text":"Zocht naar dakkapel"}\n\n',
+				`event: delta\ndata: {"text":"Het kost 5000 euro [1]."}\n\nevent: done\ndata: ${JSON.stringify({ ...done, steps: ['Zocht naar dakkapel'] })}\n\n`),
+			async () => {
+				let text = '';
+				const steps: string[] = [];
+				const msg = await api.assistant.ask('c1', '?', { delta: (t) => (text += t), step: (s) => steps.push(s), reset: () => (text = '') });
+				expect(text).toBe('Het kost 5000 euro [1].');
+				expect(steps).toEqual(['Zocht naar dakkapel']);
+				expect(msg.steps).toEqual(['Zocht naar dakkapel']);
+			}
+		));
+
+	it('reports a provider failure in the middle of the stream', () =>
+		withFetch(stream('event: delta\ndata: {"text":"Het"}\n\nevent: error\ndata: {"message":"De aanbieder is niet bereikbaar."}\n\n'), async () => {
+			await expect(api.assistant.ask('c1', '?', { delta: () => {} })).rejects.toThrow('De aanbieder is niet bereikbaar.');
+		}));
+
+	it('fails when the stream ends without an answer', () =>
+		withFetch(stream('event: delta\ndata: {"text":"Het"}\n\n'), async () => {
+			await expect(api.assistant.ask('c1', '?', { delta: () => {} })).rejects.toBeInstanceOf(ApiError);
+		}));
+});
+
+describe('api.assistant.search', () => {
+	const item = { source: 'drive', id: 'f1', kind: 'file', title: 'offerte.pdf', location: 'Mijn bestanden', link: '/files', snippet: '' };
+
+	it('asks only the given sources', async () => {
+		let asked = '';
+		const f: typeof fetch = async (input) => {
+			asked = String(input);
+			return new Response(JSON.stringify({ results: [item] }), { headers: { 'Content-Type': 'application/json' } });
+		};
+		await expect(api.assistant.search('dak', ['drive'], f)).resolves.toMatchObject([{ title: 'offerte.pdf', detail: null }]);
+		expect(asked).toBe('/api/v1/assistant/search?q=dak&source=drive');
+	});
+
+	it('refuses links that leave the app', async () => {
+		for (const link of ['https://evil.example', '//evil.example/x', 'javascript:alert(1)']) {
+			await expect(api.assistant.search('x', [], respond({ results: [{ ...item, link }] }))).rejects.toBeInstanceOf(ApiError);
+		}
 	});
 });

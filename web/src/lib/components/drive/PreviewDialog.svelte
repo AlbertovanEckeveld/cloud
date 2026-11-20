@@ -2,10 +2,14 @@
 	// Shows a file in the page: images, video, audio and text. Arrow keys or
 	// the buttons go to the previous or next previewable file in the folder.
 	// With version, it shows that old version of the one file instead.
+	// While the assistant panel is open the viewer is not modal and makes room
+	// for it, so you can read and ask at the same time (a modal dialog would
+	// make the panel unusable).
 	import Icon from '#lib/components/Icon.svelte';
 	import { api, errorMessage, type DriveNode } from '#lib/api.ts';
 	import { formatBytes, previewKind } from '#lib/format.ts';
 	import Markdown from './Markdown.svelte';
+	import { askAssistant, assistant } from '#lib/assistant-state.svelte.ts';
 	import PdfView from './PdfView.svelte';
 
 	let {
@@ -31,9 +35,20 @@
 	const file = $derived(files[index]);
 	const kind = $derived(previewKind(file.content_type, file.name));
 
+	const beside = $derived(assistant.open);
+
+	// Reopening in the other mode closes the dialog first; its close event
+	// comes later and is only a real close when the dialog stayed closed.
 	$effect(() => {
-		dialog.showModal();
+		const modal = !beside;
+		if (dialog.open) dialog.close();
+		if (modal) dialog.showModal();
+		else dialog.show();
 	});
+
+	function closed() {
+		if (!dialog.open) onClose();
+	}
 
 	$effect(() => {
 		text = textError = null;
@@ -52,13 +67,15 @@
 	const go = (step: number) => (index = (index + step + files.length) % files.length);
 
 	function keys(e: KeyboardEvent) {
+		// A modal dialog closes on Escape by itself; beside the panel it does not.
+		if (e.key === 'Escape' && beside) dialog.close();
 		if (files.length < 2) return;
 		if (e.key === 'ArrowRight') go(1);
 		if (e.key === 'ArrowLeft') go(-1);
 	}
 </script>
 
-<dialog bind:this={dialog} class="preview" onclose={onClose} onkeydown={keys} aria-labelledby="preview-title">
+<dialog bind:this={dialog} class="preview" class:beside onclose={closed} onkeydown={keys} aria-labelledby="preview-title">
 	<header class="preview__bar">
 		<h2 id="preview-title" class="with-icon"><Icon name="file" />{file.name}</h2>
 		<span class="muted small">{version ? `${version.title} · ` : ''}{formatBytes(file.size)}</span>
@@ -67,6 +84,10 @@
 				<button class="icon-button" aria-label="Vorige" title="Vorige (←)" onclick={() => go(-1)}><Icon name="left" /></button>
 				<span class="muted small">{index + 1} / {files.length}</span>
 				<button class="icon-button" aria-label="Volgende" title="Volgende (→)" onclick={() => go(1)}><Icon name="right" /></button>
+			{/if}
+			{#if assistant.available && !version}
+				<button class="icon-button" aria-label="Samenvatten met de assistent" title="Samenvatten"
+					onclick={() => askAssistant('Vat dit bestand samen.', [{ source: 'drive', id: file.id, title: file.name, kind: 'file' }])}><Icon name="spark" /></button>
 			{/if}
 			<a class="icon-button" href={download(file.id)} download aria-label="Downloaden" title="Downloaden"><Icon name="download" /></a>
 			<button class="icon-button" aria-label="Sluiten" title="Sluiten (Esc)" onclick={() => dialog.close()}><Icon name="close" /></button>
@@ -103,6 +124,22 @@
 		padding: 0;
 		display: flex;
 		flex-direction: column;
+	}
+	.preview.beside {
+		position: fixed;
+		inset: 0 auto 0 0;
+		z-index: 39; /* just below the assistant panel */
+		margin: 0;
+		width: calc(100vw - var(--assistant-width));
+		height: 100vh;
+		max-height: none;
+		border-radius: 0;
+	}
+	@media (max-width: 760px) {
+		/* No room beside the panel: the viewer waits underneath it. */
+		.preview.beside {
+			width: 100vw;
+		}
 	}
 	.preview:not([open]) {
 		display: none;

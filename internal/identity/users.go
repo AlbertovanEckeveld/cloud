@@ -21,8 +21,11 @@ var usernamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,31}$`)
 type NewUser struct {
 	Username    string
 	DisplayName string
-	IsAdmin     bool
-	Email       string // optional
+	// Admin gives the account the built-in role "Beheerder". Only the CLI
+	// sets it (the first administrator); on the pages roles are given
+	// separately, under the rules of ADR 0022.
+	Admin bool
+	Email string // optional
 }
 
 // Activation is the result of issuing an activation link.
@@ -76,7 +79,6 @@ func (s *Service) createUser(ctx context.Context, c Client, actor *uuid.UUID, in
 		ID:          newID(),
 		Username:    normalizeUsername(in.Username),
 		DisplayName: strings.TrimSpace(in.DisplayName),
-		IsAdmin:     in.IsAdmin,
 	}
 	if !usernamePattern.MatchString(u.Username) {
 		return User{}, &InputError{"De gebruikersnaam moet 2 tot 32 tekens zijn: kleine letters, cijfers, punt, streepje of underscore."}
@@ -95,18 +97,25 @@ func (s *Service) createUser(ctx context.Context, c Client, actor *uuid.UUID, in
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		now := s.now()
 		_, err := tx.Exec(ctx, `
-			INSERT INTO identity.users (id, username, display_name, is_admin, email, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $6)`,
-			u.ID, u.Username, u.DisplayName, u.IsAdmin, email, now)
+			INSERT INTO identity.users (id, username, display_name, email, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $5)`,
+			u.ID, u.Username, u.DisplayName, email, now)
 		if conflict := userConflict(err); conflict != nil {
 			return conflict
 		}
 		if err != nil {
 			return fmt.Errorf("insert user: %w", err)
 		}
+		if in.Admin {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO identity.role_assignments (role_id, user_id, created_at) VALUES ($1, $2, $3)`,
+				AdminRoleID, u.ID, now); err != nil {
+				return fmt.Errorf("assign administrator role: %w", err)
+			}
+		}
 		return s.audit(ctx, tx, c, auditEntry{
 			event: EventUserCreated, actor: actor, subject: &u.ID,
-			details: map[string]any{"username": u.Username, "is_admin": u.IsAdmin},
+			details: map[string]any{"username": u.Username, "admin": in.Admin},
 		})
 	})
 	if err != nil {

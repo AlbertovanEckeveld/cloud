@@ -69,7 +69,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	userFrom := func(r *http.Request) uuid.UUID { id, _ := uuid.Parse(r.Header.Get("X-Test-User")); return id }
 	pass := func(next http.Handler) http.Handler { return next }
 	r.Route("/api/v1/drive", func(r chi.Router) {
-		e.svc.Routes(r, Auth{RequireUser: pass, RequireAdmin: pass, RequireRecentAuth: pass, UserID: userFrom,
+		e.svc.Routes(r, Auth{RequireUser: pass, RequirePermission: func(string) func(http.Handler) http.Handler { return pass }, RequireRecentAuth: pass, UserID: userFrom,
 			// A desktop app is simulated with X-Test-Device.
 			DeviceID: func(r *http.Request) uuid.UUID { id, _ := uuid.Parse(r.Header.Get("X-Test-Device")); return id },
 			Audit:    func(_ *http.Request, event string, _ map[string]any) { e.audited = append(e.audited, event) }})

@@ -49,7 +49,7 @@ func userCommand(ctx context.Context, out io.Writer, args []string) error {
 		if *displayName == "" {
 			return errors.New(userUsage)
 		}
-		u, err := a.identity.CreateUser(ctx, client, identity.NewUser{Username: *username, DisplayName: *displayName, IsAdmin: *admin, Email: *email})
+		u, err := a.identity.CreateUser(ctx, client, identity.NewUser{Username: *username, DisplayName: *displayName, Admin: *admin, Email: *email})
 		if err != nil {
 			return err
 		}

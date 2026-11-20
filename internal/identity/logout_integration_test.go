@@ -94,7 +94,7 @@ func TestBackchannelLogout(t *testing.T) {
 	}
 
 	// Disabling the user queues a logout token; delivery posts it to the app.
-	if err := o.svc.SetUserDisabled(ctx, o.client, admin, u.ID, true); err != nil {
+	if err := o.svc.SetUserDisabled(ctx, o.client, o.as(t, admin), u.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.svc.deliverLogoutBatch(ctx); err != nil {

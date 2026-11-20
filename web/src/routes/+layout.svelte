@@ -3,6 +3,10 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api } from '#lib/api.ts';
+	import { can, canAnyIn } from '#lib/permissions.ts';
+	import Icon from '#lib/components/Icon.svelte';
+	import AssistantPanel from '#lib/components/assistant/AssistantPanel.svelte';
+	import { loadAssistantStatus, toggleAssistant } from '#lib/assistant-state.svelte.ts';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -17,6 +21,18 @@
 	}
 
 	const current = (path: string) => (page.url.pathname === path ? 'page' : undefined);
+
+	$effect(() => {
+		if (data.user) loadAssistantStatus(api.assistant.status);
+	});
+
+	// Ctrl+J (Cmd+J on a Mac) opens the assistant on every page.
+	function keys(e: KeyboardEvent) {
+		if (data.user && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'j') {
+			e.preventDefault();
+			toggleAssistant();
+		}
+	}
 </script>
 
 <a class="skip-link" href="#main">Naar inhoud</a>
@@ -28,11 +44,16 @@
 			<nav class="nav" aria-label="Hoofdmenu">
 				<a href="/" aria-current={current('/')}>Start</a>
 				<a href="/files" aria-current={page.url.pathname.startsWith('/files') ? 'page' : undefined}>Bestanden</a>
-				{#if data.user.is_admin}
-					<a href="/admin" aria-current={page.url.pathname.startsWith('/admin') ? 'page' : undefined}>Beheer</a>
+				<a href="/assistant" aria-current={page.url.pathname.startsWith('/assistant') ? 'page' : undefined}>Assistent</a>
+				{#if canAnyIn(data.user, 'identity')}
+					<a href="/identity" aria-current={page.url.pathname.startsWith('/identity') ? 'page' : undefined}>Identity</a>
+				{/if}
+				{#if can(data.user, 'system.status.view')}
+					<a href="/system" aria-current={current('/system')}>Systeem</a>
 				{/if}
 			</nav>
 			<div class="site-header__actions">
+				<button class="icon-button" aria-label="Assistent openen" title="Assistent (Ctrl+J)" onclick={toggleAssistant}><Icon name="spark" /></button>
 				<a href="/account" aria-current={current('/account')}>{data.user.display_name}</a>
 				<button class="button" onclick={logout}>Uitloggen</button>
 			</div>
@@ -40,9 +61,13 @@
 	</div>
 </header>
 
+<svelte:window onkeydown={keys} />
+
 <main id="main" class="container">
 	{@render children()}
 </main>
+
+{#if data.user}<AssistantPanel />{/if}
 
 <style>
 	.site-header {
