@@ -33,6 +33,7 @@ import (
 	"github.com/AlbertovanEckeveld/cloud/internal/core/database"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/health"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/httpserver"
+	"github.com/AlbertovanEckeveld/cloud/internal/core/keycheck"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/knowledge"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/logging"
 	"github.com/AlbertovanEckeveld/cloud/internal/core/mailer"
@@ -115,6 +116,11 @@ func setup(ctx context.Context, logOutput io.Writer) (*app, error) {
 
 	sl, err := sealer.New([]byte(cfg.EncryptionKey.Reveal()))
 	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	// Before anything is sealed or opened: refuse to run with another key.
+	if err := keycheck.Verify(startupCtx, pool, sl); err != nil {
 		pool.Close()
 		return nil, err
 	}
@@ -207,6 +213,10 @@ func serve(ctx context.Context) error {
 			defer cancel()
 			if err := a.mailer.Verify(verifyCtx); err != nil {
 				logger.Warn("mail server check failed; mail stays queued until it works", "error", err)
+				return
+			}
+			if cfg.Mail.DevDir != "" {
+				logger.Warn("mail is not sent but written to MAIL_DEV_DIR", "dir", cfg.Mail.DevDir)
 				return
 			}
 			logger.Info("mail server reachable", "host", cfg.Mail.Host)
